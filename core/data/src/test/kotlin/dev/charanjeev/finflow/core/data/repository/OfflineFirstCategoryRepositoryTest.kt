@@ -14,18 +14,9 @@ class OfflineFirstCategoryRepositoryTest {
 
     @Test
     fun `seeding on first launch inserts every system category`() = runTest {
-        repository.seedSystemCategoriesIfNeeded()
-
-        repository.observeCategories().test {
-            assertThat(awaitItem()).hasSize(systemCategories.size)
-        }
-    }
-
-    @Test
-    fun `reseeding after a reinstall is the same as seeding an empty database`() = runTest {
-        // A reinstall wipes Room along with the rest of app-private storage, so
-        // the DAO backing the "reinstalled" repository starts empty -- this is
-        // just seedSystemCategoriesIfNeeded() called once against a fresh fake.
+        // Also covers reinstalls: a reinstall wipes Room along with the rest of
+        // app-private storage, so the DAO backing a "reinstalled" repository
+        // starts empty too -- indistinguishable from first launch here.
         repository.seedSystemCategoriesIfNeeded()
 
         repository.observeCategories().test {
