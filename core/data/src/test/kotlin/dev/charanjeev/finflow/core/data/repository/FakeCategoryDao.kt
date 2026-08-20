@@ -20,6 +20,8 @@ class FakeCategoryDao : CategoryDao {
     override fun observeAll(): Flow<List<CategoryEntity>> =
         backing.map { it.values.sortedBy(CategoryEntity::name) }
 
+    override suspend fun getById(id: String): CategoryEntity? = backing.value[id]
+
     override suspend fun upsertAll(categories: List<CategoryEntity>) {
         backing.value = backing.value + categories.associateBy(CategoryEntity::id)
     }

@@ -72,4 +72,17 @@ class OfflineFirstCategoryRepositoryTest {
             assertThat(awaitItem().map { it.id }).contains("food")
         }
     }
+
+    @Test
+    fun `upsert cannot launder a system category into a deletable one`() = runTest {
+        repository.seedSystemCategoriesIfNeeded()
+        val food = systemCategories.first { it.id == "food" }
+
+        repository.upsert(food.copy(isSystemDefined = false))
+        repository.delete("food")
+
+        repository.observeCategories().test {
+            assertThat(awaitItem().map { it.id }).contains("food")
+        }
+    }
 }
