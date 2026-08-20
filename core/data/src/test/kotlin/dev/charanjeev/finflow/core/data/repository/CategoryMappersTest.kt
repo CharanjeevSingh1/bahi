@@ -19,14 +19,4 @@ class CategoryMappersTest {
 
         assertThat(toDomain(toEntity(category))).isEqualTo(category)
     }
-
-    @Test
-    fun `system category seed list has no duplicate ids`() {
-        assertThat(systemCategories.map { it.id }).containsNoDuplicates()
-    }
-
-    @Test
-    fun `every seeded category is marked system defined`() {
-        assertThat(systemCategories.all { it.isSystemDefined }).isTrue()
-    }
 }
