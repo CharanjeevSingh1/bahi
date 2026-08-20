@@ -7,6 +7,8 @@ import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
 import dev.charanjeev.finflow.core.common.Dispatcher
 import dev.charanjeev.finflow.core.common.FinFlowDispatcher
+import dev.charanjeev.finflow.core.data.repository.CategoryRepository
+import dev.charanjeev.finflow.core.data.repository.OfflineFirstCategoryRepository
 import dev.charanjeev.finflow.core.data.repository.OfflineFirstTransactionRepository
 import dev.charanjeev.finflow.core.data.repository.TransactionRepository
 import kotlinx.coroutines.CoroutineDispatcher
@@ -22,6 +24,12 @@ interface DataModule {
     fun bindTransactionRepository(
         implementation: OfflineFirstTransactionRepository,
     ): TransactionRepository
+
+    @Binds
+    @Singleton
+    fun bindCategoryRepository(
+        implementation: OfflineFirstCategoryRepository,
+    ): CategoryRepository
 }
 
 @Module
