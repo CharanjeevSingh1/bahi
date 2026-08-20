@@ -19,7 +19,10 @@ import javax.inject.Inject
  */
 class OfflineFirstTransactionRepository @Inject constructor(
     private val transactionDao: TransactionDao,
-    @Dispatcher(FinFlowDispatcher.IO) private val ioDispatcher: CoroutineDispatcher,
+    // @param: pins the qualifier to the constructor parameter, which is what Hilt
+    // reads. Kotlin 2.2 warns that the default target is changing in a future
+    // release; being explicit keeps injection working either way.
+    @param:Dispatcher(FinFlowDispatcher.IO) private val ioDispatcher: CoroutineDispatcher,
 ) : TransactionRepository {
 
     override fun observeTransactions(): Flow<List<Transaction>> =
