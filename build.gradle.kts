@@ -22,7 +22,11 @@ plugins {
 // README.md -- GitHub renders Mermaid natively, so the graph in the README can
 // never drift from the actual build.
 // ---------------------------------------------------------------------------
-val moduleEdges: List<Pair<String, String>> = subprojects.flatMap { sub ->
+// A function, not a val: subproject build scripts haven't run yet at the point
+// this file is evaluated, so their `dependencies {}` blocks -- and therefore
+// their ProjectDependency entries -- don't exist. Called from inside doLast,
+// by which point every project is configured and the edges are real.
+fun moduleEdges(): List<Pair<String, String>> = subprojects.flatMap { sub ->
     listOf("implementation", "api", "compileOnly").flatMap { configName ->
         sub.configurations.findByName(configName)
             ?.dependencies
@@ -36,10 +40,17 @@ tasks.register("moduleGraph") {
     group = "reporting"
     description = "Generates a Mermaid module dependency graph at build/reports/module-graph.md"
 
-    val edges = moduleEdges
     val outputFile = layout.buildDirectory.file("reports/module-graph.md")
 
+    // moduleEdges() walks live Project/Configuration objects, which the
+    // configuration cache can't serialize as task state. The task is a cheap
+    // reporting/verification one-off, not something on the hot assemble/test
+    // path, so it isn't worth reshaping into cache-safe Provider inputs.
+    notCompatibleWithConfigurationCache("reads project configurations directly in doLast")
+
     doLast {
+        val edges = moduleEdges()
+
         fun nodeId(path: String) = path.removePrefix(":").replace(":", "_")
         fun styleClass(path: String) = when {
             path.startsWith(":app") -> "app"
@@ -81,9 +92,11 @@ tasks.register("checkModuleBoundaries") {
     group = "verification"
     description = "Fails if any feature module depends on another feature module"
 
-    val edges = moduleEdges
+    // See moduleGraph above -- same reason.
+    notCompatibleWithConfigurationCache("reads project configurations directly in doLast")
 
     doLast {
+        val edges = moduleEdges()
         val violations = edges.filter { (from, to) ->
             from.startsWith(":feature") && to.startsWith(":feature")
         }
