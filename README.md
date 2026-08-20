@@ -130,6 +130,8 @@ This diagram is generated from the build, not drawn by hand:
 
 Fakes over mocks throughout. A mock verifies that a call happened; a fake lets the test assert on observable behaviour, which is what actually breaks in production.
 
+Run the full suite with `./gradlew unitTests` -- not `testDebugUnitTest`. `:core:model` and `:core:common` are pure-JVM modules with a `test` task, not `testDebugUnitTest`, so the Android-only command silently skips them.
+
 ---
 
 ## Getting started
@@ -140,7 +142,7 @@ Requires JDK 17 and Android Studio (Ladybug or newer).
 git clone https://github.com/<you>/finflow.git
 cd finflow
 ./gradlew assembleDebug
-./gradlew testDebugUnitTest
+./gradlew unitTests
 ```
 
 The Gradle wrapper JAR is not committed in this scaffold. Generate it once with:

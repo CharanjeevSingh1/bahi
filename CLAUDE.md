@@ -43,7 +43,7 @@ Kotlin, Jetpack Compose, Room, Hilt, WorkManager, Coroutines/Flow. Single-activi
 
 ```bash
 ./gradlew assembleDebug            # compile
-./gradlew testDebugUnitTest        # unit tests
+./gradlew unitTests                # unit tests, including pure-JVM modules (:core:model, :core:common)
 ./gradlew checkModuleBoundaries    # architecture check
 ./gradlew moduleGraph              # regenerate README diagram
 ./gradlew lintDebug

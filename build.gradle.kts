@@ -15,6 +15,37 @@ plugins {
 }
 
 // ---------------------------------------------------------------------------
+// ./gradlew unitTests
+//
+// `testDebugUnitTest` only exists on Android modules -- :core:model and
+// :core:common apply org.jetbrains.kotlin.jvm and only have a `test` task, so
+// CI's `./gradlew testDebugUnitTest` silently never runs them. This aggregate
+// depends on the right task per module, found via plugins.withId so it reacts
+// as each subproject applies its plugin instead of reading subproject state
+// during root configuration (which isn't populated yet, and would make this
+// task a silent no-op the same way checkModuleBoundaries once was).
+// ---------------------------------------------------------------------------
+val unitTests = tasks.register("unitTests") {
+    group = "verification"
+    description = "Runs unit tests in every module, including pure-JVM ones"
+}
+
+subprojects {
+    // Captured here, not inlined into the nested closures below: `configure {}`
+    // on the unitTests TaskProvider makes the Task -- not this Project -- the
+    // implicit receiver, so a bare `path` there resolves to the unitTests
+    // task's own path (":unitTests") rather than this subproject's.
+    val subprojectPath = path
+
+    listOf("com.android.application", "com.android.library").forEach { id ->
+        plugins.withId(id) { unitTests.configure { dependsOn("$subprojectPath:testDebugUnitTest") } }
+    }
+    plugins.withId("org.jetbrains.kotlin.jvm") {
+        unitTests.configure { dependsOn("$subprojectPath:test") }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // ./gradlew moduleGraph
 //
 // Emits a Mermaid diagram of the real inter-module dependency graph, read from

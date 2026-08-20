@@ -37,7 +37,7 @@ jobs:
         run: ./gradlew assembleDebug --stacktrace -PwarningsAsErrors=true
 
       - name: Unit tests
-        run: ./gradlew testDebugUnitTest --stacktrace
+        run: ./gradlew unitTests --stacktrace
 
       - name: Android Lint
         run: ./gradlew lintDebug
