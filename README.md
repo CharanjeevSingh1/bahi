@@ -23,48 +23,72 @@ Three layers, fifteen modules. Features never depend on other features; the buil
 
 ```mermaid
 graph TD
-    app["app"]:::app
+    app[":app"]:::app
+    core_common[":core:common"]:::core
+    core_data[":core:data"]:::core
+    core_database[":core:database"]:::core
+    core_datastore[":core:datastore"]:::core
+    core_designsystem[":core:designsystem"]:::core
+    core_importer[":core:importer"]:::core
+    core_model[":core:model"]:::core
+    core_sync[":core:sync"]:::core
+    core_testing[":core:testing"]:::core
+    core_ui[":core:ui"]:::core
+    feature_budgets[":feature:budgets"]:::feature
+    feature_insights[":feature:insights"]:::feature
+    feature_settings[":feature:settings"]:::feature
+    feature_transactions[":feature:transactions"]:::feature
 
-    feature_transactions["feature:transactions"]:::feature
-    feature_budgets["feature:budgets"]:::feature
-    feature_insights["feature:insights"]:::feature
-    feature_settings["feature:settings"]:::feature
-
-    core_data["core:data"]:::core
-    core_database["core:database"]:::core
-    core_datastore["core:datastore"]:::core
-    core_importer["core:importer"]:::core
-    core_sync["core:sync"]:::core
-    core_ui["core:ui"]:::core
-    core_designsystem["core:designsystem"]:::core
-    core_model["core:model"]:::core
-    core_common["core:common"]:::core
-    core_testing["core:testing"]:::core
-
+    app --> core_model
+    app --> core_common
+    app --> core_data
+    app --> core_designsystem
+    app --> core_ui
+    app --> core_sync
     app --> feature_transactions
     app --> feature_budgets
     app --> feature_insights
     app --> feature_settings
-    app --> core_sync
-
-    feature_transactions --> core_data
-    feature_transactions --> core_ui
-    feature_budgets --> core_data
-    feature_budgets --> core_ui
-    feature_insights --> core_data
-    feature_insights --> core_ui
-    feature_settings --> core_data
-    feature_settings --> core_ui
-
+    core_common --> core_model
+    core_data --> core_common
     core_data --> core_database
     core_data --> core_datastore
     core_data --> core_model
-    core_data --> core_common
+    core_database --> core_common
+    core_database --> core_model
+    core_datastore --> core_model
+    core_datastore --> core_common
+    core_importer --> core_common
     core_importer --> core_data
+    core_importer --> core_model
+    core_sync --> core_model
+    core_sync --> core_common
     core_sync --> core_data
+    core_sync --> core_datastore
+    core_testing --> core_model
+    core_testing --> core_common
     core_ui --> core_designsystem
     core_ui --> core_model
-    core_database --> core_model
+    feature_budgets --> core_model
+    feature_budgets --> core_common
+    feature_budgets --> core_data
+    feature_budgets --> core_designsystem
+    feature_budgets --> core_ui
+    feature_insights --> core_model
+    feature_insights --> core_common
+    feature_insights --> core_data
+    feature_insights --> core_designsystem
+    feature_insights --> core_ui
+    feature_settings --> core_model
+    feature_settings --> core_common
+    feature_settings --> core_data
+    feature_settings --> core_designsystem
+    feature_settings --> core_ui
+    feature_transactions --> core_model
+    feature_transactions --> core_common
+    feature_transactions --> core_data
+    feature_transactions --> core_designsystem
+    feature_transactions --> core_ui
 
     classDef app fill:#f9a825,stroke:#333,color:#000
     classDef feature fill:#42a5f5,stroke:#333,color:#000
