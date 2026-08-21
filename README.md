@@ -35,79 +35,49 @@ graph LR
         feature_transactions[":feature:transactions"]:::feature
     end
     subgraph tier_core[Core]
-        core_common[":core:common"]:::core
         core_data[":core:data"]:::core
         core_database[":core:database"]:::core
         core_datastore[":core:datastore"]:::core
         core_designsystem[":core:designsystem"]:::core
         core_importer[":core:importer"]:::core
-        core_model[":core:model"]:::core
         core_sync[":core:sync"]:::core
-        core_testing[":core:testing"]:::core
         core_ui[":core:ui"]:::core
     end
+    subgraph tier_foundation["Foundation (relied on by nearly every module)"]
+        core_model[":core:model"]:::foundation
+        core_common[":core:common"]:::foundation
+    end
 
-    app --> core_model
-    app --> core_common
+    app --> tier_feature
     app --> core_data
     app --> core_designsystem
-    app --> core_ui
     app --> core_sync
-    app --> feature_transactions
-    app --> feature_budgets
-    app --> feature_insights
-    app --> feature_settings
-    core_common --> core_model
-    core_data --> core_common
+    app --> core_ui
+    tier_feature --> core_data
+    tier_feature --> core_designsystem
+    tier_feature --> core_ui
     core_data --> core_database
     core_data --> core_datastore
-    core_data --> core_model
-    core_database --> core_common
-    core_database --> core_model
-    core_datastore --> core_model
-    core_datastore --> core_common
-    core_importer --> core_common
     core_importer --> core_data
-    core_importer --> core_model
-    core_sync --> core_model
-    core_sync --> core_common
     core_sync --> core_data
     core_sync --> core_datastore
-    core_testing --> core_model
-    core_testing --> core_common
     core_ui --> core_designsystem
-    core_ui --> core_model
-    feature_budgets --> core_model
-    feature_budgets --> core_common
-    feature_budgets --> core_data
-    feature_budgets --> core_designsystem
-    feature_budgets --> core_ui
-    feature_insights --> core_model
-    feature_insights --> core_common
-    feature_insights --> core_data
-    feature_insights --> core_designsystem
-    feature_insights --> core_ui
-    feature_settings --> core_model
-    feature_settings --> core_common
-    feature_settings --> core_data
-    feature_settings --> core_designsystem
-    feature_settings --> core_ui
-    feature_transactions --> core_model
-    feature_transactions --> core_common
-    feature_transactions --> core_data
-    feature_transactions --> core_designsystem
-    feature_transactions --> core_ui
 
     classDef app fill:#f9a825,stroke:#333,color:#000
     classDef feature fill:#42a5f5,stroke:#333,color:#000
     classDef core fill:#66bb6a,stroke:#333,color:#000
+    classDef foundation fill:#e0e0e0,stroke:#333,color:#000
 ```
 
-This diagram is generated from the build, not drawn by hand:
+This is a simplified view: `:core:model`, `:core:common` and `:core:testing` are omitted as edge targets, because nearly every module in the project depends on them and drawing all of those edges would just redraw the hairball this diagram exists to avoid. `:core:model` and `:core:common` are shown once, as the foundation layer everything else sits on; `:core:testing` is a test-only dependency of almost every module and isn't shown at all.
+
+The full graph -- every module, every edge, no omissions -- is generated from the build, not drawn by hand:
 
 ```bash
 ./gradlew moduleGraph   # writes build/reports/module-graph.md
 ```
+
+This simplified diagram is derived from that same generated data (`renderSimplifiedGraph` in the root `build.gradle.kts`), then copied here by hand -- it can't be injected into the README automatically, so re-run `moduleGraph` and re-paste after a dependency change. The full graph lives in `build/reports/module-graph.md` alongside it.
 
 ### Decisions worth explaining
 
