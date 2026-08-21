@@ -1,5 +1,5 @@
 import androidx.room.gradle.RoomExtension
-import dev.charanjeev.finflow.libs
+import dev.charanjeev.bahi.libs
 import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.gradle.kotlin.dsl.configure

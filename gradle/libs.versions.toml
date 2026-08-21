@@ -111,11 +111,11 @@ ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
 hilt = { id = "com.google.dagger.hilt.android", version.ref = "hilt" }
 room = { id = "androidx.room", version.ref = "room" }
 
-# Convention plugins defined in build-logic/. Applied as `alias(libs.plugins.finflow.*)`.
-finflow-android-application = { id = "finflow.android.application" }
-finflow-android-library = { id = "finflow.android.library" }
-finflow-android-library-compose = { id = "finflow.android.library.compose" }
-finflow-android-feature = { id = "finflow.android.feature" }
-finflow-android-room = { id = "finflow.android.room" }
-finflow-hilt = { id = "finflow.hilt" }
-finflow-jvm-library = { id = "finflow.jvm.library" }
+# Convention plugins defined in build-logic/. Applied as `alias(libs.plugins.bahi.*)`.
+bahi-android-application = { id = "bahi.android.application" }
+bahi-android-library = { id = "bahi.android.library" }
+bahi-android-library-compose = { id = "bahi.android.library.compose" }
+bahi-android-feature = { id = "bahi.android.feature" }
+bahi-android-room = { id = "bahi.android.room" }
+bahi-hilt = { id = "bahi.hilt" }
+bahi-jvm-library = { id = "bahi.jvm.library" }

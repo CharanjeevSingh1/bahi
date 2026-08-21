@@ -1,9 +1,9 @@
 plugins {
-    alias(libs.plugins.finflow.android.library.compose)
+    alias(libs.plugins.bahi.android.library.compose)
 }
 
 android {
-    namespace = "dev.charanjeev.finflow.core.ui"
+    namespace = "dev.charanjeev.bahi.core.ui"
 }
 
 dependencies {
