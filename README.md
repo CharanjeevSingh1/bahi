@@ -24,22 +24,28 @@ Two problems here are genuinely hard and get the most attention:
 Three layers, fifteen modules. Features never depend on other features; the build fails if they try.
 
 ```mermaid
-graph TD
-    app[":app"]:::app
-    core_common[":core:common"]:::core
-    core_data[":core:data"]:::core
-    core_database[":core:database"]:::core
-    core_datastore[":core:datastore"]:::core
-    core_designsystem[":core:designsystem"]:::core
-    core_importer[":core:importer"]:::core
-    core_model[":core:model"]:::core
-    core_sync[":core:sync"]:::core
-    core_testing[":core:testing"]:::core
-    core_ui[":core:ui"]:::core
-    feature_budgets[":feature:budgets"]:::feature
-    feature_insights[":feature:insights"]:::feature
-    feature_settings[":feature:settings"]:::feature
-    feature_transactions[":feature:transactions"]:::feature
+graph LR
+    subgraph tier_app[App]
+        app[":app"]:::app
+    end
+    subgraph tier_feature[Feature]
+        feature_budgets[":feature:budgets"]:::feature
+        feature_insights[":feature:insights"]:::feature
+        feature_settings[":feature:settings"]:::feature
+        feature_transactions[":feature:transactions"]:::feature
+    end
+    subgraph tier_core[Core]
+        core_common[":core:common"]:::core
+        core_data[":core:data"]:::core
+        core_database[":core:database"]:::core
+        core_datastore[":core:datastore"]:::core
+        core_designsystem[":core:designsystem"]:::core
+        core_importer[":core:importer"]:::core
+        core_model[":core:model"]:::core
+        core_sync[":core:sync"]:::core
+        core_testing[":core:testing"]:::core
+        core_ui[":core:ui"]:::core
+    end
 
     app --> core_model
     app --> core_common

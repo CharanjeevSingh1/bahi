@@ -93,8 +93,21 @@ tasks.register("moduleGraph") {
         val nodes = edges.flatMap { listOf(it.first, it.second) }.distinct().sorted()
         val sb = StringBuilder()
         sb.appendLine("```mermaid")
-        sb.appendLine("graph TD")
-        nodes.forEach { sb.appendLine("    ${nodeId(it)}[\"$it\"]:::${styleClass(it)}") }
+        sb.appendLine("graph LR")
+
+        // Subgraphs give Mermaid a layering hint: without them `graph TD`/`LR`
+        // has no notion of tiers and routes edges across the whole diagram,
+        // rendering as an unreadable hairball. Grouping by the same prefix
+        // styleClass() uses turns each tier into its own column, listed in
+        // dependency order (app -> feature -> core). Subgraph ids are prefixed
+        // with "tier_" -- Mermaid shares one id namespace between subgraphs and
+        // nodes, and the :app module's node id is bare "app", which would
+        // collide with a same-named subgraph id.
+        listOf("app" to "App", "feature" to "Feature", "core" to "Core").forEach { (cls, title) ->
+            sb.appendLine("    subgraph tier_$cls[$title]")
+            nodes.filter { styleClass(it) == cls }.forEach { sb.appendLine("        ${nodeId(it)}[\"$it\"]:::${styleClass(it)}") }
+            sb.appendLine("    end")
+        }
         sb.appendLine()
         edges.sortedBy { it.first }.forEach { (from, to) ->
             sb.appendLine("    ${nodeId(from)} --> ${nodeId(to)}")
