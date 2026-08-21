@@ -1,6 +1,6 @@
 plugins {
-    alias(libs.plugins.finflow.jvm.library)
-    alias(libs.plugins.finflow.hilt)
+    alias(libs.plugins.bahi.jvm.library)
+    alias(libs.plugins.bahi.hilt)
 }
 
 dependencies {

@@ -1,4 +1,4 @@
-import dev.charanjeev.finflow.libs
+import dev.charanjeev.bahi.libs
 import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.gradle.kotlin.dsl.dependencies
@@ -12,8 +12,8 @@ import org.gradle.kotlin.dsl.project
 class AndroidFeatureConventionPlugin : Plugin<Project> {
     override fun apply(target: Project) = with(target) {
         with(pluginManager) {
-            apply("finflow.android.library.compose")
-            apply("finflow.hilt")
+            apply("bahi.android.library.compose")
+            apply("bahi.hilt")
         }
 
         dependencies {

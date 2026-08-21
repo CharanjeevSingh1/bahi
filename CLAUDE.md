@@ -4,7 +4,7 @@ Project context for Claude Code. Read this before making changes.
 
 ## What this is
 
-FinFlow — an offline-first personal finance tracker for Android. It is a **portfolio project**: the code is read by hiring managers, so clarity and correctness matter more than feature count. A reviewer should be able to open any file and understand why it is written the way it is.
+Bahi — an offline-first personal finance tracker for Android. It is a **portfolio project**: the code is read by hiring managers, so clarity and correctness matter more than feature count. A reviewer should be able to open any file and understand why it is written the way it is.
 
 Current state: **M0 complete** (scaffolding). See the Roadmap in README.md.
 
@@ -21,7 +21,7 @@ Kotlin, Jetpack Compose, Room, Hilt, WorkManager, Coroutines/Flow. Single-activi
 5. **Money is `Money` (value class over `Long` minor units). Never `Double`, never `Float`, never `BigDecimal` in the domain model.** Floating point in currency is a correctness bug.
 6. **No `fallbackToDestructiveMigration()`.** Ever. A schema change requires: the migration in `Migrations.ALL`, a test in `MigrationTest`, and the exported schema JSON committed — all in the same commit.
 7. **Soft deletes only.** Set `deleted_at` and a pending `DELETE` operation. Sync needs the tombstone.
-8. **Dispatchers are injected**, never referenced directly. Use `@Dispatcher(FinFlowDispatcher.IO)`.
+8. **Dispatchers are injected**, never referenced directly. Use `@Dispatcher(BahiDispatcher.IO)`.
 
 ## Compose conventions
 

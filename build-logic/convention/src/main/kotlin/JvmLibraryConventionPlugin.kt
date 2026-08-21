@@ -1,5 +1,5 @@
-import dev.charanjeev.finflow.configureKotlinJvm
-import dev.charanjeev.finflow.libs
+import dev.charanjeev.bahi.configureKotlinJvm
+import dev.charanjeev.bahi.libs
 import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.gradle.kotlin.dsl.dependencies

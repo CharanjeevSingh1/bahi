@@ -1,7 +1,7 @@
 plugins {
-    alias(libs.plugins.finflow.android.feature)
+    alias(libs.plugins.bahi.android.feature)
 }
 
 android {
-    namespace = "dev.charanjeev.finflow.feature.insights"
+    namespace = "dev.charanjeev.bahi.feature.insights"
 }

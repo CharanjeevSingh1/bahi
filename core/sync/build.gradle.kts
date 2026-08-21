@@ -1,11 +1,11 @@
 plugins {
-    alias(libs.plugins.finflow.android.library)
-    alias(libs.plugins.finflow.hilt)
+    alias(libs.plugins.bahi.android.library)
+    alias(libs.plugins.bahi.hilt)
     alias(libs.plugins.kotlin.serialization)
 }
 
 android {
-    namespace = "dev.charanjeev.finflow.core.sync"
+    namespace = "dev.charanjeev.bahi.core.sync"
 }
 
 dependencies {

@@ -2,7 +2,7 @@ plugins {
     `kotlin-dsl`
 }
 
-group = "dev.charanjeev.finflow.buildlogic"
+group = "dev.charanjeev.bahi.buildlogic"
 
 java {
     sourceCompatibility = JavaVersion.VERSION_17
@@ -26,31 +26,31 @@ dependencies {
 gradlePlugin {
     plugins {
         register("androidApplication") {
-            id = "finflow.android.application"
+            id = "bahi.android.application"
             implementationClass = "AndroidApplicationConventionPlugin"
         }
         register("androidLibrary") {
-            id = "finflow.android.library"
+            id = "bahi.android.library"
             implementationClass = "AndroidLibraryConventionPlugin"
         }
         register("androidLibraryCompose") {
-            id = "finflow.android.library.compose"
+            id = "bahi.android.library.compose"
             implementationClass = "AndroidLibraryComposeConventionPlugin"
         }
         register("androidFeature") {
-            id = "finflow.android.feature"
+            id = "bahi.android.feature"
             implementationClass = "AndroidFeatureConventionPlugin"
         }
         register("androidRoom") {
-            id = "finflow.android.room"
+            id = "bahi.android.room"
             implementationClass = "AndroidRoomConventionPlugin"
         }
         register("hilt") {
-            id = "finflow.hilt"
+            id = "bahi.hilt"
             implementationClass = "HiltConventionPlugin"
         }
         register("jvmLibrary") {
-            id = "finflow.jvm.library"
+            id = "bahi.jvm.library"
             implementationClass = "JvmLibraryConventionPlugin"
         }
     }

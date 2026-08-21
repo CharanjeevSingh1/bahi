@@ -1,6 +1,6 @@
 import com.android.build.api.dsl.LibraryExtension
-import dev.charanjeev.finflow.configureKotlinAndroid
-import dev.charanjeev.finflow.libs
+import dev.charanjeev.bahi.configureKotlinAndroid
+import dev.charanjeev.bahi.libs
 import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.gradle.kotlin.dsl.configure

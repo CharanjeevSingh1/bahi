@@ -1,10 +1,10 @@
 plugins {
-    alias(libs.plugins.finflow.android.library)
-    alias(libs.plugins.finflow.hilt)
+    alias(libs.plugins.bahi.android.library)
+    alias(libs.plugins.bahi.hilt)
 }
 
 android {
-    namespace = "dev.charanjeev.finflow.core.data"
+    namespace = "dev.charanjeev.bahi.core.data"
 }
 
 dependencies {

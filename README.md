@@ -1,6 +1,8 @@
-# FinFlow
+# Bahi
 
 An offline-first personal finance tracker for Android. Import a bank statement, get it categorised, track it against a budget — with everything readable and editable with no network, and row-level sync when there is one.
+
+Named after the *bahi khata*, the traditional Indian ledger book.
 
 > **Status:** M0 (scaffolding) complete. See [Roadmap](#roadmap).
 
@@ -113,7 +115,7 @@ This diagram is generated from the build, not drawn by hand:
 
 **Content hashing for import de-duplication.** Re-importing an overlapping statement must not create duplicates. The hash deliberately excludes id, category and notes, so a row the user has already categorised is still recognised as the same row.
 
-**Convention plugins, not copy-pasted build files.** JVM target, compile SDK, Compose setup and test dependencies are defined once in `build-logic/` and applied as `finflow.android.feature` etc. Changing the JVM target changes it for all fifteen modules.
+**Convention plugins, not copy-pasted build files.** JVM target, compile SDK, Compose setup and test dependencies are defined once in `build-logic/` and applied as `bahi.android.feature` etc. Changing the JVM target changes it for all fifteen modules.
 
 ---
 
@@ -139,8 +141,8 @@ Run the full suite with `./gradlew unitTests` -- not `testDebugUnitTest`. `:core
 Requires JDK 17 and Android Studio (Ladybug or newer).
 
 ```bash
-git clone https://github.com/<you>/finflow.git
-cd finflow
+git clone https://github.com/<you>/bahi.git
+cd bahi
 ./gradlew assembleDebug
 ./gradlew unitTests
 ```

@@ -1,13 +1,13 @@
 plugins {
-    alias(libs.plugins.finflow.android.application)
-    alias(libs.plugins.finflow.hilt)
+    alias(libs.plugins.bahi.android.application)
+    alias(libs.plugins.bahi.hilt)
 }
 
 android {
-    namespace = "dev.charanjeev.finflow"
+    namespace = "dev.charanjeev.bahi"
 
     defaultConfig {
-        applicationId = "dev.charanjeev.finflow"
+        applicationId = "dev.charanjeev.bahi"
         versionCode = 1
         versionName = "0.1.0"
     }

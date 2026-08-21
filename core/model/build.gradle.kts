@@ -1,5 +1,5 @@
 plugins {
-    alias(libs.plugins.finflow.jvm.library)
+    alias(libs.plugins.bahi.jvm.library)
     alias(libs.plugins.kotlin.serialization)
 }
 

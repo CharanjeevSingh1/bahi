@@ -23,7 +23,7 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "FinFlow"
+rootProject.name = "Bahi"
 
 // Lets modules depend on each other as `projects.core.data` instead of
 // project(":core:data") -- typo-proof and IDE-navigable.
