@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -248,7 +249,10 @@ private fun TransactionsList(
     onTransactionClick: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    LazyColumn(modifier = modifier) {
+    // The Scaffold doesn't reserve space for the FAB in the content area, so
+    // without this the last row ends up sitting behind it -- 88.dp clears a
+    // standard 56.dp FAB plus its margin, with a little to spare.
+    LazyColumn(modifier = modifier, contentPadding = PaddingValues(bottom = 88.dp)) {
         uiState.groups.forEach { group ->
             stickyHeader(key = "header-${group.header}") {
                 DateHeaderRow(group.header)
