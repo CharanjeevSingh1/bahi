@@ -49,6 +49,8 @@ Kotlin, Jetpack Compose, Room, Hilt, WorkManager, Coroutines/Flow. Single-activi
 ./gradlew lintDebug
 ```
 
+CI compiles with `-PwarningsAsErrors=true`. Before pushing, run `./gradlew clean assembleDebug unitTests -PwarningsAsErrors=true` — a warning that is harmless locally fails the build on CI.
+
 Dependencies are declared **only** in `gradle/libs.versions.toml`. Never inline a version in a module build file. Shared build config goes in a convention plugin in `build-logic/`, never copy-pasted across modules.
 
 ## Working style
