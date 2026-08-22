@@ -17,6 +17,9 @@ Two problems here are genuinely hard and get the most attention:
 1. **CSV import** — inferring column mappings across bank exports that disagree about column order, date format, debit sign convention, and whether the file even starts with a header row.
 2. **Sync conflict resolution** — per-field resolution, because last-write-wins on a whole row silently discards a category the user set on their phone while their tablet was offline.
 
+<p align="center">
+  <img src="docs/screenshots/transactions.png" width="320" alt="Transaction list grouped by date">
+</p>
 ---
 
 ## Architecture
