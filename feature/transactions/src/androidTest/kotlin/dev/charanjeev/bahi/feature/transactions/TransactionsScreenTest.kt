@@ -12,6 +12,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeLeft
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
 import com.google.common.truth.Truth.assertThat
 import dev.charanjeev.bahi.core.testing.TestData
 import kotlinx.collections.immutable.persistentListOf
@@ -25,6 +26,11 @@ class TransactionsScreenTest {
 
     @get:Rule
     val composeTestRule = createComposeRule()
+
+    // Reads the same strings.xml the screen does, so a copy change can't
+    // silently desync the test from the real UI text.
+    private val context = InstrumentationRegistry.getInstrumentation().targetContext
+    private fun string(id: Int, vararg args: Any) = context.getString(id, *args)
 
     @Test
     fun `shows loading indicator in loading state`() {
@@ -42,7 +48,7 @@ class TransactionsScreenTest {
         }
 
         composeTestRule.onNodeWithTag(TransactionsTestTags.EMPTY).assertIsDisplayed()
-        composeTestRule.onNodeWithText("No transactions yet").assertIsDisplayed()
+        composeTestRule.onNodeWithText(string(R.string.transactions_empty_title)).assertIsDisplayed()
     }
 
     @Test
@@ -79,7 +85,7 @@ class TransactionsScreenTest {
         }
 
         composeTestRule.onNodeWithTag(TransactionsTestTags.LIST).assertIsDisplayed()
-        composeTestRule.onNodeWithText("Today").assertIsDisplayed()
+        composeTestRule.onNodeWithText(string(R.string.transactions_date_header_today)).assertIsDisplayed()
         composeTestRule.onNodeWithText("COFFEE").assertIsDisplayed()
     }
 
@@ -116,9 +122,9 @@ class TransactionsScreenTest {
             .performTouchInput { swipeLeft() }
 
         assertThat(deletedItem).isEqualTo(item)
-        composeTestRule.onNodeWithText("Deleted \"COFFEE\"").assertIsDisplayed()
+        composeTestRule.onNodeWithText(string(R.string.transactions_deleted_snackbar, "COFFEE")).assertIsDisplayed()
 
-        composeTestRule.onNodeWithText("Undo").performClick()
+        composeTestRule.onNodeWithText(string(R.string.transactions_undo)).performClick()
 
         assertThat(undone).isTrue()
     }

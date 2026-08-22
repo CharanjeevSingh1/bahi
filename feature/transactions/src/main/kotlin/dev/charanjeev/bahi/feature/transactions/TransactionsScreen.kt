@@ -37,6 +37,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -80,11 +81,17 @@ internal fun TransactionsScreen(
     // Keyed on the pending delete itself (not just "is it non-null") so a
     // second swipe while the first snackbar is still up starts a fresh one.
     val pendingDelete = (uiState as? TransactionsUiState.Success)?.pendingDelete
+    // Resolved here, in composition, and captured by the effect below --
+    // stringResource is @Composable and can't be called from inside it.
+    val undoLabel = stringResource(R.string.transactions_undo)
+    val deletedMessage = pendingDelete?.let {
+        stringResource(R.string.transactions_deleted_snackbar, it.transaction.description)
+    }
     LaunchedEffect(pendingDelete) {
-        if (pendingDelete == null) return@LaunchedEffect
+        if (deletedMessage == null) return@LaunchedEffect
         val result = snackbarHostState.showSnackbar(
-            message = "Deleted \"${pendingDelete.transaction.description}\"",
-            actionLabel = "Undo",
+            message = deletedMessage,
+            actionLabel = undoLabel,
             duration = SnackbarDuration.Short,
         )
         if (result == SnackbarResult.ActionPerformed) onUndoDelete() else onDeleteSnackbarDismissed()
@@ -135,11 +142,11 @@ private fun TransactionsTopBar(uiState: TransactionsUiState) {
     TopAppBar(
         title = {
             Column {
-                Text("Transactions", style = MaterialTheme.typography.titleLarge)
+                Text(stringResource(R.string.transactions_title), style = MaterialTheme.typography.titleLarge)
                 if (uiState is TransactionsUiState.Success) {
                     Row {
                         Text(
-                            text = "Net ",
+                            text = stringResource(R.string.transactions_net_label) + " ",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -162,14 +169,13 @@ private fun EmptyState(modifier: Modifier = Modifier) {
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Text(
-            text = "No transactions yet",
+            text = stringResource(R.string.transactions_empty_title),
             style = MaterialTheme.typography.titleMedium,
             textAlign = TextAlign.Center,
         )
         Spacer(modifier = Modifier.height(8.dp))
         Text(
-            text = "Add a transaction by hand, or import a bank statement, " +
-                "and it'll show up here grouped by day.",
+            text = stringResource(R.string.transactions_empty_body),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
@@ -184,7 +190,7 @@ private fun ErrorState(message: String, onRetry: () -> Unit, modifier: Modifier 
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Text(
-            text = "Couldn't load transactions",
+            text = stringResource(R.string.transactions_error_title),
             style = MaterialTheme.typography.titleMedium,
             textAlign = TextAlign.Center,
         )
@@ -200,7 +206,7 @@ private fun ErrorState(message: String, onRetry: () -> Unit, modifier: Modifier 
             onClick = onRetry,
             modifier = Modifier.testTag(TransactionsTestTags.ERROR_RETRY),
         ) {
-            Text("Retry")
+            Text(stringResource(R.string.transactions_retry))
         }
     }
 }
@@ -236,9 +242,10 @@ private fun DateHeaderRow(header: DateHeader, modifier: Modifier = Modifier) {
     }
 }
 
+@Composable
 private fun DateHeader.displayText(locale: Locale = Locale.getDefault()): String = when (this) {
-    DateHeader.Today -> "Today"
-    DateHeader.Yesterday -> "Yesterday"
+    DateHeader.Today -> stringResource(R.string.transactions_date_header_today)
+    DateHeader.Yesterday -> stringResource(R.string.transactions_date_header_yesterday)
     is DateHeader.Dated -> date.toJavaLocalDate()
         .format(DateTimeFormatter.ofPattern("d MMMM yyyy", locale))
 }
@@ -268,7 +275,7 @@ private fun SwipeableTransactionRow(
                 contentAlignment = Alignment.CenterEnd,
             ) {
                 Text(
-                    text = "Delete",
+                    text = stringResource(R.string.transactions_swipe_delete_label),
                     color = MaterialTheme.colorScheme.onErrorContainer,
                     style = MaterialTheme.typography.labelLarge,
                 )
@@ -295,7 +302,7 @@ private fun TransactionRow(item: TransactionListItem) {
 
 @Composable
 private fun CategoryChip(category: Category?, modifier: Modifier = Modifier) {
-    val label = category?.name ?: "Uncategorised"
+    val label = category?.name ?: stringResource(R.string.transactions_uncategorised)
     val tint = category?.let { Color(it.colorArgb) } ?: MaterialTheme.colorScheme.surfaceVariant
     Surface(
         color = tint.copy(alpha = 0.18f),
