@@ -9,14 +9,15 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarDuration
@@ -39,6 +40,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -294,25 +296,38 @@ private fun SwipeableTransactionRow(
  * is a step lighter; the category chip is the lightest element in the row.
  * All three come from the M3 type scale rather than one-off font sizes, so
  * the hierarchy stays consistent with the rest of the app.
+ *
+ * A plain Row rather than ListItem: ListItem's built-in two-line spec height
+ * (~72dp) is what held the list to about nine rows on a large phone. This
+ * wraps to content instead, with heightIn(min = 48.dp) as the accessibility
+ * floor rather than the ~72dp default.
  */
 @Composable
 private fun TransactionRow(item: TransactionListItem) {
-    ListItem(
-        headlineContent = {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 48.dp)
+            .padding(horizontal = 16.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = titleCaseTransactionDescription(item.transaction.description),
                 style = MaterialTheme.typography.bodyLarge,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
-        },
-        supportingContent = { CategoryChip(item.category) },
-        trailingContent = {
-            MoneyText(
-                money = item.transaction.amount,
-                currencyCode = item.transaction.currencyCode,
-                style = MaterialTheme.typography.titleMedium,
-            )
-        },
-    )
+            Spacer(modifier = Modifier.height(2.dp))
+            CategoryChip(item.category)
+        }
+        Spacer(modifier = Modifier.width(12.dp))
+        MoneyText(
+            money = item.transaction.amount,
+            currencyCode = item.transaction.currencyCode,
+            style = MaterialTheme.typography.titleMedium,
+        )
+    }
 }
 
 @Composable
@@ -327,7 +342,9 @@ private fun CategoryChip(category: Category?, modifier: Modifier = Modifier) {
         Text(
             text = label,
             style = MaterialTheme.typography.labelSmall,
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
         )
     }
 }
