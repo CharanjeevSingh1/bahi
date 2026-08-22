@@ -37,7 +37,7 @@ Kotlin, Jetpack Compose, Room, Hilt, WorkManager, Coroutines/Flow. Single-activi
 - ViewModel tests use `MainDispatcherRule` + Turbine.
 - Assertions use Truth (`assertThat`).
 - Every new public behaviour in `:core:model` or `:core:data` gets a unit test in the same commit.
-- Test names use backticks and describe behaviour: `` `emits empty when repository has no transactions` ``.
+- Test names: JVM unit tests under `test/` use backticked names with spaces, e.g. `` `emits empty when repository has no transactions` ``. Instrumented tests under `androidTest/` use `lowerCamelCase_withUnderscores` -- DEX rejects method names containing spaces below API 30, and `minSdk` is 26.
 
 ## Build
 
