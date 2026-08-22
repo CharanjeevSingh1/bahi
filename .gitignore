@@ -13,4 +13,7 @@ captures/
 *.keystore
 !debug.keystore
 release/
+# The bare rule above is for a top-level signing/output dir, but it also
+# matches any app/src/release build-type source set -- claw that back.
+!app/src/release/
 .claude/

@@ -39,6 +39,10 @@ class OfflineFirstTransactionRepository @Inject constructor(
         transactionDao.softDelete(id, System.currentTimeMillis())
     }
 
+    override suspend fun undoDelete(id: String) = withContext(ioDispatcher) {
+        transactionDao.undoSoftDelete(id)
+    }
+
     override suspend fun importAll(transactions: List<Transaction>): Int =
         withContext(ioDispatcher) {
             transactionDao.importBatch(transactions.map(::toEntity))

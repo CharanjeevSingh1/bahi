@@ -18,6 +18,9 @@ interface TransactionRepository {
 
     suspend fun delete(id: String)
 
+    /** Reverses a soft delete: clears the tombstone and the pending DELETE. */
+    suspend fun undoDelete(id: String)
+
     /** Returns the number of rows actually inserted after de-duplication. */
     suspend fun importAll(transactions: List<Transaction>): Int
 }

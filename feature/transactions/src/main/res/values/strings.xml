@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="transactions_title">Transactions</string>
+    <string name="transactions_net_label">Net · %1$s</string>
+    <string name="transactions_empty_title">No transactions yet</string>
+    <string name="transactions_empty_body">Add a transaction by hand, or import a bank statement, and it\'ll show up here grouped by day.</string>
+    <string name="transactions_error_title">Couldn\'t load transactions</string>
+    <string name="transactions_retry">Retry</string>
+    <string name="transactions_date_header_today">Today</string>
+    <string name="transactions_date_header_yesterday">Yesterday</string>
+    <string name="transactions_swipe_delete_label">Delete</string>
+    <string name="transactions_deleted_snackbar">Deleted \"%1$s\"</string>
+    <string name="transactions_undo">Undo</string>
+    <string name="transactions_uncategorised">Uncategorised</string>
+</resources>
