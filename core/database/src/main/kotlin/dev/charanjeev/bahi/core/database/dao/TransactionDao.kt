@@ -53,11 +53,17 @@ interface TransactionDao {
     )
     suspend fun softDelete(id: String, deletedAt: Long)
 
-    /** Reverses [softDelete]. Only meaningful while the DELETE is still pending sync. */
+    /**
+     * Reverses [softDelete]. Sets pending_operation back to UPSERT rather than
+     * clearing it -- NULL means "in sync with remote", which is false the
+     * moment the DELETE this undoes has already been pushed: the remote would
+     * keep the deletion and the row would vanish again on the next sync.
+     * UPSERT re-asserts the row so sync pushes it back.
+     */
     @Query(
         """
         UPDATE transactions
-        SET deleted_at = NULL, pending_operation = NULL, local_revision = local_revision + 1
+        SET deleted_at = NULL, pending_operation = 'UPSERT', local_revision = local_revision + 1
         WHERE id = :id
         """,
     )
