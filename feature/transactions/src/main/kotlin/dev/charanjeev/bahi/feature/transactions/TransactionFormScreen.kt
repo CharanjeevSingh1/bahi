@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.matchParentSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
@@ -18,7 +17,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
@@ -56,6 +54,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.charanjeev.bahi.core.model.Category
 import java.time.format.DateTimeFormatter
+import java.util.Currency
 import java.util.Locale
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.datetime.Instant
@@ -127,9 +126,10 @@ internal fun TransactionFormScreen(
         modifier = modifier,
         topBar = {
             TransactionFormTopBar(
-                mode = (uiState as? TransactionFormUiState.Editing)?.mode,
+                editingState = uiState as? TransactionFormUiState.Editing,
                 onBackRequested = onBackRequested,
                 onDeleteRequested = { showDeleteConfirmation = true },
+                onSave = onSave,
             )
         },
     ) { contentPadding ->
@@ -158,7 +158,6 @@ internal fun TransactionFormScreen(
                     onDescriptionChange = onDescriptionChange,
                     onCategorySelected = onCategorySelected,
                     onNotesChange = onNotesChange,
-                    onSave = onSave,
                     modifier = Modifier
                         .fillMaxSize()
                         .testTag(TransactionFormTestTags.FORM),
@@ -212,15 +211,20 @@ internal fun TransactionFormScreen(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun TransactionFormTopBar(
-    mode: FormMode?,
+    editingState: TransactionFormUiState.Editing?,
     onBackRequested: () -> Unit,
     onDeleteRequested: () -> Unit,
+    onSave: () -> Unit,
 ) {
     TopAppBar(
         title = {
             Text(
                 text = stringResource(
-                    if (mode == FormMode.EDIT) R.string.transactions_form_title_edit else R.string.transactions_form_title_add,
+                    if (editingState?.mode == FormMode.EDIT) {
+                        R.string.transactions_form_title_edit
+                    } else {
+                        R.string.transactions_form_title_add
+                    },
                 ),
             )
         },
@@ -233,7 +237,7 @@ private fun TransactionFormTopBar(
             }
         },
         actions = {
-            if (mode == FormMode.EDIT) {
+            if (editingState?.mode == FormMode.EDIT) {
                 IconButton(
                     onClick = onDeleteRequested,
                     modifier = Modifier.testTag(TransactionFormTestTags.DELETE_BUTTON),
@@ -242,6 +246,18 @@ private fun TransactionFormTopBar(
                         imageVector = Icons.Filled.Delete,
                         contentDescription = stringResource(R.string.transactions_form_delete_content_description),
                     )
+                }
+            }
+            // Save lives here rather than as a full-width button at the foot
+            // of the form -- a short form doesn't need a heavy commit action,
+            // and this keeps it next to Back instead of a scroll away.
+            if (editingState != null) {
+                TextButton(
+                    onClick = onSave,
+                    enabled = !editingState.isSaving,
+                    modifier = Modifier.testTag(TransactionFormTestTags.SAVE_BUTTON),
+                ) {
+                    Text(stringResource(R.string.transactions_form_save))
                 }
             }
         },
@@ -258,7 +274,6 @@ private fun TransactionFormContent(
     onDescriptionChange: (String) -> Unit,
     onCategorySelected: (String) -> Unit,
     onNotesChange: (String) -> Unit,
-    onSave: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -287,13 +302,17 @@ private fun TransactionFormContent(
             }
         }
 
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(12.dp))
 
+        // The currency's own symbol, not the ISO code -- INR-only today, but
+        // reading it off Currency instead of hardcoding "₹" is what makes
+        // this correct if a second currency ever shows up here.
+        val currencySymbol = remember(uiState.currencyCode) { Currency.getInstance(uiState.currencyCode).symbol }
         OutlinedTextField(
             value = uiState.amountText,
             onValueChange = onAmountTextChange,
             label = { Text(stringResource(R.string.transactions_form_amount_label)) },
-            prefix = { Text(uiState.currencyCode) },
+            prefix = { Text(currencySymbol) },
             singleLine = true,
             isError = uiState.showAmountError,
             supportingText = {
@@ -316,11 +335,11 @@ private fun TransactionFormContent(
                 .testTag(TransactionFormTestTags.AMOUNT_FIELD),
         )
 
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(12.dp))
 
         DateField(date = uiState.date, onDateChange = onDateChange)
 
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(12.dp))
 
         OutlinedTextField(
             value = uiState.description,
@@ -338,7 +357,7 @@ private fun TransactionFormContent(
                 .testTag(TransactionFormTestTags.DESCRIPTION_FIELD),
         )
 
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(12.dp))
 
         CategoryField(
             categories = uiState.categories,
@@ -346,7 +365,7 @@ private fun TransactionFormContent(
             onCategorySelected = onCategorySelected,
         )
 
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(12.dp))
 
         OutlinedTextField(
             value = uiState.notes,
@@ -356,18 +375,6 @@ private fun TransactionFormContent(
                 .fillMaxWidth()
                 .testTag(TransactionFormTestTags.NOTES_FIELD),
         )
-
-        Spacer(Modifier.height(24.dp))
-
-        Button(
-            onClick = onSave,
-            enabled = !uiState.isSaving,
-            modifier = Modifier
-                .fillMaxWidth()
-                .testTag(TransactionFormTestTags.SAVE_BUTTON),
-        ) {
-            Text(stringResource(R.string.transactions_form_save))
-        }
     }
 }
 
