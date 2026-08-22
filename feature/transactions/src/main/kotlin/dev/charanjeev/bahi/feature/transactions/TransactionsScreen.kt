@@ -52,6 +52,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.charanjeev.bahi.core.model.Category
+import dev.charanjeev.bahi.core.model.Money
 import dev.charanjeev.bahi.core.ui.MoneyText
 import dev.charanjeev.bahi.core.ui.titleCaseTransactionDescription
 import java.time.format.DateTimeFormatter
@@ -202,20 +203,28 @@ internal fun TransactionsScreen(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun TransactionsTopBar(uiState: TransactionsUiState) {
+    // EmptyFiltered still carries a (zero) net total for the active filter --
+    // showing it here rather than nothing is what keeps a legitimately empty
+    // filtered range from reading as a rendering bug.
+    val netLine = when (uiState) {
+        is TransactionsUiState.Success -> NetLine(uiState.netPeriod, uiState.netTotal, uiState.currencyCode)
+        is TransactionsUiState.EmptyFiltered -> NetLine(uiState.netPeriod, uiState.netTotal, uiState.currencyCode)
+        else -> null
+    }
     TopAppBar(
         title = {
             Column {
                 Text(stringResource(R.string.transactions_title), style = MaterialTheme.typography.titleLarge)
-                if (uiState is TransactionsUiState.Success) {
+                if (netLine != null) {
                     Row {
                         Text(
-                            text = netLabel(uiState.netPeriod) + " ",
+                            text = netLabel(netLine.period) + " ",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         MoneyText(
-                            money = uiState.netTotal,
-                            currencyCode = uiState.currencyCode,
+                            money = netLine.total,
+                            currencyCode = netLine.currencyCode,
                             style = MaterialTheme.typography.bodyMedium,
                         )
                     }
@@ -224,6 +233,8 @@ private fun TransactionsTopBar(uiState: TransactionsUiState) {
         },
     )
 }
+
+private data class NetLine(val period: NetPeriod, val total: Money, val currencyCode: String)
 
 @Composable
 private fun netLabel(period: NetPeriod): String = when (period) {

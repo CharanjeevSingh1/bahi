@@ -239,7 +239,12 @@ class TransactionsViewModelTest {
 
             val state = awaitItem()
             assertThat(state).isInstanceOf(TransactionsUiState.EmptyFiltered::class.java)
-            assertThat((state as TransactionsUiState.EmptyFiltered).filter.categoryIds).containsExactly("nonexistent")
+            val filtered = state as TransactionsUiState.EmptyFiltered
+            assertThat(filtered.filter.categoryIds).containsExactly("nonexistent")
+            // Zero, not absent -- a missing total would read as a rendering
+            // bug rather than "nothing matched this filter."
+            assertThat(filtered.netTotal).isEqualTo(Money.ZERO)
+            assertThat(filtered.netPeriod).isEqualTo(NetPeriod.Filtered)
         }
     }
 

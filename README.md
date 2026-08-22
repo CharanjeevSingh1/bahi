@@ -19,6 +19,8 @@ Two problems here are genuinely hard and get the most attention:
 
 <p align="center">
   <img src="docs/screenshots/transactions.png" width="320" alt="Transaction list grouped by date">
+  <img src="docs/screenshots/list-with-active-filter.png" width="320" alt="Transaction list with a category and date filter applied">
+  <img src="docs/screenshots/filtered-empty.png" width="320" alt="Filtered-empty state showing a zero total for the filtered range">
 </p>
 ---
 

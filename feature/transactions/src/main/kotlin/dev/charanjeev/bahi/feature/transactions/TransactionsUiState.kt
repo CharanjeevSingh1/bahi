@@ -18,10 +18,19 @@ sealed interface TransactionsUiState {
     /** No transactions exist at all -- onboarding copy, not to be confused with [EmptyFiltered]. */
     data object Empty : TransactionsUiState
 
-    /** At least one transaction exists, but none match the active filter. Distinct from [Empty]: the fix is to clear the filter, not to add a transaction. */
+    /**
+     * At least one transaction exists, but none match the active filter.
+     * Distinct from [Empty]: the fix is to clear the filter, not to add a
+     * transaction. Still carries a net total -- zero, since nothing matched
+     * -- so the top bar shows "...₹0.00" rather than nothing at all, which
+     * would read as a rendering bug instead of a deliberate answer.
+     */
     data class EmptyFiltered(
         val filter: TransactionFilterState,
         val availableCategories: ImmutableList<Category> = persistentListOf(),
+        val netTotal: Money = Money.ZERO,
+        val netPeriod: NetPeriod = NetPeriod.Month(LocalDate(1970, 1, 1)),
+        val currencyCode: String = "INR",
     ) : TransactionsUiState
 
     data class Success(

@@ -75,7 +75,11 @@ class TransactionsViewModel @Inject constructor(
                 val categoriesList = categories.toPersistentList()
                 if (transactions.isEmpty()) {
                     if (filter.isActive) {
-                        TransactionsUiState.EmptyFiltered(filter = filter, availableCategories = categoriesList)
+                        TransactionsUiState.EmptyFiltered(
+                            filter = filter,
+                            availableCategories = categoriesList,
+                            netPeriod = filter.toNetPeriod(today),
+                        )
                     } else {
                         TransactionsUiState.Empty
                     }

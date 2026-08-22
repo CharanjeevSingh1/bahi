@@ -1,5 +1,6 @@
 package dev.charanjeev.bahi.feature.transactions
 
+import dev.charanjeev.bahi.core.model.Category
 import dev.charanjeev.bahi.core.model.DateWindow
 import dev.charanjeev.bahi.core.model.TransactionFilter
 import kotlinx.datetime.LocalDate
@@ -56,6 +57,27 @@ fun TransactionFilterState.toNetPeriod(today: LocalDate): NetPeriod = when (date
         NetPeriod.Range(customFrom, customTo)
     } else {
         NetPeriod.Filtered
+    }
+}
+
+/**
+ * What the category chip should show. Two names still reads as a chip; three
+ * or more would grow the chip unbounded and crush its neighbour, so a count
+ * takes over at that point instead.
+ */
+sealed interface CategoryChipContent {
+    data object Placeholder : CategoryChipContent
+    data class Names(val names: List<String>) : CategoryChipContent
+    data class Count(val count: Int) : CategoryChipContent
+}
+
+fun TransactionFilterState.categoryChipContent(availableCategories: List<Category>): CategoryChipContent {
+    if (categoryIds.isEmpty()) return CategoryChipContent.Placeholder
+    val names = availableCategories.filter { it.id in categoryIds }.map { it.name }
+    return when {
+        names.isEmpty() -> CategoryChipContent.Placeholder
+        names.size <= 2 -> CategoryChipContent.Names(names)
+        else -> CategoryChipContent.Count(names.size)
     }
 }
 

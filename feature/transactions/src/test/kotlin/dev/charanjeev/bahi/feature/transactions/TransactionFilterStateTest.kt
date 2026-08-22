@@ -1,6 +1,7 @@
 package dev.charanjeev.bahi.feature.transactions
 
 import com.google.common.truth.Truth.assertThat
+import dev.charanjeev.bahi.core.model.Category
 import dev.charanjeev.bahi.core.model.DateWindow
 import kotlinx.datetime.LocalDate
 import org.junit.Test
@@ -8,6 +9,9 @@ import org.junit.Test
 class TransactionFilterStateTest {
 
     private val today = LocalDate(2026, 3, 14)
+
+    private val categories = listOf("food", "groceries", "shopping", "transfers", "transport")
+        .map { id -> Category(id = id, name = id.replaceFirstChar { it.uppercase() }, colorArgb = 0xFF000000.toInt(), iconKey = id) }
 
     @Test
     fun `no date range option resolves to no date window`() {
@@ -129,5 +133,43 @@ class TransactionFilterStateTest {
         val state = TransactionFilterState(categoryIds = setOf("food"))
 
         assertThat(state.toNetPeriod(today)).isEqualTo(NetPeriod.Filtered)
+    }
+
+    // --- Category chip content ---
+
+    @Test
+    fun `no categories selected shows the placeholder`() {
+        val state = TransactionFilterState()
+
+        assertThat(state.categoryChipContent(categories)).isEqualTo(CategoryChipContent.Placeholder)
+    }
+
+    @Test
+    fun `one category selected shows its name`() {
+        val state = TransactionFilterState(categoryIds = setOf("food"))
+
+        assertThat(state.categoryChipContent(categories)).isEqualTo(CategoryChipContent.Names(listOf("Food")))
+    }
+
+    @Test
+    fun `two categories selected shows both names`() {
+        val state = TransactionFilterState(categoryIds = setOf("food", "groceries"))
+
+        assertThat(state.categoryChipContent(categories))
+            .isEqualTo(CategoryChipContent.Names(listOf("Food", "Groceries")))
+    }
+
+    @Test
+    fun `three categories selected shows a count instead of names`() {
+        val state = TransactionFilterState(categoryIds = setOf("food", "groceries", "shopping"))
+
+        assertThat(state.categoryChipContent(categories)).isEqualTo(CategoryChipContent.Count(3))
+    }
+
+    @Test
+    fun `five categories selected shows a count instead of names`() {
+        val state = TransactionFilterState(categoryIds = categories.map { it.id }.toSet())
+
+        assertThat(state.categoryChipContent(categories)).isEqualTo(CategoryChipContent.Count(5))
     }
 }

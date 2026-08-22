@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -31,6 +32,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.charanjeev.bahi.core.model.Category
 import java.time.format.DateTimeFormatter
@@ -69,25 +71,36 @@ fun FilterBar(
         FilterChip(
             selected = filter.categoryIds.isNotEmpty(),
             onClick = { showCategorySheet = true },
-            label = { Text(categoryChipLabel(filter, availableCategories)) },
+            label = {
+                Text(
+                    text = categoryChipLabel(filter, availableCategories),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            },
             leadingIcon = if (filter.categoryIds.isNotEmpty()) {
                 { Icon(Icons.Filled.Check, contentDescription = null) }
             } else {
                 null
             },
-            modifier = Modifier.testTag(FilterBarTestTags.CATEGORY_CHIP),
+            // weight(fill = false), not a plain weight: the chip should only
+            // grow to what its (now-bounded) label needs and otherwise shrink
+            // out of the Date chip's way, never force itself to fill the row.
+            modifier = Modifier.weight(1f, fill = false).testTag(FilterBarTestTags.CATEGORY_CHIP),
         )
         Spacer(Modifier.width(8.dp))
         FilterChip(
             selected = filter.dateRangeOption != null,
             onClick = { showDateSheet = true },
-            label = { Text(dateChipLabel(filter)) },
+            label = { Text(dateChipLabel(filter), maxLines = 1, overflow = TextOverflow.Ellipsis) },
             leadingIcon = if (filter.dateRangeOption != null) {
                 { Icon(Icons.Filled.Check, contentDescription = null) }
             } else {
                 null
             },
-            modifier = Modifier.testTag(FilterBarTestTags.DATE_CHIP),
+            // A measured minimum so the category chip's weight(fill = false)
+            // can never squeeze this one down to a vertically-stacked sliver.
+            modifier = Modifier.widthIn(min = 96.dp).testTag(FilterBarTestTags.DATE_CHIP),
         )
         if (filter.isActive) {
             Spacer(Modifier.width(8.dp))
@@ -143,12 +156,12 @@ fun FilterBar(
 }
 
 @Composable
-private fun categoryChipLabel(filter: TransactionFilterState, availableCategories: ImmutableList<Category>): String {
-    val defaultLabel = stringResource(R.string.transactions_filter_category_label)
-    if (filter.categoryIds.isEmpty()) return defaultLabel
-    val names = availableCategories.filter { it.id in filter.categoryIds }.map { it.name }
-    return names.joinToString(", ").ifEmpty { defaultLabel }
-}
+private fun categoryChipLabel(filter: TransactionFilterState, availableCategories: ImmutableList<Category>): String =
+    when (val content = filter.categoryChipContent(availableCategories)) {
+        CategoryChipContent.Placeholder -> stringResource(R.string.transactions_filter_category_label)
+        is CategoryChipContent.Names -> content.names.joinToString(", ")
+        is CategoryChipContent.Count -> stringResource(R.string.transactions_filter_category_count, content.count)
+    }
 
 @Composable
 private fun dateChipLabel(filter: TransactionFilterState): String = when (filter.dateRangeOption) {

@@ -164,6 +164,25 @@ class TransactionsScreenTest {
     }
 
     @Test
+    fun filteredEmptyState_stillShowsTheZeroTotalForTheFilteredRange() {
+        val from = LocalDate(2026, 8, 1)
+        val to = LocalDate(2026, 8, 9)
+        val state = TransactionsUiState.EmptyFiltered(
+            filter = TransactionFilterState(dateRangeOption = DateRangeOption.CUSTOM, customFrom = from, customTo = to),
+            netPeriod = NetPeriod.Range(from, to),
+        )
+
+        composeTestRule.setContent {
+            TransactionsScreen(uiState = state)
+        }
+
+        // A missing total here would read as a rendering bug rather than
+        // "nothing matched this filter" -- it must show even at zero.
+        composeTestRule.onNodeWithText(string(R.string.transactions_net_label_range, "1 Aug", "9 Aug"), substring = true)
+            .assertIsDisplayed()
+    }
+
+    @Test
     fun noActiveFilter_hidesTheClearButton() {
         val item = TransactionListItem(
             transaction = TestData.transaction(id = "a", date = LocalDate(2026, 3, 14)),
