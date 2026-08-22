@@ -1,6 +1,7 @@
 package dev.charanjeev.bahi.core.data.repository
 
 import dev.charanjeev.bahi.core.model.Transaction
+import dev.charanjeev.bahi.core.model.TransactionFilter
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -10,7 +11,8 @@ import kotlinx.coroutines.flow.Flow
  */
 interface TransactionRepository {
 
-    fun observeTransactions(): Flow<List<Transaction>>
+    /** [filter] is applied as a query, not by the caller filtering the returned list. */
+    fun observeTransactions(filter: TransactionFilter = TransactionFilter.NONE): Flow<List<Transaction>>
 
     fun observeTransaction(id: String): Flow<Transaction?>
 

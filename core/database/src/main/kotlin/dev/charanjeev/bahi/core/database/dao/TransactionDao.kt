@@ -12,26 +12,30 @@ import kotlinx.coroutines.flow.Flow
 @Dao
 interface TransactionDao {
 
+    @Query("SELECT * FROM transactions WHERE id = :id AND deleted_at IS NULL")
+    fun observeById(id: String): Flow<TransactionEntity?>
+
+    /**
+     * categoryCount and hasDateWindow turn an absent filter into a no-op
+     * condition instead of Room needing a separate query per combination --
+     * an empty :categoryIds would otherwise make `IN ()` reject every row.
+     */
     @Query(
         """
         SELECT * FROM transactions
         WHERE deleted_at IS NULL
+          AND (:categoryCount = 0 OR category_id IN (:categoryIds))
+          AND (:hasDateWindow = 0 OR date BETWEEN :from AND :to)
         ORDER BY date DESC, created_at DESC
         """,
     )
-    fun observeAll(): Flow<List<TransactionEntity>>
-
-    @Query("SELECT * FROM transactions WHERE id = :id AND deleted_at IS NULL")
-    fun observeById(id: String): Flow<TransactionEntity?>
-
-    @Query(
-        """
-        SELECT * FROM transactions
-        WHERE deleted_at IS NULL AND date BETWEEN :from AND :to
-        ORDER BY date DESC
-        """,
-    )
-    fun observeBetween(from: String, to: String): Flow<List<TransactionEntity>>
+    fun observeFiltered(
+        categoryIds: List<String>,
+        categoryCount: Int,
+        hasDateWindow: Int,
+        from: String,
+        to: String,
+    ): Flow<List<TransactionEntity>>
 
     /** Used by the CSV importer to detect rows that already exist. */
     @Query("SELECT content_hash FROM transactions WHERE content_hash IN (:hashes)")

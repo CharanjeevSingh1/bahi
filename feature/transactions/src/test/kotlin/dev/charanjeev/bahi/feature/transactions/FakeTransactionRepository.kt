@@ -2,6 +2,7 @@ package dev.charanjeev.bahi.feature.transactions
 
 import dev.charanjeev.bahi.core.data.repository.TransactionRepository
 import dev.charanjeev.bahi.core.model.Transaction
+import dev.charanjeev.bahi.core.model.TransactionFilter
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.map
@@ -36,9 +37,15 @@ class FakeTransactionRepository : TransactionRepository {
         failure = null
     }
 
-    override fun observeTransactions(): Flow<List<Transaction>> = backing.map { transactions ->
+    // In-memory filtering is fine for a fake standing in for a real query --
+    // what matters is that TransactionsViewModel never does this itself.
+    override fun observeTransactions(filter: TransactionFilter): Flow<List<Transaction>> = backing.map { transactions ->
         failure?.let { throw it }
-        transactions
+        val window = filter.dateWindow
+        transactions.filter { transaction ->
+            (filter.categoryIds.isEmpty() || transaction.categoryId in filter.categoryIds) &&
+                (window == null || transaction.date in window.from..window.to)
+        }
     }
 
     override fun observeTransaction(id: String): Flow<Transaction?> =

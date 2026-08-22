@@ -4,6 +4,7 @@ import dev.charanjeev.bahi.core.common.Dispatcher
 import dev.charanjeev.bahi.core.common.BahiDispatcher
 import dev.charanjeev.bahi.core.database.dao.TransactionDao
 import dev.charanjeev.bahi.core.model.Transaction
+import dev.charanjeev.bahi.core.model.TransactionFilter
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -25,8 +26,14 @@ class OfflineFirstTransactionRepository @Inject constructor(
     @param:Dispatcher(BahiDispatcher.IO) private val ioDispatcher: CoroutineDispatcher,
 ) : TransactionRepository {
 
-    override fun observeTransactions(): Flow<List<Transaction>> =
-        transactionDao.observeAll().map { entities -> entities.map(::toDomain) }
+    override fun observeTransactions(filter: TransactionFilter): Flow<List<Transaction>> =
+        transactionDao.observeFiltered(
+            categoryIds = filter.categoryIds.toList(),
+            categoryCount = filter.categoryIds.size,
+            hasDateWindow = if (filter.dateWindow != null) 1 else 0,
+            from = filter.dateWindow?.from?.toString().orEmpty(),
+            to = filter.dateWindow?.to?.toString().orEmpty(),
+        ).map { entities -> entities.map(::toDomain) }
 
     override fun observeTransaction(id: String): Flow<Transaction?> =
         transactionDao.observeById(id).map { it?.let(::toDomain) }
