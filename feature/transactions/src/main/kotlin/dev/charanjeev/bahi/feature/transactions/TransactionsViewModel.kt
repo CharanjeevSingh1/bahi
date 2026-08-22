@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.charanjeev.bahi.core.data.repository.CategoryRepository
 import dev.charanjeev.bahi.core.data.repository.TransactionRepository
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -36,6 +37,7 @@ class TransactionsViewModel @Inject constructor(
     // instead of needing its own separate trigger plumbing.
     private val retrySignal = MutableSharedFlow<Unit>(replay = 1).apply { tryEmit(Unit) }
 
+    @OptIn(ExperimentalCoroutinesApi::class)
     val uiState: StateFlow<TransactionsUiState> = retrySignal
         .flatMapLatest {
             // .catch scoped to this one attempt, not the outer retrySignal chain:
