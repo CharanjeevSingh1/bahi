@@ -171,7 +171,11 @@ class TransactionFormViewModel @Inject constructor(
     }
 
     fun onDescriptionChange(value: String) {
-        savedStateHandle[KEY_DESCRIPTION] = value
+        // Clamped here rather than left to validation alone -- a pasted
+        // description longer than the limit should never make it into the
+        // field in the first place, the same way sanitizeAmountInput never
+        // lets an invalid character reach the amount field.
+        savedStateHandle[KEY_DESCRIPTION] = value.take(DESCRIPTION_MAX_LENGTH)
         markDirty()
     }
 

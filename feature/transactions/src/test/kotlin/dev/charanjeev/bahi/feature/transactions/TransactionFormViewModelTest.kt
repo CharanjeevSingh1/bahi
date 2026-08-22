@@ -280,6 +280,40 @@ class TransactionFormViewModelTest {
         assertThat(transactionRepository.upserted).isEmpty()
     }
 
+    @Test
+    fun `typing past the description limit is truncated as it's entered`() = runTest {
+        val viewModel = addViewModel()
+
+        viewModel.uiState.test {
+            skipItems(1) // Loading
+            skipItems(1) // loaded, empty
+
+            viewModel.onDescriptionChange("a".repeat(150))
+
+            val state = awaitItem() as TransactionFormUiState.Editing
+            assertThat(state.description).hasLength(DESCRIPTION_MAX_LENGTH)
+        }
+    }
+
+    @Test
+    fun `a description already over the limit when a transaction loads is blocked from saving`() = runTest {
+        transactionRepository.upsert(
+            TestData.transaction(id = "a", description = "a".repeat(DESCRIPTION_MAX_LENGTH + 1)),
+        )
+        val viewModel = editViewModel("a")
+
+        viewModel.uiState.test {
+            skipItems(1) // Loading
+            skipItems(1) // loaded, prefilled
+
+            viewModel.onSave()
+            val afterSave = awaitItem() as TransactionFormUiState.Editing
+            assertThat(afterSave.showDescriptionError).isTrue()
+            assertThat(afterSave.descriptionError).isEqualTo(DescriptionError.TOO_LONG)
+        }
+        assertThat(transactionRepository.updated).isEmpty()
+    }
+
     // --- Category ---
 
     @Test

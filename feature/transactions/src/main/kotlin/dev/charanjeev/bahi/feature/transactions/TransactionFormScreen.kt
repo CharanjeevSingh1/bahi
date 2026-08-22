@@ -349,7 +349,15 @@ private fun TransactionFormContent(
             isError = uiState.showDescriptionError,
             supportingText = {
                 if (uiState.showDescriptionError) {
-                    Text(stringResource(R.string.transactions_form_description_error))
+                    Text(
+                        stringResource(
+                            if (uiState.descriptionError == DescriptionError.TOO_LONG) {
+                                R.string.transactions_form_description_error_too_long
+                            } else {
+                                R.string.transactions_form_description_error
+                            },
+                        ),
+                    )
                 }
             },
             modifier = Modifier
