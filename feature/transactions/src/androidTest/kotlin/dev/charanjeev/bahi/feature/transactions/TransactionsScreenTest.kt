@@ -33,7 +33,7 @@ class TransactionsScreenTest {
     private fun string(id: Int, vararg args: Any) = context.getString(id, *args)
 
     @Test
-    fun `shows loading indicator in loading state`() {
+    fun loadingState_showsLoadingIndicator() {
         composeTestRule.setContent {
             TransactionsScreen(uiState = TransactionsUiState.Loading)
         }
@@ -42,7 +42,7 @@ class TransactionsScreenTest {
     }
 
     @Test
-    fun `shows an explanation and a call to action in the empty state`() {
+    fun emptyState_showsExplanationAndCallToAction() {
         composeTestRule.setContent {
             TransactionsScreen(uiState = TransactionsUiState.Empty)
         }
@@ -52,7 +52,7 @@ class TransactionsScreenTest {
     }
 
     @Test
-    fun `shows the error message with a working retry action`() {
+    fun errorState_showsMessageWithWorkingRetryAction() {
         var retried = false
         composeTestRule.setContent {
             TransactionsScreen(
@@ -69,7 +69,7 @@ class TransactionsScreenTest {
     }
 
     @Test
-    fun `shows transactions grouped under their date header`() {
+    fun successState_showsTransactionsGroupedUnderDateHeader() {
         val item = TransactionListItem(
             transaction = TestData.transaction(id = "a", description = "COFFEE", date = LocalDate(2026, 3, 14)),
             category = null,
@@ -91,7 +91,7 @@ class TransactionsScreenTest {
     }
 
     @Test
-    fun `swiping a row to delete shows an undo snackbar that restores it`() {
+    fun swipeToDelete_showsUndoSnackbarThatRestoresItem() {
         val item = TransactionListItem(
             transaction = TestData.transaction(id = "a", description = "COFFEE", date = LocalDate(2026, 3, 14)),
             category = null,
