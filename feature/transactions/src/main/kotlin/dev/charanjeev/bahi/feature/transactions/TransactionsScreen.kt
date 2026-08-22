@@ -311,6 +311,10 @@ private fun TransactionRow(item: TransactionListItem) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            // Opaque: ListItem used to give the row a solid background for
+            // free. Without it, the swipe backgroundContent (red "Delete")
+            // shows straight through the row even at rest.
+            .background(MaterialTheme.colorScheme.surface)
             .heightIn(min = 48.dp)
             .padding(horizontal = 16.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
