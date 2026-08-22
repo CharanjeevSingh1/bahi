@@ -15,19 +15,15 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExposedDropdownMenuBox
-import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SegmentedButton
@@ -312,7 +308,11 @@ private fun TransactionFormContent(
             value = uiState.amountText,
             onValueChange = onAmountTextChange,
             label = { Text(stringResource(R.string.transactions_form_amount_label)) },
-            prefix = { Text(currencySymbol) },
+            // leadingIcon, not prefix -- M3 only draws a prefix once the field
+            // has content or focus, so an empty, unfocused field loses its
+            // money affordance right when the user is deciding what to type.
+            // leadingIcon has no such condition.
+            leadingIcon = { Text(currencySymbol) },
             singleLine = true,
             isError = uiState.showAmountError,
             supportingText = {
@@ -450,37 +450,48 @@ private fun CategoryField(
     selectedCategoryId: String?,
     onCategorySelected: (String) -> Unit,
 ) {
-    var expanded by remember { mutableStateOf(false) }
+    var showSheet by remember { mutableStateOf(false) }
+    var searchQuery by remember { mutableStateOf("") }
     val selectedName = categories.firstOrNull { it.id == selectedCategoryId }?.name
         ?: stringResource(R.string.transactions_form_category_none)
 
-    ExposedDropdownMenuBox(
-        expanded = expanded,
-        onExpandedChange = { expanded = it },
-    ) {
+    Box(modifier = Modifier.fillMaxWidth()) {
         OutlinedTextField(
             value = selectedName,
             onValueChange = {},
             readOnly = true,
             label = { Text(stringResource(R.string.transactions_form_category_label)) },
-            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+            trailingIcon = { Icon(Icons.Filled.ArrowDropDown, contentDescription = null) },
             modifier = Modifier
                 .fillMaxWidth()
-                .menuAnchor(MenuAnchorType.PrimaryNotEditable)
                 .testTag(TransactionFormTestTags.CATEGORY_FIELD),
         )
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            categories.forEach { category ->
-                DropdownMenuItem(
-                    text = { Text(category.name) },
-                    onClick = {
-                        onCategorySelected(category.id)
-                        expanded = false
-                    },
-                    modifier = Modifier.testTag(TransactionFormTestTags.categoryOptionTag(category.id)),
-                )
-            }
-        }
+        // A readOnly TextField still consumes clicks for cursor placement, so
+        // opening the sheet needs its own transparent layer on top, same as
+        // the date field above.
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                ) { showSheet = true },
+        )
+    }
+
+    if (showSheet) {
+        CategoryPickerSheet(
+            categories = categories,
+            isSelected = { it.id == selectedCategoryId },
+            onCategoryClick = { category ->
+                onCategorySelected(category.id)
+                showSheet = false
+                searchQuery = ""
+            },
+            onDismissRequest = { showSheet = false; searchQuery = "" },
+            searchQuery = searchQuery,
+            onSearchQueryChange = { searchQuery = it },
+        )
     }
 }
 
@@ -498,5 +509,4 @@ internal object TransactionFormTestTags {
     const val DELETE_CONFIRM = "transaction_form:delete:confirm"
     const val DISCARD_CONFIRM = "transaction_form:discard:confirm"
     fun typeTag(type: TransactionType) = "transaction_form:type:${type.name}"
-    fun categoryOptionTag(categoryId: String) = "transaction_form:category_option:$categoryId"
 }

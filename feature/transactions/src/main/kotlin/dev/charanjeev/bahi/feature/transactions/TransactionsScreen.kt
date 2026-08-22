@@ -52,10 +52,12 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.charanjeev.bahi.core.model.Category
+import dev.charanjeev.bahi.core.model.Money
 import dev.charanjeev.bahi.core.ui.MoneyText
 import dev.charanjeev.bahi.core.ui.titleCaseTransactionDescription
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import kotlinx.datetime.LocalDate
 import kotlinx.datetime.toJavaLocalDate
 
 @Composable
@@ -73,6 +75,10 @@ fun TransactionsRoute(
         onRetry = viewModel::onRetry,
         onAddTransaction = onAddTransaction,
         onTransactionClick = onTransactionClick,
+        onCategoryFilterToggled = viewModel::onCategoryFilterToggled,
+        onDateRangeOptionSelected = viewModel::onDateRangeOptionSelected,
+        onCustomDateRangeSelected = viewModel::onCustomDateRangeSelected,
+        onClearFilters = viewModel::onClearFilters,
     )
 }
 
@@ -91,6 +97,10 @@ internal fun TransactionsScreen(
     onRetry: () -> Unit = {},
     onAddTransaction: () -> Unit = {},
     onTransactionClick: (String) -> Unit = {},
+    onCategoryFilterToggled: (String) -> Unit = {},
+    onDateRangeOptionSelected: (DateRangeOption?) -> Unit = {},
+    onCustomDateRangeSelected: (LocalDate, LocalDate) -> Unit = { _, _ -> },
+    onClearFilters: () -> Unit = {},
 ) {
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -129,36 +139,62 @@ internal fun TransactionsScreen(
             }
         },
     ) { contentPadding ->
-        Box(modifier = Modifier.fillMaxSize().padding(contentPadding)) {
-            when (uiState) {
-                TransactionsUiState.Loading -> CircularProgressIndicator(
-                    modifier = Modifier
-                        .align(Alignment.Center)
-                        .testTag(TransactionsTestTags.LOADING),
+        Column(modifier = Modifier.fillMaxSize().padding(contentPadding)) {
+            val filterBarState = when (uiState) {
+                is TransactionsUiState.Success -> uiState.filter to uiState.availableCategories
+                is TransactionsUiState.EmptyFiltered -> uiState.filter to uiState.availableCategories
+                else -> null
+            }
+            if (filterBarState != null) {
+                val (filter, availableCategories) = filterBarState
+                FilterBar(
+                    filter = filter,
+                    availableCategories = availableCategories,
+                    onCategoryFilterToggled = onCategoryFilterToggled,
+                    onDateRangeOptionSelected = onDateRangeOptionSelected,
+                    onCustomDateRangeSelected = onCustomDateRangeSelected,
+                    onClearFilters = onClearFilters,
                 )
+            }
 
-                TransactionsUiState.Empty -> EmptyState(
-                    modifier = Modifier
-                        .align(Alignment.Center)
-                        .testTag(TransactionsTestTags.EMPTY),
-                )
+            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                when (uiState) {
+                    TransactionsUiState.Loading -> CircularProgressIndicator(
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .testTag(TransactionsTestTags.LOADING),
+                    )
 
-                is TransactionsUiState.Error -> ErrorState(
-                    message = uiState.message,
-                    onRetry = onRetry,
-                    modifier = Modifier
-                        .align(Alignment.Center)
-                        .testTag(TransactionsTestTags.ERROR),
-                )
+                    TransactionsUiState.Empty -> EmptyState(
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .testTag(TransactionsTestTags.EMPTY),
+                    )
 
-                is TransactionsUiState.Success -> TransactionsList(
-                    uiState = uiState,
-                    onDeleteTransaction = onDeleteTransaction,
-                    onTransactionClick = onTransactionClick,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .testTag(TransactionsTestTags.LIST),
-                )
+                    is TransactionsUiState.EmptyFiltered -> EmptyFilteredState(
+                        onClearFilters = onClearFilters,
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .testTag(TransactionsTestTags.EMPTY_FILTERED),
+                    )
+
+                    is TransactionsUiState.Error -> ErrorState(
+                        message = uiState.message,
+                        onRetry = onRetry,
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .testTag(TransactionsTestTags.ERROR),
+                    )
+
+                    is TransactionsUiState.Success -> TransactionsList(
+                        uiState = uiState,
+                        onDeleteTransaction = onDeleteTransaction,
+                        onTransactionClick = onTransactionClick,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .testTag(TransactionsTestTags.LIST),
+                    )
+                }
             }
         }
     }
@@ -167,22 +203,28 @@ internal fun TransactionsScreen(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun TransactionsTopBar(uiState: TransactionsUiState) {
+    // EmptyFiltered still carries a (zero) net total for the active filter --
+    // showing it here rather than nothing is what keeps a legitimately empty
+    // filtered range from reading as a rendering bug.
+    val netLine = when (uiState) {
+        is TransactionsUiState.Success -> NetLine(uiState.netPeriod, uiState.netTotal, uiState.currencyCode)
+        is TransactionsUiState.EmptyFiltered -> NetLine(uiState.netPeriod, uiState.netTotal, uiState.currencyCode)
+        else -> null
+    }
     TopAppBar(
         title = {
             Column {
                 Text(stringResource(R.string.transactions_title), style = MaterialTheme.typography.titleLarge)
-                if (uiState is TransactionsUiState.Success) {
-                    val monthName = uiState.periodMonth.toJavaLocalDate()
-                        .format(DateTimeFormatter.ofPattern("MMMM", Locale.getDefault()))
+                if (netLine != null) {
                     Row {
                         Text(
-                            text = stringResource(R.string.transactions_net_label, monthName) + " ",
+                            text = netLabel(netLine.period) + " ",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         MoneyText(
-                            money = uiState.netTotal,
-                            currencyCode = uiState.currencyCode,
+                            money = netLine.total,
+                            currencyCode = netLine.currencyCode,
                             style = MaterialTheme.typography.bodyMedium,
                         )
                     }
@@ -190,6 +232,22 @@ private fun TransactionsTopBar(uiState: TransactionsUiState) {
             }
         },
     )
+}
+
+private data class NetLine(val period: NetPeriod, val total: Money, val currencyCode: String)
+
+@Composable
+private fun netLabel(period: NetPeriod): String = when (period) {
+    is NetPeriod.Month -> {
+        val monthName = period.month.toJavaLocalDate().format(DateTimeFormatter.ofPattern("MMMM", Locale.getDefault()))
+        stringResource(R.string.transactions_net_label, monthName)
+    }
+    is NetPeriod.Range -> stringResource(
+        R.string.transactions_net_label_range,
+        period.from.toJavaLocalDate().format(DateTimeFormatter.ofPattern("d MMM", Locale.getDefault())),
+        period.to.toJavaLocalDate().format(DateTimeFormatter.ofPattern("d MMM", Locale.getDefault())),
+    )
+    NetPeriod.Filtered -> stringResource(R.string.transactions_net_label_filtered)
 }
 
 @Composable
@@ -210,6 +268,34 @@ private fun EmptyState(modifier: Modifier = Modifier) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
         )
+    }
+}
+
+@Composable
+private fun EmptyFilteredState(onClearFilters: () -> Unit, modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier.padding(24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(
+            text = stringResource(R.string.transactions_empty_filtered_title),
+            style = MaterialTheme.typography.titleMedium,
+            textAlign = TextAlign.Center,
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            text = stringResource(R.string.transactions_empty_filtered_body),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+        )
+        Spacer(modifier = Modifier.height(16.dp))
+        Button(
+            onClick = onClearFilters,
+            modifier = Modifier.testTag(TransactionsTestTags.EMPTY_FILTERED_CLEAR),
+        ) {
+            Text(stringResource(R.string.transactions_filter_clear_action))
+        }
     }
 }
 
@@ -394,6 +480,8 @@ private fun CategoryChip(category: Category?, modifier: Modifier = Modifier) {
 internal object TransactionsTestTags {
     const val LOADING = "transactions:loading"
     const val EMPTY = "transactions:empty"
+    const val EMPTY_FILTERED = "transactions:empty_filtered"
+    const val EMPTY_FILTERED_CLEAR = "transactions:empty_filtered:clear"
     const val ERROR = "transactions:error"
     const val ERROR_RETRY = "transactions:error:retry"
     const val LIST = "transactions:list"

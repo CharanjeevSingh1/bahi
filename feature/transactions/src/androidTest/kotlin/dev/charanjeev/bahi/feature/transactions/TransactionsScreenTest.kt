@@ -14,6 +14,7 @@ import androidx.compose.ui.test.swipeLeft
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.google.common.truth.Truth.assertThat
+import dev.charanjeev.bahi.core.model.Category
 import dev.charanjeev.bahi.core.testing.TestData
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.datetime.LocalDate
@@ -143,6 +144,93 @@ class TransactionsScreenTest {
         composeTestRule.onNodeWithTag(TransactionsTestTags.ADD_FAB).performClick()
 
         assertThat(addClicked).isTrue()
+    }
+
+    @Test
+    fun filteredEmptyState_showsDistinctCopyFromTheOnboardingEmptyState() {
+        val state = TransactionsUiState.EmptyFiltered(filter = TransactionFilterState(categoryIds = setOf("food")))
+        var cleared = false
+
+        composeTestRule.setContent {
+            TransactionsScreen(uiState = state, onClearFilters = { cleared = true })
+        }
+
+        composeTestRule.onNodeWithTag(TransactionsTestTags.EMPTY_FILTERED).assertIsDisplayed()
+        composeTestRule.onNodeWithText(string(R.string.transactions_empty_filtered_title)).assertIsDisplayed()
+        composeTestRule.onNodeWithTag(TransactionsTestTags.EMPTY).assertDoesNotExist()
+
+        composeTestRule.onNodeWithTag(TransactionsTestTags.EMPTY_FILTERED_CLEAR).performClick()
+        assertThat(cleared).isTrue()
+    }
+
+    @Test
+    fun filteredEmptyState_stillShowsTheZeroTotalForTheFilteredRange() {
+        val from = LocalDate(2026, 8, 1)
+        val to = LocalDate(2026, 8, 9)
+        val state = TransactionsUiState.EmptyFiltered(
+            filter = TransactionFilterState(dateRangeOption = DateRangeOption.CUSTOM, customFrom = from, customTo = to),
+            netPeriod = NetPeriod.Range(from, to),
+        )
+
+        composeTestRule.setContent {
+            TransactionsScreen(uiState = state)
+        }
+
+        // A missing total here would read as a rendering bug rather than
+        // "nothing matched this filter" -- it must show even at zero.
+        composeTestRule.onNodeWithText(string(R.string.transactions_net_label_range, "1 Aug", "9 Aug"), substring = true)
+            .assertIsDisplayed()
+    }
+
+    @Test
+    fun noActiveFilter_hidesTheClearButton() {
+        val item = TransactionListItem(
+            transaction = TestData.transaction(id = "a", date = LocalDate(2026, 3, 14)),
+            category = null,
+        )
+        val state = TransactionsUiState.Success(
+            groups = persistentListOf(TransactionGroup(header = DateHeader.Today, items = persistentListOf(item))),
+            netTotal = item.transaction.amount,
+            currencyCode = item.transaction.currencyCode,
+        )
+
+        composeTestRule.setContent {
+            TransactionsScreen(uiState = state)
+        }
+
+        composeTestRule.onNodeWithTag(FilterBarTestTags.CLEAR_BUTTON).assertDoesNotExist()
+    }
+
+    @Test
+    fun activeFilter_showsSelectedChipsAndAClearButton() {
+        val item = TransactionListItem(
+            transaction = TestData.transaction(id = "a", categoryId = "food", date = LocalDate(2026, 3, 14)),
+            category = null,
+        )
+        val category = Category(
+            id = "food",
+            name = "Food",
+            colorArgb = 0xFFEF5350.toInt(),
+            iconKey = "restaurant",
+        )
+        val state = TransactionsUiState.Success(
+            groups = persistentListOf(TransactionGroup(header = DateHeader.Today, items = persistentListOf(item))),
+            netTotal = item.transaction.amount,
+            currencyCode = item.transaction.currencyCode,
+            filter = TransactionFilterState(categoryIds = setOf("food"), dateRangeOption = DateRangeOption.THIS_MONTH),
+            availableCategories = persistentListOf(category),
+        )
+        var cleared = false
+
+        composeTestRule.setContent {
+            TransactionsScreen(uiState = state, onClearFilters = { cleared = true })
+        }
+
+        composeTestRule.onNodeWithText("Food").assertIsDisplayed()
+        composeTestRule.onNodeWithText(string(R.string.transactions_filter_date_this_month)).assertIsDisplayed()
+
+        composeTestRule.onNodeWithTag(FilterBarTestTags.CLEAR_BUTTON).performClick()
+        assertThat(cleared).isTrue()
     }
 
     @Test

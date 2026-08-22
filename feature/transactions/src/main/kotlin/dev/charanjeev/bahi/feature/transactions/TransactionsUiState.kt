@@ -15,14 +15,29 @@ import kotlinx.datetime.LocalDate
 sealed interface TransactionsUiState {
     data object Loading : TransactionsUiState
 
+    /** No transactions exist at all -- onboarding copy, not to be confused with [EmptyFiltered]. */
     data object Empty : TransactionsUiState
+
+    /**
+     * At least one transaction exists, but none match the active filter.
+     * Distinct from [Empty]: the fix is to clear the filter, not to add a
+     * transaction. Still carries a net total -- zero, since nothing matched
+     * -- so the top bar shows "...₹0.00" rather than nothing at all, which
+     * would read as a rendering bug instead of a deliberate answer.
+     */
+    data class EmptyFiltered(
+        val filter: TransactionFilterState,
+        val availableCategories: ImmutableList<Category> = persistentListOf(),
+        val netTotal: Money = Money.ZERO,
+        val netPeriod: NetPeriod = NetPeriod.Month(LocalDate(1970, 1, 1)),
+        val currencyCode: String = "INR",
+    ) : TransactionsUiState
 
     data class Success(
         val groups: ImmutableList<TransactionGroup> = persistentListOf(),
-        /** Income minus expenses within [periodMonth] only -- see netTotalForMonth. An all-time net is meaningless once a paycheck is in the list. */
+        /** Income minus expenses over [netPeriod] -- see netPeriod's own doc for what that covers. */
         val netTotal: Money = Money.ZERO,
-        /** Which calendar month [netTotal] covers; only its year/month are used. Until Slice 4 adds real period filtering, this is always "now". */
-        val periodMonth: LocalDate = LocalDate(1970, 1, 1),
+        val netPeriod: NetPeriod = NetPeriod.Month(LocalDate(1970, 1, 1)),
         val currencyCode: String = "INR",
         /**
          * The transaction a swipe just deleted, kept here -- not in row-local
@@ -31,6 +46,8 @@ sealed interface TransactionsUiState {
          * snackbar; the ViewModel clears it once the snackbar resolves.
          */
         val pendingDelete: TransactionListItem? = null,
+        val filter: TransactionFilterState = TransactionFilterState(),
+        val availableCategories: ImmutableList<Category> = persistentListOf(),
     ) : TransactionsUiState
 
     data class Error(val message: String) : TransactionsUiState

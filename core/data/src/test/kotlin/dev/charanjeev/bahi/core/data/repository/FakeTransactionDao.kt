@@ -18,21 +18,22 @@ class FakeTransactionDao : TransactionDao {
 
     fun entity(id: String): TransactionEntity? = backing.value[id]
 
-    override fun observeAll(): Flow<List<TransactionEntity>> =
-        backing.map { entities ->
-            entities.values
-                .filter { it.deletedAt == null }
-                .sortedWith(compareByDescending<TransactionEntity> { it.date }.thenByDescending { it.createdAt })
-        }
-
     override fun observeById(id: String): Flow<TransactionEntity?> =
         backing.map { it[id]?.takeIf { entity -> entity.deletedAt == null } }
 
-    override fun observeBetween(from: String, to: String): Flow<List<TransactionEntity>> =
+    override fun observeFiltered(
+        categoryIds: List<String>,
+        categoryCount: Int,
+        hasDateWindow: Int,
+        from: String,
+        to: String,
+    ): Flow<List<TransactionEntity>> =
         backing.map { entities ->
             entities.values
-                .filter { it.deletedAt == null && it.date >= from && it.date <= to }
-                .sortedByDescending { it.date }
+                .filter { it.deletedAt == null }
+                .filter { categoryCount == 0 || it.categoryId in categoryIds }
+                .filter { hasDateWindow == 0 || (it.date >= from && it.date <= to) }
+                .sortedWith(compareByDescending<TransactionEntity> { it.date }.thenByDescending { it.createdAt })
         }
 
     override suspend fun findExistingHashes(hashes: List<String>): List<String> =
