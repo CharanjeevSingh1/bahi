@@ -5,7 +5,6 @@ import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.charanjeev.bahi.core.data.repository.CategoryRepository
 import dev.charanjeev.bahi.core.data.repository.TransactionRepository
-import dev.charanjeev.bahi.core.model.Money
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -58,9 +57,11 @@ class TransactionsViewModel @Inject constructor(
                     val today = clock.todayIn(TimeZone.currentSystemDefault())
                     TransactionsUiState.Success(
                         groups = groupByDate(items, today),
-                        // Net, not spend-only: income transactions (positive Money)
-                        // offset expenses (negative Money) in the same sum.
-                        netTotal = transactions.fold(Money.ZERO) { total, transaction -> total + transaction.amount },
+                        // This calendar month, not all-time: a single salary
+                        // transaction would otherwise dominate a net summed
+                        // across everything ever loaded.
+                        netTotal = netTotalForMonth(transactions, today),
+                        periodMonth = today,
                         currencyCode = transactions.first().currencyCode,
                         pendingDelete = pending,
                     )

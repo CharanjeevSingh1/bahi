@@ -145,9 +145,11 @@ private fun TransactionsTopBar(uiState: TransactionsUiState) {
             Column {
                 Text(stringResource(R.string.transactions_title), style = MaterialTheme.typography.titleLarge)
                 if (uiState is TransactionsUiState.Success) {
+                    val monthName = uiState.periodMonth.toJavaLocalDate()
+                        .format(DateTimeFormatter.ofPattern("MMMM", Locale.getDefault()))
                     Row {
                         Text(
-                            text = stringResource(R.string.transactions_net_label) + " ",
+                            text = stringResource(R.string.transactions_net_label, monthName) + " ",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -287,15 +289,27 @@ private fun SwipeableTransactionRow(
     }
 }
 
+/**
+ * Amount is what people scan for, so it carries the most weight; description
+ * is a step lighter; the category chip is the lightest element in the row.
+ * All three come from the M3 type scale rather than one-off font sizes, so
+ * the hierarchy stays consistent with the rest of the app.
+ */
 @Composable
 private fun TransactionRow(item: TransactionListItem) {
     ListItem(
-        headlineContent = { Text(titleCaseTransactionDescription(item.transaction.description)) },
+        headlineContent = {
+            Text(
+                text = titleCaseTransactionDescription(item.transaction.description),
+                style = MaterialTheme.typography.bodyLarge,
+            )
+        },
         supportingContent = { CategoryChip(item.category) },
         trailingContent = {
             MoneyText(
                 money = item.transaction.amount,
                 currencyCode = item.transaction.currencyCode,
+                style = MaterialTheme.typography.titleMedium,
             )
         },
     )
