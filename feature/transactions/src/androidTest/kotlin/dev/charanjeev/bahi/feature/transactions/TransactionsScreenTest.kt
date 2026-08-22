@@ -86,7 +86,8 @@ class TransactionsScreenTest {
 
         composeTestRule.onNodeWithTag(TransactionsTestTags.LIST).assertIsDisplayed()
         composeTestRule.onNodeWithText(string(R.string.transactions_date_header_today)).assertIsDisplayed()
-        composeTestRule.onNodeWithText("COFFEE").assertIsDisplayed()
+        // Title-cased for display -- the row never shows the raw stored text.
+        composeTestRule.onNodeWithText("Coffee").assertIsDisplayed()
     }
 
     @Test
@@ -122,7 +123,7 @@ class TransactionsScreenTest {
             .performTouchInput { swipeLeft() }
 
         assertThat(deletedItem).isEqualTo(item)
-        composeTestRule.onNodeWithText(string(R.string.transactions_deleted_snackbar, "COFFEE")).assertIsDisplayed()
+        composeTestRule.onNodeWithText(string(R.string.transactions_deleted_snackbar, "Coffee")).assertIsDisplayed()
 
         composeTestRule.onNodeWithText(string(R.string.transactions_undo)).performClick()
 

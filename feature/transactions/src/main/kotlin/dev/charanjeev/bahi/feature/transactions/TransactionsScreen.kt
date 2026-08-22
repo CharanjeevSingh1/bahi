@@ -44,6 +44,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.charanjeev.bahi.core.model.Category
 import dev.charanjeev.bahi.core.ui.MoneyText
+import dev.charanjeev.bahi.core.ui.titleCaseTransactionDescription
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlinx.datetime.toJavaLocalDate
@@ -85,7 +86,7 @@ internal fun TransactionsScreen(
     // stringResource is @Composable and can't be called from inside it.
     val undoLabel = stringResource(R.string.transactions_undo)
     val deletedMessage = pendingDelete?.let {
-        stringResource(R.string.transactions_deleted_snackbar, it.transaction.description)
+        stringResource(R.string.transactions_deleted_snackbar, titleCaseTransactionDescription(it.transaction.description))
     }
     LaunchedEffect(pendingDelete) {
         if (deletedMessage == null) return@LaunchedEffect
@@ -289,7 +290,7 @@ private fun SwipeableTransactionRow(
 @Composable
 private fun TransactionRow(item: TransactionListItem) {
     ListItem(
-        headlineContent = { Text(item.transaction.description) },
+        headlineContent = { Text(titleCaseTransactionDescription(item.transaction.description)) },
         supportingContent = { CategoryChip(item.category) },
         trailingContent = {
             MoneyText(
