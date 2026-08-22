@@ -35,6 +35,24 @@ class OfflineFirstTransactionRepository @Inject constructor(
         transactionDao.upsert(toEntity(transaction))
     }
 
+    override suspend fun update(transaction: Transaction) = withContext(ioDispatcher) {
+        val entity = toEntity(transaction)
+        transactionDao.update(
+            id = entity.id,
+            amountMinor = entity.amountMinor,
+            currencyCode = entity.currencyCode,
+            date = entity.date,
+            description = entity.description,
+            merchant = entity.merchant,
+            categoryId = entity.categoryId,
+            accountId = entity.accountId,
+            notes = entity.notes,
+            categoryLockedByUser = entity.categoryLockedByUser,
+            contentHash = entity.contentHash,
+            updatedAt = entity.updatedAt,
+        )
+    }
+
     override suspend fun delete(id: String) = withContext(ioDispatcher) {
         transactionDao.softDelete(id, System.currentTimeMillis())
     }

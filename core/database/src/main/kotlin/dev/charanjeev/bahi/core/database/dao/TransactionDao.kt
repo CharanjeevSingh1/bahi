@@ -40,6 +40,39 @@ interface TransactionDao {
     @Upsert
     suspend fun upsert(transaction: TransactionEntity)
 
+    /**
+     * Distinct from [upsert]: a user edit always bumps local_revision and
+     * marks the row pending sync, the same way softDelete/undoSoftDelete do
+     * it in one atomic UPDATE rather than a read-then-write. Plain upsert
+     * stays as-is for creation, seeding and CSV import, which don't have an
+     * existing revision to bump.
+     */
+    @Query(
+        """
+        UPDATE transactions
+        SET amount_minor = :amountMinor, currency_code = :currencyCode, date = :date,
+            description = :description, merchant = :merchant, category_id = :categoryId,
+            account_id = :accountId, notes = :notes, category_locked_by_user = :categoryLockedByUser,
+            content_hash = :contentHash, updated_at = :updatedAt,
+            pending_operation = 'UPSERT', local_revision = local_revision + 1
+        WHERE id = :id
+        """,
+    )
+    suspend fun update(
+        id: String,
+        amountMinor: Long,
+        currencyCode: String,
+        date: String,
+        description: String,
+        merchant: String?,
+        categoryId: String?,
+        accountId: String,
+        notes: String?,
+        categoryLockedByUser: Boolean,
+        contentHash: String,
+        updatedAt: Long,
+    )
+
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertAllIgnoringConflicts(transactions: List<TransactionEntity>): List<Long>
 

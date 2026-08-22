@@ -16,6 +16,13 @@ interface TransactionRepository {
 
     suspend fun upsert(transaction: Transaction)
 
+    /**
+     * For a user edit, not creation: bumps local_revision and marks the row
+     * pending sync, distinct from [upsert] which is used for creation,
+     * seeding and CSV import and doesn't touch either.
+     */
+    suspend fun update(transaction: Transaction)
+
     suspend fun delete(id: String)
 
     /** Reverses a soft delete: clears the tombstone and the pending DELETE. */

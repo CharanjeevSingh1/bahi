@@ -8,16 +8,22 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarDuration
@@ -55,6 +61,8 @@ import kotlinx.datetime.toJavaLocalDate
 @Composable
 fun TransactionsRoute(
     viewModel: TransactionsViewModel = hiltViewModel(),
+    onAddTransaction: () -> Unit = {},
+    onTransactionClick: (String) -> Unit = {},
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     TransactionsScreen(
@@ -63,6 +71,8 @@ fun TransactionsRoute(
         onUndoDelete = viewModel::onUndoDelete,
         onDeleteSnackbarDismissed = viewModel::onDeleteSnackbarDismissed,
         onRetry = viewModel::onRetry,
+        onAddTransaction = onAddTransaction,
+        onTransactionClick = onTransactionClick,
     )
 }
 
@@ -79,6 +89,8 @@ internal fun TransactionsScreen(
     onUndoDelete: () -> Unit = {},
     onDeleteSnackbarDismissed: () -> Unit = {},
     onRetry: () -> Unit = {},
+    onAddTransaction: () -> Unit = {},
+    onTransactionClick: (String) -> Unit = {},
 ) {
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -105,6 +117,17 @@ internal fun TransactionsScreen(
         modifier = modifier,
         topBar = { TransactionsTopBar(uiState) },
         snackbarHost = { SnackbarHost(snackbarHostState) },
+        floatingActionButton = {
+            FloatingActionButton(
+                onClick = onAddTransaction,
+                modifier = Modifier.testTag(TransactionsTestTags.ADD_FAB),
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Add,
+                    contentDescription = stringResource(R.string.transactions_add_content_description),
+                )
+            }
+        },
     ) { contentPadding ->
         Box(modifier = Modifier.fillMaxSize().padding(contentPadding)) {
             when (uiState) {
@@ -131,6 +154,7 @@ internal fun TransactionsScreen(
                 is TransactionsUiState.Success -> TransactionsList(
                     uiState = uiState,
                     onDeleteTransaction = onDeleteTransaction,
+                    onTransactionClick = onTransactionClick,
                     modifier = Modifier
                         .fillMaxSize()
                         .testTag(TransactionsTestTags.LIST),
@@ -222,15 +246,23 @@ private fun ErrorState(message: String, onRetry: () -> Unit, modifier: Modifier 
 private fun TransactionsList(
     uiState: TransactionsUiState.Success,
     onDeleteTransaction: (TransactionListItem) -> Unit,
+    onTransactionClick: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    LazyColumn(modifier = modifier) {
+    // The Scaffold doesn't reserve space for the FAB in the content area, so
+    // without this the last row ends up sitting behind it -- 88.dp clears a
+    // standard 56.dp FAB plus its margin, with a little to spare.
+    LazyColumn(modifier = modifier, contentPadding = PaddingValues(bottom = 88.dp)) {
         uiState.groups.forEach { group ->
             stickyHeader(key = "header-${group.header}") {
                 DateHeaderRow(group.header)
             }
             items(group.items, key = { it.transaction.id }) { item ->
-                SwipeableTransactionRow(item = item, onDelete = { onDeleteTransaction(item) })
+                SwipeableTransactionRow(
+                    item = item,
+                    onDelete = { onDeleteTransaction(item) },
+                    onClick = { onTransactionClick(item.transaction.id) },
+                )
             }
         }
     }
@@ -264,6 +296,7 @@ private fun DateHeader.displayText(locale: Locale = Locale.getDefault()): String
 private fun SwipeableTransactionRow(
     item: TransactionListItem,
     onDelete: () -> Unit,
+    onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val dismissState = rememberSwipeToDismissBoxState(
@@ -291,7 +324,7 @@ private fun SwipeableTransactionRow(
             }
         },
     ) {
-        TransactionRow(item)
+        TransactionRow(item, onClick = onClick)
     }
 }
 
@@ -307,7 +340,7 @@ private fun SwipeableTransactionRow(
  * floor rather than the ~72dp default.
  */
 @Composable
-private fun TransactionRow(item: TransactionListItem) {
+private fun TransactionRow(item: TransactionListItem, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -315,6 +348,7 @@ private fun TransactionRow(item: TransactionListItem) {
             // free. Without it, the swipe backgroundContent (red "Delete")
             // shows straight through the row even at rest.
             .background(MaterialTheme.colorScheme.surface)
+            .clickable(onClick = onClick)
             .heightIn(min = 48.dp)
             .padding(horizontal = 16.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -363,5 +397,6 @@ internal object TransactionsTestTags {
     const val ERROR = "transactions:error"
     const val ERROR_RETRY = "transactions:error:retry"
     const val LIST = "transactions:list"
+    const val ADD_FAB = "transactions:add_fab"
     fun rowTag(transactionId: String) = "transactions:row:$transactionId"
 }

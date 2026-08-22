@@ -47,4 +47,24 @@ class OfflineFirstTransactionRepositoryTest {
 
         assertThat(dao.entity("a")!!.localRevision).isGreaterThan(revisionAfterDelete)
     }
+
+    @Test
+    fun `update bumps the local revision and marks the row pending UPSERT`() = runTest {
+        repository.upsert(TestData.transaction(id = "a"))
+        val revisionAfterCreate = dao.entity("a")!!.localRevision
+
+        repository.update(TestData.transaction(id = "a", description = "RENAMED"))
+
+        val entity = dao.entity("a")!!
+        assertThat(entity.localRevision).isGreaterThan(revisionAfterCreate)
+        assertThat(entity.pendingOperation).isEqualTo("UPSERT")
+        assertThat(entity.description).isEqualTo("RENAMED")
+    }
+
+    @Test
+    fun `update is a no-op for an id that doesn't exist`() = runTest {
+        repository.update(TestData.transaction(id = "missing"))
+
+        assertThat(dao.entity("missing")).isNull()
+    }
 }
