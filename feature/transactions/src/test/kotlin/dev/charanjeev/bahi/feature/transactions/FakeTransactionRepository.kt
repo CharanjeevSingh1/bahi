@@ -15,16 +15,45 @@ class FakeTransactionRepository : TransactionRepository {
 
     private val backing = MutableSharedFlow<List<Transaction>>(replay = 1)
 
+    // Mirrors the tombstone: a soft-deleted row's data survives so undoDelete
+    // has something to restore, matching TransactionDao.undoSoftDelete.
+    private val softDeleted = mutableMapOf<String, Transaction>()
+
+    private var failure: Throwable? = null
+
     suspend fun emit(transactions: List<Transaction>) = backing.emit(transactions)
 
-    override fun observeTransactions(): Flow<List<Transaction>> = backing
+    /** Every collection of [observeTransactions] throws until [clearFailure] is called. */
+    fun failWith(throwable: Throwable) {
+        failure = throwable
+    }
+
+    fun clearFailure() {
+        failure = null
+    }
+
+    override fun observeTransactions(): Flow<List<Transaction>> = backing.map { transactions ->
+        failure?.let { throw it }
+        transactions
+    }
 
     override fun observeTransaction(id: String): Flow<Transaction?> =
         backing.map { list -> list.firstOrNull { it.id == id } }
 
     override suspend fun upsert(transaction: Transaction) = Unit
 
-    override suspend fun delete(id: String) = Unit
+    override suspend fun delete(id: String) {
+        val current = backing.replayCache.firstOrNull() ?: return
+        val target = current.firstOrNull { it.id == id } ?: return
+        softDeleted[id] = target
+        backing.emit(current.filterNot { it.id == id })
+    }
+
+    override suspend fun undoDelete(id: String) {
+        val restored = softDeleted.remove(id) ?: return
+        val current = backing.replayCache.firstOrNull() ?: emptyList()
+        backing.emit(current + restored)
+    }
 
     override suspend fun importAll(transactions: List<Transaction>): Int = transactions.size
 }

@@ -53,6 +53,16 @@ interface TransactionDao {
     )
     suspend fun softDelete(id: String, deletedAt: Long)
 
+    /** Reverses [softDelete]. Only meaningful while the DELETE is still pending sync. */
+    @Query(
+        """
+        UPDATE transactions
+        SET deleted_at = NULL, pending_operation = NULL, local_revision = local_revision + 1
+        WHERE id = :id
+        """,
+    )
+    suspend fun undoSoftDelete(id: String)
+
     @Query("SELECT * FROM transactions WHERE pending_operation IS NOT NULL LIMIT :limit")
     suspend fun pendingChanges(limit: Int = 200): List<TransactionEntity>
 

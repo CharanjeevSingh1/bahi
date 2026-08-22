@@ -4,6 +4,7 @@ import android.app.Application
 import dagger.hilt.android.HiltAndroidApp
 import dev.charanjeev.bahi.core.common.ApplicationScope
 import dev.charanjeev.bahi.core.data.repository.CategoryRepository
+import dev.charanjeev.bahi.core.data.repository.TransactionRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -13,6 +14,9 @@ class BahiApplication : Application() {
 
     @Inject
     lateinit var categoryRepository: CategoryRepository
+
+    @Inject
+    lateinit var transactionRepository: TransactionRepository
 
     @Inject
     @ApplicationScope
@@ -25,5 +29,8 @@ class BahiApplication : Application() {
         // never races a concurrent read into an inconsistent state -- at worst
         // the first emission just precedes the seeded rows.
         applicationScope.launch { categoryRepository.seedSystemCategoriesIfNeeded() }
+
+        // No-op in release: see DebugSeeder.kt in src/debug vs. src/release.
+        seedTransactionsForDevelopment(transactionRepository, applicationScope)
     }
 }
