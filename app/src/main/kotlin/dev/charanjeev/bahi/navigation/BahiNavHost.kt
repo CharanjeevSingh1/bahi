@@ -20,7 +20,7 @@ fun BahiNavHost(
         navController = navController,
         startDestination = TransactionsRoute,
     ) {
-        transactionsScreen()
+        transactionsScreen(navController)
         // budgetsScreen()
         // insightsScreen()
         // settingsScreen()

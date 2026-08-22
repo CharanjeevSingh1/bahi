@@ -129,4 +129,41 @@ class TransactionsScreenTest {
 
         assertThat(undone).isTrue()
     }
+
+    @Test
+    fun addFab_invokesOnAddTransaction() {
+        var addClicked = false
+        composeTestRule.setContent {
+            TransactionsScreen(
+                uiState = TransactionsUiState.Empty,
+                onAddTransaction = { addClicked = true },
+            )
+        }
+
+        composeTestRule.onNodeWithTag(TransactionsTestTags.ADD_FAB).performClick()
+
+        assertThat(addClicked).isTrue()
+    }
+
+    @Test
+    fun tappingARow_invokesOnTransactionClickWithItsId() {
+        val item = TransactionListItem(
+            transaction = TestData.transaction(id = "a", description = "COFFEE", date = LocalDate(2026, 3, 14)),
+            category = null,
+        )
+        val state = TransactionsUiState.Success(
+            groups = persistentListOf(TransactionGroup(header = DateHeader.Today, items = persistentListOf(item))),
+            netTotal = item.transaction.amount,
+            currencyCode = item.transaction.currencyCode,
+        )
+        var clickedId: String? = null
+
+        composeTestRule.setContent {
+            TransactionsScreen(uiState = state, onTransactionClick = { clickedId = it })
+        }
+
+        composeTestRule.onNodeWithTag(TransactionsTestTags.rowTag("a")).performClick()
+
+        assertThat(clickedId).isEqualTo("a")
+    }
 }

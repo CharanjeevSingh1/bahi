@@ -12,4 +12,30 @@
     <string name="transactions_deleted_snackbar">Deleted \"%1$s\"</string>
     <string name="transactions_undo">Undo</string>
     <string name="transactions_uncategorised">Uncategorised</string>
+    <string name="transactions_add_content_description">Add transaction</string>
+
+    <string name="transactions_form_title_add">Add transaction</string>
+    <string name="transactions_form_title_edit">Edit transaction</string>
+    <string name="transactions_form_back_content_description">Back</string>
+    <string name="transactions_form_amount_label">Amount</string>
+    <string name="transactions_form_amount_error_empty">Amount is required</string>
+    <string name="transactions_form_amount_error_invalid">Enter a valid amount</string>
+    <string name="transactions_form_type_expense">Expense</string>
+    <string name="transactions_form_type_income">Income</string>
+    <string name="transactions_form_date_label">Date</string>
+    <string name="transactions_form_description_label">Description</string>
+    <string name="transactions_form_description_error">Description is required</string>
+    <string name="transactions_form_category_label">Category</string>
+    <string name="transactions_form_category_none">Uncategorised</string>
+    <string name="transactions_form_notes_label">Notes</string>
+    <string name="transactions_form_save">Save</string>
+    <string name="transactions_form_delete_content_description">Delete transaction</string>
+    <string name="transactions_form_delete_dialog_title">Delete transaction?</string>
+    <string name="transactions_form_delete_dialog_body">This can\'t be undone from here.</string>
+    <string name="transactions_form_delete_dialog_confirm">Delete</string>
+    <string name="transactions_form_delete_dialog_cancel">Cancel</string>
+    <string name="transactions_form_discard_dialog_title">Discard changes?</string>
+    <string name="transactions_form_discard_dialog_body">You have unsaved changes that will be lost.</string>
+    <string name="transactions_form_discard_dialog_confirm">Discard</string>
+    <string name="transactions_form_discard_dialog_cancel">Keep editing</string>
 </resources>

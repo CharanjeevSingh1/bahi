@@ -42,6 +42,40 @@ class FakeTransactionDao : TransactionDao {
         backing.value = backing.value + (transaction.id to transaction)
     }
 
+    override suspend fun update(
+        id: String,
+        amountMinor: Long,
+        currencyCode: String,
+        date: String,
+        description: String,
+        merchant: String?,
+        categoryId: String?,
+        accountId: String,
+        notes: String?,
+        categoryLockedByUser: Boolean,
+        contentHash: String,
+        updatedAt: Long,
+    ) {
+        val existing = backing.value[id] ?: return
+        backing.value = backing.value + (
+            id to existing.copy(
+                amountMinor = amountMinor,
+                currencyCode = currencyCode,
+                date = date,
+                description = description,
+                merchant = merchant,
+                categoryId = categoryId,
+                accountId = accountId,
+                notes = notes,
+                categoryLockedByUser = categoryLockedByUser,
+                contentHash = contentHash,
+                updatedAt = updatedAt,
+                pendingOperation = "UPSERT",
+                localRevision = existing.localRevision + 1,
+            )
+        )
+    }
+
     override suspend fun insertAllIgnoringConflicts(transactions: List<TransactionEntity>): List<Long> {
         val fresh = transactions.filterNot { it.id in backing.value }
         backing.value = backing.value + fresh.associateBy(TransactionEntity::id)

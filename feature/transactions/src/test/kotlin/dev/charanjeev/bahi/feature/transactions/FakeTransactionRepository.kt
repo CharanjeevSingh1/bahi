@@ -21,6 +21,10 @@ class FakeTransactionRepository : TransactionRepository {
 
     private var failure: Throwable? = null
 
+    val upserted = mutableListOf<Transaction>()
+    val updated = mutableListOf<Transaction>()
+    val deletedIds = mutableListOf<String>()
+
     suspend fun emit(transactions: List<Transaction>) = backing.emit(transactions)
 
     /** Every collection of [observeTransactions] throws until [clearFailure] is called. */
@@ -40,9 +44,20 @@ class FakeTransactionRepository : TransactionRepository {
     override fun observeTransaction(id: String): Flow<Transaction?> =
         backing.map { list -> list.firstOrNull { it.id == id } }
 
-    override suspend fun upsert(transaction: Transaction) = Unit
+    override suspend fun upsert(transaction: Transaction) {
+        upserted += transaction
+        val current = backing.replayCache.firstOrNull() ?: emptyList()
+        backing.emit(current.filterNot { it.id == transaction.id } + transaction)
+    }
+
+    override suspend fun update(transaction: Transaction) {
+        updated += transaction
+        val current = backing.replayCache.firstOrNull() ?: emptyList()
+        backing.emit(current.map { if (it.id == transaction.id) transaction else it })
+    }
 
     override suspend fun delete(id: String) {
+        deletedIds += id
         val current = backing.replayCache.firstOrNull() ?: return
         val target = current.firstOrNull { it.id == id } ?: return
         softDeleted[id] = target
