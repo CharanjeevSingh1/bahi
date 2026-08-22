@@ -312,7 +312,11 @@ private fun TransactionFormContent(
             value = uiState.amountText,
             onValueChange = onAmountTextChange,
             label = { Text(stringResource(R.string.transactions_form_amount_label)) },
-            prefix = { Text(currencySymbol) },
+            // leadingIcon, not prefix -- M3 only draws a prefix once the field
+            // has content or focus, so an empty, unfocused field loses its
+            // money affordance right when the user is deciding what to type.
+            // leadingIcon has no such condition.
+            leadingIcon = { Text(currencySymbol) },
             singleLine = true,
             isError = uiState.showAmountError,
             supportingText = {
