@@ -66,3 +66,9 @@ Dependencies are declared **only** in `gradle/libs.versions.toml`. Never inline 
 ## Things that are intentionally not done yet
 
 `:core:importer` and `:core:sync` contain interfaces only. Those are M2 and M4. Do not implement them unless the task explicitly says to.
+
+# Build speed. 
+- Don't run ./gradlew clean unless you suspect stale state .
+- it rebuilds all 16 modules. During iteration, run module-scoped tests (:feature:x:testDebugUnitTest). Run the full gate.
+- assembleDebug unitTests checkModuleBoundaries lintDebug -PwarningsAsErrors=true 
+- once, at the end of a task, not after each individual change. checkModuleBoundaries discards the configuration cache, so including it forces a reconfigure on the next build.
