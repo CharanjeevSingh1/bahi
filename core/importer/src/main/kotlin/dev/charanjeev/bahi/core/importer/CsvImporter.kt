@@ -27,6 +27,30 @@ import kotlinx.datetime.LocalDate
  */
 interface CsvImporter {
     suspend fun preview(csv: String): ImportPreview
+
+    /**
+     * Re-renders the preview under a mapping the caller supplies directly,
+     * skipping inference entirely -- this is what makes §3's correction flow
+     * ("re-derive the preview from the already-parsed rows in memory, no
+     * re-read of the file") actually possible: the UI already holds [csv] in
+     * memory from the first [preview] call, and a correction (a fixed date
+     * format, a confirmed debit/credit assignment) only needs the rows
+     * re-mapped, not the file re-fetched from its content Uri or re-inferred
+     * from scratch. The returned [ImportPreview.uncertainFields] is always
+     * empty -- [mapping] is being trusted as given, not re-evaluated -- and
+     * [ImportPreview.mapping] echoes [mapping] back unchanged.
+     *
+     * Also what lets a correction UI show, not just assert, the difference
+     * between two kinds of date-format uncertainty (§2): calling this once
+     * per candidate format and comparing how many [PreviewRow.date]s come
+     * back null tells the caller whether a format is silently ambiguous
+     * (every value valid under both orderings, so trying the other
+     * candidate shows zero failures either way) or genuinely contradictory
+     * (some rows only parse one way), which [ColumnMapping.dateFormat]'s
+     * shared placeholder value can't distinguish on its own.
+     */
+    suspend fun preview(csv: String, mapping: ColumnMapping): ImportPreview
+
     suspend fun import(csv: String, mapping: ColumnMapping, accountId: String): ImportResult
 }
 

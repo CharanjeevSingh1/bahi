@@ -219,6 +219,68 @@ class DefaultCsvImporterTest {
     }
 
     @Test
+    fun `preview with a supplied mapping re-maps rows without running inference again`() = runTest {
+        val csv = """
+            Date,Description,Withdrawal,Deposit
+            2026-01-05,Coffee Shop,450.00,
+            2026-01-06,Salary,,50000.00
+        """.trimIndent()
+        val mapping = ColumnMapping(
+            headerRowIndex = 0,
+            firstDataRowIndex = 1,
+            dateColumn = 0,
+            dateFormat = "yyyy-MM-dd",
+            descriptionColumn = 1,
+            amountColumn = null,
+            amountSign = null,
+            signColumn = null,
+            debitColumn = 2,
+            creditColumn = 3,
+        )
+
+        val preview = importer.preview(csv, mapping)
+
+        assertThat(preview.mapping).isEqualTo(mapping)
+        assertThat(preview.uncertainFields).isEmpty()
+        assertThat(preview.sampleRows).hasSize(2)
+        assertThat(preview.sampleRows[0].amount).isEqualTo(Money(-45000))
+        assertThat(preview.sampleRows[1].amount).isEqualTo(Money(5000000))
+    }
+
+    @Test
+    fun `comparing two candidate date formats via preview distinguishes silent ambiguity from a real contradiction`() = runTest {
+        // Every value here is silent on the question (both components <= 12),
+        // so both candidate formats should map every row cleanly -- this is
+        // the case where either choice is safe.
+        val silentCsv = """
+            Date,Description,Amount
+            03/04/2026,Coffee Shop,-450.00
+            05/06/2026,Salary,50000.00
+        """.trimIndent()
+        val dayFirst = candidateMapping(dateFormat = "dd/MM/yyyy")
+        val monthFirst = candidateMapping(dateFormat = "MM/dd/yyyy")
+
+        val silentDayFirst = importer.preview(silentCsv, dayFirst)
+        val silentMonthFirst = importer.preview(silentCsv, monthFirst)
+        assertThat(silentDayFirst.sampleRows.count { it.date == null }).isEqualTo(0)
+        assertThat(silentMonthFirst.sampleRows.count { it.date == null }).isEqualTo(0)
+
+        // 13/04/2026 is only valid day-first; 04/13/2026 is only valid
+        // month-first -- no single format parses both, which the picker
+        // needs to see as a non-zero failure count on *both* candidates,
+        // not present it as if either choice cleanly resolves everything.
+        val contradictoryCsv = """
+            Date,Description,Amount
+            13/04/2026,Coffee Shop,-450.00
+            04/13/2026,Salary,50000.00
+        """.trimIndent()
+        val contradictoryDayFirst = importer.preview(contradictoryCsv, dayFirst)
+        val contradictoryMonthFirst = importer.preview(contradictoryCsv, monthFirst)
+        assertThat(contradictoryDayFirst.sampleRows.count { it.date == null }).isEqualTo(1)
+        assertThat(contradictoryMonthFirst.sampleRows.count { it.date == null }).isEqualTo(1)
+    }
+
+    @Test
     fun `total inference failure falls back to raw cells for every row instead of a mapping`() = runTest {
         val csv = """
             This is not a bank statement.
@@ -246,4 +308,6 @@ class DefaultCsvImporterTest {
         debitColumn = null,
         creditColumn = null,
     )
+
+    private fun candidateMapping(dateFormat: String) = singleAmountMapping().copy(dateFormat = dateFormat)
 }

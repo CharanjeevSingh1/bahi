@@ -44,13 +44,7 @@ class DefaultCsvImporter @Inject constructor(
             // to know which rows even matter.
             rows.map { PreviewRow(rawCells = it.cells, date = null, description = null, amount = null) }
         } else {
-            val dateFormatter = dateFormatterFor(mapping, inference.uncertainFields)
-            rows.drop(mapping.firstDataRowIndex).map { row ->
-                when (val mapped = mapRow(row, mapping, dateFormatter)) {
-                    is RowMapping.Mapped -> PreviewRow(row.cells, mapped.date, mapped.description, mapped.amount)
-                    is RowMapping.Failed -> PreviewRow(row.cells, null, null, null)
-                }
-            }
+            previewRowsFor(rows, mapping, inference.uncertainFields)
         }
 
         ImportPreview(
@@ -60,6 +54,44 @@ class DefaultCsvImporter @Inject constructor(
             unmappedColumns = inference.unmappedColumns,
             warnings = emptyList(),
         )
+    }
+
+    override suspend fun preview(csv: String, mapping: ColumnMapping): ImportPreview = withContext(ioDispatcher) {
+        val rows = tokenizeCsv(csv)
+        ImportPreview(
+            mapping = mapping,
+            uncertainFields = emptySet(),
+            sampleRows = previewRowsFor(rows, mapping, uncertainFields = emptySet()),
+            unmappedColumns = unmappedColumnsFor(rows, mapping),
+            warnings = emptyList(),
+        )
+    }
+
+    private fun previewRowsFor(
+        rows: List<CsvRow>,
+        mapping: ColumnMapping,
+        uncertainFields: Set<MappingField>,
+    ): List<PreviewRow> {
+        val dateFormatter = dateFormatterFor(mapping, uncertainFields)
+        return rows.drop(mapping.firstDataRowIndex).map { row ->
+            when (val mapped = mapRow(row, mapping, dateFormatter)) {
+                is RowMapping.Mapped -> PreviewRow(row.cells, mapped.date, mapped.description, mapped.amount)
+                is RowMapping.Failed -> PreviewRow(row.cells, null, null, null)
+            }
+        }
+    }
+
+    private fun unmappedColumnsFor(rows: List<CsvRow>, mapping: ColumnMapping): List<Int> {
+        val columnCount = rows.maxOfOrNull { it.cells.size } ?: 0
+        val used = setOfNotNull(
+            mapping.dateColumn,
+            mapping.descriptionColumn,
+            mapping.amountColumn,
+            mapping.debitColumn,
+            mapping.creditColumn,
+            mapping.signColumn,
+        )
+        return (0 until columnCount).filterNot { it in used }
     }
 
     override suspend fun import(csv: String, mapping: ColumnMapping, accountId: String): ImportResult =
