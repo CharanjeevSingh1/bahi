@@ -21,6 +21,7 @@ dependencies {
     implementation(projects.core.ui)
     implementation(projects.core.sync)
 
+    implementation(projects.feature.import)
     implementation(projects.feature.transactions)
     implementation(projects.feature.budgets)
     implementation(projects.feature.insights)
