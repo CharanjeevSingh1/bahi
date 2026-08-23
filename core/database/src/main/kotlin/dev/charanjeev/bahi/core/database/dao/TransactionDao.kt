@@ -2,6 +2,7 @@ package dev.charanjeev.bahi.core.database.dao
 
 import androidx.room.Dao
 import androidx.room.Insert
+import androidx.room.MapColumn
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Transaction
@@ -37,9 +38,23 @@ interface TransactionDao {
         to: String,
     ): Flow<List<TransactionEntity>>
 
-    /** Used by the CSV importer to detect rows that already exist. */
-    @Query("SELECT content_hash FROM transactions WHERE content_hash IN (:hashes)")
-    suspend fun findExistingHashes(hashes: List<String>): List<String>
+    /**
+     * A count per hash, not just presence: two genuinely identical
+     * transactions -- same coffee shop, same amount, twice -- hash the
+     * same, and presence alone can't tell "this exact one was already
+     * imported" from "one of these was, the other wasn't." See
+     * [importBatch] for how the count is used.
+     */
+    @Query(
+        """
+        SELECT content_hash, COUNT(*) AS existing_count FROM transactions
+        WHERE content_hash IN (:hashes)
+        GROUP BY content_hash
+        """,
+    )
+    suspend fun countExistingHashes(
+        hashes: List<String>,
+    ): Map<@MapColumn(columnName = "content_hash") String, @MapColumn(columnName = "existing_count") Int>
 
     @Upsert
     suspend fun upsert(transaction: TransactionEntity)
@@ -115,11 +130,33 @@ interface TransactionDao {
     /**
      * Runs de-duplication and insert inside one transaction so a large import
      * can't half-apply if the process dies midway.
+     *
+     * De-duplication is count-aware, not presence-aware (docs/csv-import-
+     * design.md §4): each incoming row consumes one unit of "already exists"
+     * quota for its hash before any row with that hash is treated as fresh,
+     * so two identical-tuple rows re-imported alongside a genuinely new
+     * third one are recognised as two duplicates and one addition, not
+     * three duplicates or three additions. This is only correct if same-
+     * tuple rows keep a stable relative order across re-exports of an
+     * overlapping statement period -- every bank export encountered so far
+     * does (chronological, ties broken by an internal sequence number), but
+     * nothing enforces it. If a re-export ever reordered same-tuple rows
+     * relative to an earlier import, this can drop the wrong one and
+     * re-insert a duplicate of the wrong one instead -- the total row count
+     * would still look right, which is what would make it easy to miss.
      */
     @Transaction
     suspend fun importBatch(transactions: List<TransactionEntity>): Int {
-        val existing = findExistingHashes(transactions.map { it.contentHash }).toSet()
-        val fresh = transactions.filterNot { it.contentHash in existing }
+        val remainingExisting = countExistingHashes(transactions.map { it.contentHash }).toMutableMap()
+        val fresh = transactions.filter { transaction ->
+            val remaining = remainingExisting.getOrDefault(transaction.contentHash, 0)
+            if (remaining > 0) {
+                remainingExisting[transaction.contentHash] = remaining - 1
+                false
+            } else {
+                true
+            }
+        }
         insertAllIgnoringConflicts(fresh)
         return fresh.size
     }
