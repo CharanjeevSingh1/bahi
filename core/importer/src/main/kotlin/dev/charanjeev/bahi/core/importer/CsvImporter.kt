@@ -13,6 +13,17 @@ import kotlinx.datetime.LocalDate
  * whether the file has a preamble before the header row. See
  * docs/csv-import-design.md for the inference approach, the preview/correction
  * flow, and why this shape looks the way it does.
+ *
+ * [csv] is the fully decoded file contents, not a stream or a size-bounded
+ * wrapper -- deliberately. The size cap that guards against reading an
+ * unexpectedly huge file into memory (docs/csv-import-design.md §7) has to be
+ * enforced before these bytes are ever decoded into a String, at the point
+ * the file is opened off its content Uri; by the time [csv] exists here, that
+ * memory has already been spent or the caller has already refused to spend
+ * it. Re-checking a size limit on [csv] itself wouldn't prevent anything, so
+ * this interface doesn't carry one -- staying decoupled from Android/SAF is
+ * worth more than a redundant assertion. Enforcing the cap is the caller's
+ * responsibility.
  */
 interface CsvImporter {
     suspend fun preview(csv: String): ImportPreview
@@ -38,6 +49,9 @@ data class ColumnMapping(
     val creditColumn: Int?,
 ) {
     init {
+        require((debitColumn == null) == (creditColumn == null)) {
+            "debitColumn and creditColumn must both be set or both be null"
+        }
         val hasSingleAmount = amountColumn != null
         val hasDebitCredit = debitColumn != null && creditColumn != null
         require(hasSingleAmount != hasDebitCredit) {
