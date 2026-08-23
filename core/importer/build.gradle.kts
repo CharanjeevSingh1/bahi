@@ -11,6 +11,7 @@ dependencies {
     api(projects.core.model)
     implementation(projects.core.common)
     implementation(projects.core.data)
+    implementation(libs.commons.csv)
 
     testImplementation(projects.core.testing)
     testImplementation(libs.robolectric)
