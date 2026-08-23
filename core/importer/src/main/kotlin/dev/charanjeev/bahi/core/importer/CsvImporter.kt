@@ -134,6 +134,8 @@ data class ImportPreview(
     val sampleRows: List<PreviewRow>,
     /** Columns inference recognised but deliberately didn't map, e.g. a detected running balance. */
     val unmappedColumns: List<Int>,
+    /** The header row's cells, when [ColumnMapping.headerRowIndex] is non-null -- lets the UI name an unmapped column by its own header text instead of a bare index. */
+    val headerCells: List<String>?,
     val warnings: List<String>,
 )
 

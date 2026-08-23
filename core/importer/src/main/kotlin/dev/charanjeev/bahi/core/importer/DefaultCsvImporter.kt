@@ -52,6 +52,7 @@ class DefaultCsvImporter @Inject constructor(
             uncertainFields = inference.uncertainFields,
             sampleRows = sampleRows,
             unmappedColumns = inference.unmappedColumns,
+            headerCells = inference.headerCells,
             warnings = emptyList(),
         )
     }
@@ -63,6 +64,7 @@ class DefaultCsvImporter @Inject constructor(
             uncertainFields = emptySet(),
             sampleRows = previewRowsFor(rows, mapping, uncertainFields = emptySet()),
             unmappedColumns = unmappedColumnsFor(rows, mapping),
+            headerCells = mapping.headerRowIndex?.let { rows.getOrNull(it)?.cells },
             warnings = emptyList(),
         )
     }

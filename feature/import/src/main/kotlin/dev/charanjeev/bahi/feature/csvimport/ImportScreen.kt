@@ -2,6 +2,7 @@ package dev.charanjeev.bahi.feature.csvimport
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -32,6 +33,9 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -42,6 +46,13 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.charanjeev.bahi.core.importer.ColumnMapping
 import dev.charanjeev.bahi.core.importer.MappingField
 import dev.charanjeev.bahi.core.importer.PreviewRow
+import dev.charanjeev.bahi.core.ui.MoneyText
+import java.time.format.DateTimeFormatter
+import java.util.Locale
+import kotlinx.datetime.toJavaLocalDate
+
+/** Matches the app's existing single-currency assumption (DefaultCsvImporter.DEFAULT_CURRENCY_CODE) -- there's no per-row currency in a CSV, and no Account concept to hang one off yet. */
+private const val PREVIEW_CURRENCY_CODE = "INR"
 
 @Composable
 fun ImportRoute(
@@ -208,12 +219,29 @@ private fun ResultContent(state: ImportUiState.Result, onDone: () -> Unit) {
     ) {
         Text(stringResource(R.string.import_result_title), style = MaterialTheme.typography.titleLarge)
         Spacer(Modifier.padding(4.dp))
-        Text(stringResource(R.string.import_result_new, state.newCount))
+        Text(
+            when (state.newCount) {
+                0 -> stringResource(R.string.import_result_no_new)
+                1 -> stringResource(R.string.import_result_new_one)
+                else -> stringResource(R.string.import_result_new, state.newCount)
+            },
+        )
         if (state.duplicatesSkipped > 0) {
             Text(stringResource(R.string.import_result_duplicates, state.duplicatesSkipped))
         }
         if (state.failedRows.isNotEmpty()) {
             Text(stringResource(R.string.import_result_failed, state.failedRows.size))
+        }
+        // Only true when something actually landed in the table -- pointing
+        // at the transaction list when newCount is 0 would send the user
+        // looking for rows that were never written.
+        if (state.newCount > 0) {
+            Spacer(Modifier.padding(4.dp))
+            Text(
+                stringResource(R.string.import_result_location),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
         Spacer(Modifier.padding(12.dp))
         Button(onClick = onDone, modifier = Modifier.testTag(ImportTestTags.DONE_BUTTON)) {
@@ -249,12 +277,37 @@ private fun PreviewContent(
             return@Column
         }
 
+        // Split once so the count shown ("N transactions found") is the number
+        // actually reviewable below, not inflated by rows that failed to map --
+        // those get their own count, per §3, rather than being counted as
+        // found transactions or rendered inline as if they were one.
+        val (mappedRows, unmappedRows) = preview.sampleRows.partition {
+            it.date != null && it.description != null && it.amount != null
+        }
+        var failedRowsExpanded by remember { mutableStateOf(false) }
+
         Column(modifier = Modifier.padding(16.dp)) {
             Text(
-                text = stringResource(R.string.import_preview_count, preview.sampleRows.size),
+                text = stringResource(R.string.import_preview_count, mappedRows.size),
                 style = MaterialTheme.typography.titleMedium,
                 modifier = Modifier.testTag(ImportTestTags.PREVIEW_COUNT),
             )
+
+            if (unmappedRows.isNotEmpty()) {
+                Text(
+                    text = stringResource(R.string.import_failed_rows_header, unmappedRows.size),
+                    modifier = Modifier
+                        .clickable { failedRowsExpanded = !failedRowsExpanded }
+                        .testTag(ImportTestTags.FAILED_ROWS_HEADER),
+                )
+                if (failedRowsExpanded) {
+                    Column(modifier = Modifier.testTag(ImportTestTags.FAILED_ROWS_LIST)) {
+                        unmappedRows.forEach { row ->
+                            Text(row.rawCells.joinToString(" · "))
+                        }
+                    }
+                }
+            }
 
             if (preview.uncertainFields.isNotEmpty()) {
                 Text(
@@ -282,7 +335,9 @@ private fun PreviewContent(
                     modifier = Modifier.testTag(ImportTestTags.UNMAPPED_COLUMNS),
                 )
                 preview.unmappedColumns.forEach { column ->
-                    Text(stringResource(R.string.import_unmapped_columns_body, column))
+                    val columnLabel = preview.headerCells?.getOrNull(column)?.trim()?.takeIf(String::isNotEmpty)
+                        ?: stringResource(R.string.import_unmapped_column_fallback, column + 1)
+                    Text(stringResource(R.string.import_unmapped_columns_body, columnLabel))
                 }
             }
 
@@ -295,11 +350,13 @@ private fun PreviewContent(
         }
 
         LazyColumn(modifier = Modifier.weight(1f).testTag(ImportTestTags.SAMPLE_LIST)) {
-            items(preview.sampleRows) { row ->
+            items(mappedRows) { row ->
                 ListItem(
-                    headlineContent = { Text(row.description ?: row.rawCells.joinToString(" · ")) },
-                    supportingContent = row.date?.let { { Text(it.toString()) } },
-                    trailingContent = row.amount?.let { { Text(it.minorUnits.toString()) } },
+                    headlineContent = { Text(row.description!!) },
+                    supportingContent = {
+                        Text(row.date!!.toJavaLocalDate().format(DateTimeFormatter.ofPattern("d MMMM yyyy", Locale.getDefault())))
+                    },
+                    trailingContent = { MoneyText(money = row.amount!!, currencyCode = PREVIEW_CURRENCY_CODE) },
                 )
             }
         }
@@ -418,6 +475,8 @@ internal object ImportTestTags {
     const val RESULT = "import:result"
     const val DONE_BUTTON = "import:done"
     const val PREVIEW_COUNT = "import:preview_count"
+    const val FAILED_ROWS_HEADER = "import:failed_rows_header"
+    const val FAILED_ROWS_LIST = "import:failed_rows_list"
     const val UNCERTAIN_BANNER = "import:uncertain_banner"
     const val UNMAPPED_COLUMNS = "import:unmapped_columns"
     const val FIX_MANUALLY_BUTTON = "import:fix_manually"

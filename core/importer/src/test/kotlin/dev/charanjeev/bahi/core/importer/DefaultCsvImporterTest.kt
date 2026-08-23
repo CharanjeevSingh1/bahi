@@ -248,6 +248,59 @@ class DefaultCsvImporterTest {
     }
 
     @Test
+    fun `preview surfaces the header row's own cells so the UI can name an unmapped column by its header text`() = runTest {
+        val csv = """
+            Date,Description,Amount,Balance
+            2026-01-05,Coffee Shop,-450.00,9550.00
+            2026-01-06,Salary,50000.00,59550.00
+            2026-01-07,Ride Share,-320.50,59229.50
+            2026-01-08,Electricity Bill,-1800.00,57429.50
+        """.trimIndent()
+
+        val preview = importer.preview(csv)
+
+        assertThat(preview.headerCells).containsExactly("Date", "Description", "Amount", "Balance").inOrder()
+    }
+
+    @Test
+    fun `preview with a supplied mapping reads the header row off the mapping's own headerRowIndex`() = runTest {
+        val csv = """
+            Date,Description,Withdrawal,Deposit
+            2026-01-05,Coffee Shop,450.00,
+            2026-01-06,Salary,,50000.00
+        """.trimIndent()
+        val mapping = ColumnMapping(
+            headerRowIndex = 0,
+            firstDataRowIndex = 1,
+            dateColumn = 0,
+            dateFormat = "yyyy-MM-dd",
+            descriptionColumn = 1,
+            amountColumn = null,
+            amountSign = null,
+            signColumn = null,
+            debitColumn = 2,
+            creditColumn = 3,
+        )
+
+        val preview = importer.preview(csv, mapping)
+
+        assertThat(preview.headerCells).containsExactly("Date", "Description", "Withdrawal", "Deposit").inOrder()
+    }
+
+    @Test
+    fun `preview has no header cells when the mapping's headerRowIndex is null`() = runTest {
+        val csv = """
+            2026-01-05,Coffee Shop,-450.00
+            2026-01-06,Salary,50000.00
+        """.trimIndent()
+        val mapping = singleAmountMapping().copy(headerRowIndex = null, firstDataRowIndex = 0)
+
+        val preview = importer.preview(csv, mapping)
+
+        assertThat(preview.headerCells).isNull()
+    }
+
+    @Test
     fun `comparing two candidate date formats via preview distinguishes silent ambiguity from a real contradiction`() = runTest {
         // Every value here is silent on the question (both components <= 12),
         // so both candidate formats should map every row cleanly -- this is

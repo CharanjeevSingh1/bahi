@@ -42,16 +42,20 @@ class ImportViewModelTest {
         creditColumn = null,
     )
 
-    private fun previewWith(uncertainFields: Set<MappingField> = emptySet(), unmappedColumns: List<Int> = emptyList()) =
-        ImportPreview(
-            mapping = mapping,
-            uncertainFields = uncertainFields,
-            sampleRows = listOf(
-                PreviewRow(rawCells = listOf("01/03/2026", "COFFEE", "-450.00"), date = LocalDate(2026, 3, 1), description = "COFFEE", amount = Money(-45000)),
-            ),
-            unmappedColumns = unmappedColumns,
-            warnings = emptyList(),
-        )
+    private fun previewWith(
+        uncertainFields: Set<MappingField> = emptySet(),
+        unmappedColumns: List<Int> = emptyList(),
+        headerCells: List<String>? = listOf("Date", "Description", "Amount"),
+    ) = ImportPreview(
+        mapping = mapping,
+        uncertainFields = uncertainFields,
+        sampleRows = listOf(
+            PreviewRow(rawCells = listOf("01/03/2026", "COFFEE", "-450.00"), date = LocalDate(2026, 3, 1), description = "COFFEE", amount = Money(-45000)),
+        ),
+        unmappedColumns = unmappedColumns,
+        headerCells = headerCells,
+        warnings = emptyList(),
+    )
 
     @Test
     fun `picking a file moves through Reading into Preview on success`() = runTest {

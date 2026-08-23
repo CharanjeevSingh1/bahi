@@ -41,6 +41,7 @@ internal data class InferredMapping(
     val mapping: ColumnMapping?,
     val uncertainFields: Set<MappingField>,
     val unmappedColumns: List<Int>,
+    val headerCells: List<String>? = null,
 )
 
 /**
@@ -115,7 +116,7 @@ internal fun inferColumnMapping(rows: List<CsvRow>): InferredMapping {
         debitColumn = amountSide.debitColumn,
         creditColumn = amountSide.creditColumn,
     )
-    return InferredMapping(mapping, uncertain, unmappedColumns)
+    return InferredMapping(mapping, uncertain, unmappedColumns, headerCells)
 }
 
 /** Never a real format string -- a marker that DATE_FORMAT is in uncertainFields and slice 4 hasn't run yet. */
