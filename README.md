@@ -26,7 +26,7 @@ Two problems here are genuinely hard and get the most attention:
 
 ## Architecture
 
-Three layers, fifteen modules. Features never depend on other features; the build fails if they try.
+Three layers, sixteen modules. Features never depend on other features; the build fails if they try.
 
 ```mermaid
 graph LR
@@ -35,6 +35,7 @@ graph LR
     end
     subgraph tier_feature[Feature]
         feature_budgets[":feature:budgets"]:::feature
+        feature_import[":feature:import"]:::feature
         feature_insights[":feature:insights"]:::feature
         feature_settings[":feature:settings"]:::feature
         feature_transactions[":feature:transactions"]:::feature
@@ -60,6 +61,7 @@ graph LR
     app --> core_ui
     tier_feature --> core_data
     tier_feature --> core_designsystem
+    tier_feature --> core_importer
     tier_feature --> core_ui
     core_data --> core_database
     core_data --> core_datastore
@@ -96,7 +98,7 @@ This simplified diagram is derived from that same generated data (`renderSimplif
 
 **Content hashing for import de-duplication.** Re-importing an overlapping statement must not create duplicates. The hash deliberately excludes id, category and notes, so a row the user has already categorised is still recognised as the same row.
 
-**Convention plugins, not copy-pasted build files.** JVM target, compile SDK, Compose setup and test dependencies are defined once in `build-logic/` and applied as `bahi.android.feature` etc. Changing the JVM target changes it for all fifteen modules.
+**Convention plugins, not copy-pasted build files.** JVM target, compile SDK, Compose setup and test dependencies are defined once in `build-logic/` and applied as `bahi.android.feature` etc. Changing the JVM target changes it for all sixteen modules.
 
 ---
 
