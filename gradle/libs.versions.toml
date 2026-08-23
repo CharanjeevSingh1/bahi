@@ -36,6 +36,7 @@ kotlinxSerialization = "1.8.1"
 kotlinxCollectionsImmutable = "0.3.8"
 
 javaxInject = "1"
+commonsCsv = "1.11.0"
 
 junit4 = "4.13.2"
 truth = "1.4.4"
@@ -84,6 +85,11 @@ kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-cor
 kotlinx-datetime = { group = "org.jetbrains.kotlinx", name = "kotlinx-datetime", version.ref = "kotlinxDatetime" }
 kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "kotlinxSerialization" }
 kotlinx-collections-immutable = { group = "org.jetbrains.kotlinx", name = "kotlinx-collections-immutable", version.ref = "kotlinxCollectionsImmutable" }
+
+# RFC 4180 CSV parsing for :core:importer -- zero transitive dependencies of
+# its own. See docs/csv-import-design.md §8 for why this is a dependency
+# rather than a hand-rolled tokenizer.
+commons-csv = { group = "org.apache.commons", name = "commons-csv", version.ref = "commonsCsv" }
 
 junit4 = { group = "junit", name = "junit", version.ref = "junit4" }
 truth = { group = "com.google.truth", name = "truth", version.ref = "truth" }

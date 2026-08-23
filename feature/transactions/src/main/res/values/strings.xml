@@ -17,6 +17,7 @@
     <string name="transactions_undo">Undo</string>
     <string name="transactions_uncategorised">Uncategorised</string>
     <string name="transactions_add_content_description">Add transaction</string>
+    <string name="transactions_import_content_description">Import from CSV</string>
 
     <string name="transactions_filter_category_label">Category</string>
     <string name="transactions_filter_category_count">%1$d categories</string>

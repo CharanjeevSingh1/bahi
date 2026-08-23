@@ -42,6 +42,7 @@ include(":core:importer")
 include(":core:sync")
 include(":core:testing")
 
+include(":feature:import")
 include(":feature:transactions")
 include(":feature:budgets")
 include(":feature:insights")

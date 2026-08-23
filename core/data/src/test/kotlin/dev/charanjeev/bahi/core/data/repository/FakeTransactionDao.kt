@@ -36,8 +36,12 @@ class FakeTransactionDao : TransactionDao {
                 .sortedWith(compareByDescending<TransactionEntity> { it.date }.thenByDescending { it.createdAt })
         }
 
-    override suspend fun findExistingHashes(hashes: List<String>): List<String> =
-        backing.value.values.map { it.contentHash }.filter { it in hashes }
+    override suspend fun countExistingHashes(hashes: List<String>): Map<String, Int> =
+        backing.value.values
+            .map { it.contentHash }
+            .filter { it in hashes }
+            .groupingBy { it }
+            .eachCount()
 
     override suspend fun upsert(transaction: TransactionEntity) {
         backing.value = backing.value + (transaction.id to transaction)

@@ -39,6 +39,14 @@ class AndroidLibraryConventionPlugin : Plugin<Project> {
             add("testImplementation", libs.findLibrary("truth").get())
             add("testImplementation", libs.findLibrary("turbine").get())
             add("testImplementation", libs.findLibrary("kotlinx-coroutines-test").get())
+
+            // AGP still builds and runs connectedDebugAndroidTest for a module with
+            // zero androidTest source -- it doesn't skip the task, it instruments an
+            // empty test APK. Without this, that APK has no AndroidJUnitRunner class
+            // to launch, so instrumentation fails with ClassNotFoundException instead
+            // of quietly reporting zero tests. Declared here, not per-module, so a
+            // module can't be missing it by omission.
+            add("androidTestImplementation", libs.findLibrary("androidx-test-runner").get())
         }
     }
 }

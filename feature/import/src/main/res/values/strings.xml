@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="import_title">Import statement</string>
+    <string name="import_pick_file_button">Choose CSV file</string>
+    <string name="import_pick_file_body">Import transactions from a bank statement exported as CSV.</string>
+    <string name="import_reading">Reading file…</string>
+    <string name="import_importing">Importing…</string>
+
+    <string name="import_error_too_large">This file is larger than expected for a bank statement — check you selected the right one.</string>
+    <string name="import_error_not_text">This doesn\'t look like a text file.</string>
+    <string name="import_error_encoding">Some characters in this file didn\'t decode correctly — it may not be saved as UTF-8. Try re-saving it as UTF-8 CSV and importing again.</string>
+    <string name="import_error_generic">Couldn\'t read that file.</string>
+    <string name="import_error_retry">Choose a different file</string>
+
+    <string name="import_preview_count">%1$d transactions found</string>
+    <string name="import_preview_needs_review">Some details need confirming before importing</string>
+    <string name="import_preview_confirm_button">Import</string>
+    <string name="import_preview_fix_manually">Fix columns by hand</string>
+
+    <string name="import_unmapped_columns_title">Columns not used for import</string>
+    <string name="import_unmapped_columns_body">%1$s looks like a running balance and won\'t be imported.</string>
+    <string name="import_unmapped_column_fallback">Column %1$d</string>
+
+    <string name="import_uncertain_date_format">Date format needs confirming</string>
+    <string name="import_uncertain_amount_columns">Which column is money out needs confirming</string>
+    <string name="import_uncertain_description_column">Description column needs confirming</string>
+    <string name="import_uncertain_date_column">Date column needs confirming</string>
+
+    <string name="import_date_format_sheet_title">Which date format is this?</string>
+    <string name="import_date_format_sheet_body">Pick the reading that looks right. A format with rows that won\'t parse still imports the rest — those rows show up as failed.</string>
+    <string name="import_date_format_option_clean">%1$s — every row parses</string>
+    <string name="import_date_format_option_with_failures">%1$s — %2$d row(s) won\'t parse this way</string>
+
+    <string name="import_amount_sheet_title">Which of these is money out?</string>
+    <string name="import_amount_sheet_option_a">Column %1$d (e.g. %2$s)</string>
+    <string name="import_amount_sheet_option_b">Column %1$d (e.g. %2$s)</string>
+
+    <string name="import_raw_grid_title">Match the columns by hand</string>
+    <string name="import_raw_grid_body">Inference couldn\'t confidently map this file. Tell it which column is which.</string>
+    <string name="import_raw_grid_role_date">Date</string>
+    <string name="import_raw_grid_role_description">Description</string>
+    <string name="import_raw_grid_role_amount">Amount</string>
+    <string name="import_raw_grid_role_debit">Money out</string>
+    <string name="import_raw_grid_role_credit">Money in</string>
+    <string name="import_raw_grid_amount_mode_label">How is the amount recorded?</string>
+    <string name="import_raw_grid_amount_mode_single">One amount column</string>
+    <string name="import_raw_grid_amount_mode_debit_credit">Separate money out / money in</string>
+    <string name="import_raw_grid_column_value">Column %1$d: %2$s</string>
+    <string name="import_raw_grid_unassigned">Not set</string>
+    <string name="import_raw_grid_invalid">That combination isn\'t enough to import from — pick a date, a description, and either an amount column or both money out and money in.</string>
+    <string name="import_raw_grid_apply">Apply</string>
+
+    <string name="import_failed_rows_header">%1$d rows couldn\'t be read</string>
+    <string name="import_failed_row_reason">Line %1$d: %2$s</string>
+
+    <string name="import_result_title">Import complete</string>
+    <string name="import_result_no_new">Nothing new to import</string>
+    <string name="import_result_new_one">1 new transaction</string>
+    <string name="import_result_new">%1$d new transactions</string>
+    <string name="import_result_duplicates">%1$d already imported, skipped</string>
+    <string name="import_result_failed">%1$d row(s) couldn\'t be read</string>
+    <string name="import_result_location">They\'re in your transaction list now.</string>
+    <string name="import_result_done">Done</string>
+
+    <string name="import_back_content_description">Back</string>
+</resources>
