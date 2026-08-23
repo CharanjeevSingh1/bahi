@@ -1,8 +1,9 @@
 # CSV import — design
 
-M2. Covers column-mapping inference, the preview/correction flow, de-duplication,
-failure handling, threading, and the test plan. No code in this document is meant
-to be copy-pasted; it's there to make the reasoning checkable.
+M2. Covers column-mapping inference, the preview/correction flow,
+de-duplication, failure handling, threading, getting the file off device
+storage, and the test plan. No code in this document is meant to be
+copy-pasted; it's there to make the reasoning checkable.
 
 Related reading: `core/importer/.../CsvImporter.kt` (the M0 placeholder interfaces),
 `Money.parse` (`core/model/.../Money.kt`), `contentHashOf` and `TransactionDao.importBatch`
@@ -31,7 +32,7 @@ turn out to be load-bearing:
   everything ends up being asked about, which defeats the point of inferring
   anything.
 
-Proposed replacement shape (fields, not final Kotlin — see §7 for where this
+Proposed replacement shape (fields, not final Kotlin — see §8 for where this
 actually lands):
 
 ```
@@ -63,6 +64,9 @@ roles need a human, so the correction UI can leave everything else alone.
 should be reviewing transactions, not columns.
 
 `FailedRow` and `ImportResult.duplicatesSkipped`/`failedRows` are fine as-is.
+`preview`/`import` keep taking a plain `csv: String` — see §7 for why the size
+and encoding concerns are handled before the string ever reaches this
+interface, rather than by changing its shape.
 
 ---
 
@@ -143,11 +147,11 @@ before any of the above runs, or a comma inside a merchant name silently
 shifts every column after it. Two variants that are easy to skip and worth
 naming explicitly: a quoted field containing a literal newline (the tokenizer
 has to be record-aware, not line-aware, or it splits one row into two), and a
-leading UTF-8 BOM (`﻿`), which Excel writes on save-as-CSV and which,
-left unstripped, silently breaks whatever parses the first cell of the first
-row. Both are in the fixture set (§8). This is the one place I want to flag:
-the module currently has no CSV parser at all, hand-rolled or otherwise (see
-§7 for the dependency question).
+leading UTF-8 BOM (`﻿`), which Excel writes on save-as-CSV and which, left
+unstripped, silently breaks whatever parses the first cell of the first row.
+Both are in the fixture set (§9). §8 covers why this is Commons CSV rather
+than a hand-rolled tokenizer; §7 covers decoding raw bytes to text — including
+non-UTF-8 exports — before any of this runs at all.
 
 ---
 
@@ -253,9 +257,8 @@ per-row swipe-to-delete (built in M1) is available, and that means undoing a
 `CSV_IMPORT` rows, plus an `undoImport(batchId)` repository method that
 soft-deletes everything with that id — reusing the existing tombstone
 machinery, so it stays sync-safe for free. This is a schema change bound by
-rule 6 (migration + `MigrationTest` + exported schema JSON, same commit), and
-I'm treating it as optional/separable rather than assuming it belongs in M2 —
-flagged as a decision in §8.
+rule 6 (migration + `MigrationTest` + exported schema JSON, same commit).
+Resolved: this is being built in M2 — see §11.1 for why.
 
 ---
 
@@ -288,34 +291,161 @@ which de-duplication (§4) makes safe.
 
 ---
 
-## 7. Where the logic lives, and the dependency question
+## 7. Getting the file into the app
 
-**No new CSV parsing dependency, with one honest caveat.** The quoting rules
-that matter here are narrow — quoted fields, comma and embedded-quote
-escaping, embedded newlines inside a quoted field, a leading BOM, CRLF vs LF —
-and hand-rolling a small state-machine tokenizer is in keeping with how
-`Money.parse` was built for this exact problem (parenthesized negatives,
-mixed separators) rather than pulling in a formatting library.
+Everything above assumes `CsvImporter.preview` already has a `String`. Getting
+there means going through Android's Storage Access Framework, which has its
+own failure modes — none of them exotic, all of them easy to get wrong by
+copying the wrong sample code.
 
-What a library actually buys, and hand-rolling actually risks, is *dialect
-coverage from exposure we haven't had*: Commons CSV and opencsv have been
-hammered against years of exports from Excel, LibreOffice, Google Sheets and
-whatever bank software produced them, including malformed-but-common cases
-(unbalanced quotes, mixed quoted/unquoted cells in the same column) that
-don't show up until a real file breaks them. A hand-rolled tokenizer is only
-as correct as its fixture set. The failure mode isn't a crash — it's a
-tokenizer that silently mis-splits a row (a comma inside an unquoted-but-
-should-have-been-quoted field, say) and produces a preview that still *looks*
-plausible, gets approved, and imports shifted data. That's a real argument
-for the library, and I don't want to understate it.
+**Picking the file.** Use `ActivityResultContracts.OpenDocument()` (wraps
+`Intent.ACTION_OPEN_DOCUMENT`), not `ACTION_GET_CONTENT`. `OpenDocument` goes
+through a real `DocumentsProvider`, returns a stable `content://` Uri, and —
+usefully for a finance app — needs no broad storage permission at all, since
+the grant is scoped to the one document the user picked. Pass
+`mimeTypes = arrayOf("text/csv", "text/comma-separated-values", "*/*")` as a
+hint to the picker UI, but don't rely on it: plenty of providers tag CSVs as
+`text/plain` or `application/octet-stream`, so the MIME filter narrows what
+the picker *shows*, not what the app can *trust*.
 
-I still lean hand-rolled, because the alternative to "our fixture set might
-be incomplete" isn't "a library's dialect coverage is complete" — it's
-trading one bounded risk for a dependency, and the CLAUDE.md default is to
-ask first. But this is the one place in the design where I'd actually
-change my recommendation if real fixture files (once we have some to test
-against, even synthetic ones sourced from more banks) turn up quoting
-behavior outside RFC 4180. See the decision list in §10.
+**Reading it.** `contentResolver.openInputStream(uri)` once, immediately,
+inside the same flow as the pick — the stream may be backed by a cloud
+provider (Drive, an email attachment) rather than local storage, so it isn't
+assumed to be cheaply re-openable or seekable.
+
+**Persisting the URI permission — deliberately not doing this.**
+`takePersistableUriPermission` exists for a Uri that needs to be reopened
+later — after the app restarts, or on a different day (a watched folder, a
+background sync target). CSV import is pick-then-read-immediately within one
+session; the transient grant `OpenDocument` already provides covers that.
+Calling `takePersistableUriPermission` anyway would leave a permission grant
+sitting around with nothing to ever release it — worth deciding against
+explicitly rather than pasting it in because sample code usually includes it.
+
+**Validating it's actually a CSV.** Since the MIME filter can't be trusted,
+validate content instead of the picker's say-so: after opening the stream,
+sniff the first few KB before running the full tokenizer — reject
+immediately, with a specific "this doesn't look like a text file" error, if
+it contains a NUL byte or otherwise fails to decode as text at all (see
+encoding, below). That's a different, earlier failure than §3's "couldn't
+find data rows" — the sniff catches "picked a PDF/XLSX/photo by mistake"; a
+file that's valid text but has an unrecognizable shape (someone else's
+export, an unrelated `.txt`) still reaches §3's inference-failure fallback,
+which is the right place for it.
+
+**Where this lives.** `:core:importer` stays Android/SAF-agnostic — its
+interface still just takes a `String` (§1). The Uri → `ContentResolver` →
+decode → cap-check → sniff pipeline is platform/UI-adjacent code and belongs
+in the feature layer (`:feature:import`, pending §11.2), which keeps the
+tokenizer and inference engine testable as plain JVM logic, as already noted
+in §8.
+
+**Size: an explicit cap, not full streaming.** `preview(csv: String)` reading
+a whole file into memory is fine at the scale this app actually targets — a
+real bank statement is hundreds of rows, tens to low hundreds of KB — but has
+no defense against an atypical file: a multi-year export, or the wrong file
+entirely, passed through a MIME filter that isn't enforced. That's a real OOM
+risk, not a hypothetical one. True end-to-end streaming (Uri through
+inference through DB write, never materializing the whole file) would remove
+the risk completely, but it's real design cost this milestone doesn't need:
+it would trade away the atomic commit in §5 for chunked, non-atomic writes,
+and buys nothing for inference specifically, which only ever samples the
+first ~50 data rows (§2) regardless of file size. Proposed instead: enforce a
+hard cap — 5 MB is a reasonable ceiling (a CSV row runs roughly 80–150 bytes,
+so 5 MB is on the order of 35,000–60,000 rows, one to two orders of magnitude
+past any real personal statement, while a worst-case 5 MB `String` plus a
+comparably sized parsed structure is trivial for any device this app
+targets) — checked at the point the file is opened, before any bytes are
+decoded into a `String`. Some providers report a usable length via
+`openAssetFileDescriptor(uri, "r")?.length`; where they don't (`-1` is
+common), the read itself is bounded defensively. Over the cap: fail
+immediately with a specific error ("This file is larger than expected for a
+bank statement — check you selected the right one"), before `CsvImporter` is
+ever invoked. `:core:importer`'s interface doesn't need a "too large" case of
+its own — this is entirely a feature-layer decision.
+
+**Encoding: a loud failure, not a silent mangling.** Bytes are decoded as
+UTF-8 at the same read step — correct for the large majority of modern
+exports. Older or Windows-native banking software sometimes exports
+Windows-1252 instead, which is byte-identical to UTF-8 for plain ASCII but
+decodes any non-ASCII byte (an accented name, a smart quote) incorrectly.
+Java/Kotlin's default UTF-8 decoder doesn't throw on this — it silently
+substitutes the replacement character (`�`, U+FFFD) per bad byte sequence, so
+a Windows-1252 file doesn't crash, it just quietly corrupts specific
+characters in specific merchant names. That's worse than a crash, because it
+looks like a successful import. The fix isn't guessing a second charset
+automatically — that's the identical risk to the date-format problem in §2,
+a wrong silent guess — it's detection: if the decoded text contains any
+U+FFFD, stop before inference runs and show a specific, actionable error
+("Some characters in this file didn't decode correctly — it may not be saved
+as UTF-8. Try re-saving it as UTF-8 CSV and importing again.") rather than
+importing mangled descriptions. A nicer version — re-decode the same bytes as
+Windows-1252 and let the user pick between the two renderings, mirroring the
+date-correction sheet in §3 — is a natural extension once this exists, but
+I'm not proposing it for M2; the loud-error version is enough to stop data
+from being silently corrupted, and the fancier version is speculative until
+a real Windows-1252 file is in the fixture set.
+
+This is feature-layer code, not `:core:importer`, so it's tested separately
+from §9's fixture list — a fake `ContentResolver`/Uri reader exercising the
+cap and the encoding-detection behavior, in `:feature:import`'s own test
+suite.
+
+---
+
+## 8. Where the logic lives, and the CSV parsing library
+
+**Decision: take the dependency — Apache Commons CSV**
+(`org.apache.commons:commons-csv`). Reasons, specifically:
+
+- **Zero transitive dependencies.** It's a small, self-contained JVM library
+  with no dependency chain of its own to inherit, so the actual footprint
+  added to the app is one jar, not a subtree.
+- **RFC 4180 handling that's already correct**, including the two cases §2
+  calls out as easy to miss — embedded newlines inside a quoted field (its
+  parser is record-aware, operating on a `Reader` rather than line-by-line)
+  and doubled-quote escaping — plus tolerance for the malformed-but-common
+  dialects (unbalanced quotes, mixed quoted/unquoted cells in one column)
+  that show up in real exports and that a fresh implementation hasn't been
+  exposed to.
+- **Apache 2.0 licensed**, no encumbrance for a portfolio repo.
+- **`Reader`-based, iterator-style API** (`CSVParser.parse(reader, format)`
+  returns an `Iterable<CSVRecord>`) rather than requiring the whole file
+  pre-split into a `List<List<String>>` up front — smaller peak memory during
+  tokenization itself, which pairs with, though doesn't replace, the size cap
+  in §7.
+
+It still doesn't do everything: BOM stripping isn't handled by the library
+(§2), so that stays a one-line check (`content.removePrefix("﻿")`)
+before the text reaches the parser — not worth a dependency on its own, and
+not something Commons CSV changes.
+
+This will be added to `gradle/libs.versions.toml` and as an `implementation`
+dependency of `:core:importer`'s `build.gradle.kts`, per CLAUDE.md's rule
+that dependencies are declared only in the version catalog — part of the
+tokenizer slice (§10).
+
+**Rejected alternative: hand-rolling a tokenizer.** This was the original
+recommendation, on the reasoning that `Money.parse` was hand-built for the
+same class of problem (parenthesized negatives, mixed separators) rather than
+pulling in a formatting library, and that the quoting rules needed here are
+narrow enough to implement directly. Worth preserving why that didn't hold up,
+since the same reasoning is what makes the library choice worth double-
+checking later rather than treated as automatically safe:
+
+A hand-rolled tokenizer is only as correct as its fixture set, and a library
+has been exercised against years of real exports from Excel, LibreOffice,
+Google Sheets, and whatever bank software produced the file — including the
+malformed-but-common cases above that don't show up until a real file breaks
+them. The failure mode if hand-rolling gets one wrong isn't a crash — it's a
+tokenizer that silently mis-splits a row (a comma inside a field that should
+have been quoted but wasn't, say) and produces a preview that still *looks*
+plausible, gets approved, and imports shifted data. That risk — plausible-
+looking wrong output, approved by a user who has no way to tell — is what
+tipped this from "ask before adding a dependency" to "the dependency is
+warranted here." It doesn't fully disappear with Commons CSV either: the
+library covers dialect and quoting correctness, but BOM stripping and
+encoding detection (§7) are still this codebase's problem, not the library's.
 
 The tokenizer and the inference engine (§2) are pure functions over strings —
 no Room, no Android framework — even though `:core:importer` is an Android
@@ -334,7 +464,7 @@ concept exists.
 
 ---
 
-## 8. Testing strategy
+## 9. Testing strategy
 
 All fixtures are hand-written synthetic CSVs (2–6 rows, fake merchants), not
 real statements — the same approach `MoneyTest` already takes for parsing
@@ -366,7 +496,7 @@ Fixture cases, roughly in order of how likely each is to break something:
     two are skipped and one is kept (the count-aware fix in §4).
 14. CRLF line endings and a trailing blank line at EOF.
 15. A quoted description field containing a literal newline — asserts the
-    tokenizer is record-aware, not line-aware.
+    tokenizer (Commons CSV) is record-aware, not line-aware.
 16. A file with a leading UTF-8 BOM — asserts it's stripped before the header/
     first cell is parsed.
 17. European (`1.234,56`) and Indian (`12,34,567.89`) amount formats in the
@@ -377,20 +507,24 @@ Fixture cases, roughly in order of how likely each is to break something:
 Cases 5, 8, 10, 11 and 13 are the ones most likely to regress silently if
 touched later, since each corresponds to a place where the naive
 implementation produces a *plausible-looking wrong answer* rather than an
-error.
+error. The SAF-layer concerns from §7 (size cap, encoding detection) are
+feature-layer behaviour, not `:core:importer` shape — they get their own,
+separate tests against a fake `ContentResolver`, not another entry here.
 
 ---
 
-## 9. Proposed M2 slices
+## 10. Proposed M2 slices
 
 Each slice compiles and passes `checkModuleBoundaries` on its own; nothing
 here depends on a later slice to be reviewable.
 
 1. **Reshape `:core:importer` interfaces** to the §1 shape. No logic — just
    the contract, so everything after this reviews against a stable interface.
-2. **CSV tokenizer**: hand-rolled RFC 4180-ish parser (quoting, escaping,
-   CRLF/LF, embedded newlines, BOM stripping) with its own unit tests
-   (fixture cases 3, 9, 14, 15, 16 from §8). Pure function, no inference.
+2. **CSV tokenizing on Commons CSV**: add the dependency (`libs.versions.toml`
+   + `:core:importer`'s `build.gradle.kts`), wire `CSVParser`/`CSVFormat`, add
+   the BOM-stripping step Commons CSV doesn't provide, with unit tests
+   (fixture cases 3, 9, 14, 15, 16 from §9). Small — most of the correctness
+   here is the library's, not this slice's.
 3. **Preamble/header detection + column role inference** (§2): the data-row
    finder, date/description/amount/debit-credit/balance role assignment, and
    confidence tracking via `uncertainFields`. This is the slice that most
@@ -404,33 +538,51 @@ here depends on a later slice to be reviewable.
    exercise it.
 6. **`CsvImporter` implementation**: wires tokenizer + inference into
    `preview()`/`import()`, calling the existing `TransactionRepository.importAll`.
-7. **Preview/correction UI**: stateful/stateless screen pair, sealed
-   `ImportUiState`, the correction sheets from §3. Raises the module-structure
-   question in §10 below before this slice starts.
-8. **Import-batch undo** (§5): `importBatchId` column, migration,
-   `MigrationTest`, `undoImport`. Only if approved — see §10.
+7. **File selection and read (SAF)** (§7): `OpenDocument` wiring, `ContentResolver`
+   read with the size cap enforced before decode, UTF-8 decode with
+   replacement-character detection, and the pre-inference content sniff for a
+   non-text file. Produces the plain `String` slice 6's `CsvImporter` consumes;
+   doesn't depend on slice 6 being done first, just on the interface from
+   slice 1.
+8. **Preview/correction UI**: stateful/stateless screen pair, sealed
+   `ImportUiState`, the correction sheets from §3. Depends on the module-
+   structure decision in §11.2.
+9. **Import-batch undo** (§5): `importBatchId` column, migration,
+   `MigrationTest`, `undoImport` — see §11.1.
 
 ---
 
-## 10. Decisions I'd want before building
+## 11. Decisions
 
-### 10.1 Does batch undo (slice 8) belong in M2?
+### 11.1 Batch undo — resolved 2026-08-23: build it in M2
 
-- **Options:** (a) build it — `importBatchId` column, migration,
+- **Options considered:** (a) build it — `importBatchId` column, migration,
   `MigrationTest`, `undoImport`, as its own slice; (b) defer it — M2 ships
   with only the existing per-row swipe-to-delete from M1.
-- **Recommendation:** (a), build it. It's one nullable column and a soft-
-  delete-by-batch-id query, reusing machinery that already exists — cheap
-  now.
-- **If we pick wrong:** Deferring and adding it later means every
-  `CSV_IMPORT` row inserted before the migration lands has `importBatchId =
-  null` forever — batch undo would only cover imports made *after* the
-  feature ships, not the ones that motivated it. Building it now and it
-  turns out unneeded costs one unused nullable column and a small migration
-  — low, bounded cost either way, which is most of why I lean toward
-  building it.
+- **Decision: (a).** It's one nullable column and a soft-delete-by-batch-id
+  query, reusing machinery that already exists.
+- **The reason I missed the first time:** `core/database/.../Migrations.kt`
+  has `Migrations.ALL` as an empty array (one commented-out example) and the
+  `@Database` version has never moved past 1. `MigrationTest
+  .migrateAll_fromVersion1_toLatest` creates a database at version 1 and
+  validates it against `LATEST_VERSION = 1` — it's testing version 1 against
+  itself, running zero real migrations, because there has never been a
+  schema change to test. The README lists "migrations that are tested rather
+  than hoped for" as one of two headline architectural decisions, and rule 6
+  in CLAUDE.md is one of the hardest constraints in the file — but nothing in
+  the repo has actually exercised that path end to end. `importBatchId` is a
+  small, genuinely-needed schema change that happens to be the thing that
+  gives `Migrations.ALL` and `MigrationTest` their first real migration to
+  run. That's a stronger reason to build it now than "it's cheap" — it closes
+  the gap between what the README claims and what the repo can currently
+  demonstrate.
+- **If this turns out wrong:** the cost of having built it is one migration
+  and one soft-delete-by-id query that goes lightly used — low. The cost of
+  *not* having built it would have compounded: every `CSV_IMPORT` row
+  inserted before a later migration lands would have `importBatchId = null`
+  forever, permanently un-undoable as a batch.
 
-### 10.2 Does the import screen get its own module?
+### 11.2 Does the import screen get its own module? — still open
 
 - **Options:** (a) new `:feature:import` module (16th module); (b) fold the
   screens into `:feature:transactions`.
@@ -447,27 +599,22 @@ here depends on a later slice to be reviewable.
   Either mistake is recoverable; the module-split direction is cheaper to
   recover from.
 
-### 10.3 Hand-rolled CSV tokenizer, or a parsing library?
+### 11.3 CSV parsing library — resolved 2026-08-23: Apache Commons CSV
 
-- **Options:** (a) hand-roll a small RFC 4180-ish tokenizer, no new
-  dependency; (b) take a dependency (Commons CSV or opencsv).
-- **Recommendation:** (a), consistent with how `Money.parse` was hand-built
-  for this exact class of problem, and CLAUDE.md's default to ask before
-  adding a dependency.
-- **What hand-rolling actually risks** (this is the real tradeoff, not a
-  formality): a library has been battle-tested against years of real-world
-  export quirks — malformed-but-common dialects, unbalanced quotes, mixed
-  quoted/unquoted cells in one column — that a fresh implementation hasn't
-  seen. The failure mode isn't a crash, it's worse: a tokenizer that
-  silently mis-splits a row on a quirk our fixtures didn't anticipate
-  produces a preview that still *looks* plausible, gets approved, and
-  imports shifted data.
-- **If we pick wrong:** picking (a) and hitting an uncovered dialect means a
-  bad preview on a real user's file — visible before commit if the shifted
-  columns produce nonsense (unparseable dates/amounts, caught by §5's
-  failure handling), but not necessarily visible if the shift still happens
-  to produce plausible-looking garbage. Picking (b) and it turning out
-  unneeded means one more entry in `gradle/libs.versions.toml` the
-  dependency list didn't need. I'd revisit this specific call the moment a
-  real fixture file turns up quoting behavior outside RFC 4180 — that's the
-  concrete trigger, not a vague "if it becomes a problem."
+- **Decision: take the dependency.** `org.apache.commons:commons-csv` — see
+  §8 for the full reasoning (zero transitive dependencies, RFC 4180 handling
+  including embedded newlines and unbalanced-quote tolerance, Apache 2.0,
+  `Reader`-based API).
+- **Rejected alternative — hand-rolling — preserved in §8**, since the risk
+  it identified is exactly why the recommendation changed rather than a
+  formality to note and discard: a hand-rolled tokenizer's correctness is
+  bounded by its own fixture set, and the failure mode (a plausible-looking
+  but wrong preview, silently approved by a user with no way to tell) is
+  worse than the cost of the dependency. It's also not fully mooted by the
+  library — BOM stripping and encoding detection (§7) are still this
+  codebase's problem either way.
+- **If this turns out wrong:** an unnecessary dependency costs one entry in
+  `gradle/libs.versions.toml` and one jar. That's a low, bounded cost against
+  the alternative — a silent mis-tokenization on a real file — which is why
+  I'm treating this as settled rather than reopening it barring a specific
+  Commons CSV limitation actually showing up against a real fixture.
