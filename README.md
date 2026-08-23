@@ -1,10 +1,12 @@
 # Bahi
 
+[![CI](https://github.com/CharanjeevSingh1/bahi/actions/workflows/ci.yml/badge.svg)](https://github.com/CharanjeevSingh1/bahi/actions/workflows/ci.yml)
+
 An offline-first personal finance tracker for Android. Import a bank statement, get it categorised, track it against a budget — with everything readable and editable with no network, and row-level sync when there is one.
 
 Named after the *bahi khata*, the traditional Indian ledger book.
 
-> **Status:** M0 (scaffolding) complete. See [Roadmap](#roadmap).
+See [Roadmap](#roadmap) for what's built.
 
 ---
 
@@ -14,12 +16,12 @@ Most of my production Android work — mobile banking on the Backbase platform, 
 
 Two problems here are genuinely hard and get the most attention:
 
-1. **CSV import** — inferring column mappings across bank exports that disagree about column order, date format, debit sign convention, and whether the file even starts with a header row.
-2. **Sync conflict resolution** — per-field resolution, because last-write-wins on a whole row silently discards a category the user set on their phone while their tablet was offline.
+1. **CSV import** — inferring column mappings across bank exports that disagree about column order, date format, debit sign convention, and whether the file even starts with a header row. See [`docs/csv-import-design.md`](docs/csv-import-design.md) for the inference design.
+2. **Sync conflict resolution** — per-field resolution, because last-write-wins on a whole row silently discards a category the user set on their phone while their tablet was offline. Not yet implemented; see **M4** in the [Roadmap](#roadmap).
 
 <p align="center">
   <img src="docs/screenshots/transactions.png" width="320" alt="Transaction list grouped by date">
-  <img src="docs/screenshots/list-with-active-filter.png" width="320" alt="Transaction list with a category and date filter applied">
+  <img src="docs/screenshots/import-preview-clean.png" width="320" alt="CSV import preview with inferred column mappings">
   <img src="docs/screenshots/filtered-empty.png" width="320" alt="Filtered-empty state showing a zero total for the filtered range">
 </p>
 ---
@@ -109,6 +111,7 @@ This simplified diagram is derived from that same generated data (`renderSimplif
 | Pure Kotlin | `Money` parsing across real bank CSV formats | `core/model/src/test` |
 | Data | Repository behaviour against fakes, not mocks | `core/data/src/test` |
 | Room | Migrations run against the previous schema | `core/database/src/androidTest` |
+| Import inference | Column-mapping inference against real-world CSV fixtures (ambiguous dates, no header, mixed amount formats) | `core/importer/src/test` |
 | ViewModel | State emission with Turbine + `TestDispatcher` | `feature/*/src/test` |
 | Compose | Screen states driven from the stateless composable | `feature/*/src/androidTest` |
 | Build | Feature-to-feature dependencies fail the build | `./gradlew checkModuleBoundaries` |
@@ -121,19 +124,13 @@ Run the full suite with `./gradlew unitTests` -- not `testDebugUnitTest`. `:core
 
 ## Getting started
 
-Requires JDK 17 and Android Studio (Ladybug or newer).
+Requires Android Studio (Ladybug or newer). CI builds against JDK 17; JDK 21 also works locally. JDK 26 does not.
 
 ```bash
-git clone https://github.com/<you>/bahi.git
+git clone https://github.com/CharanjeevSingh1/bahi.git
 cd bahi
 ./gradlew assembleDebug
 ./gradlew unitTests
-```
-
-The Gradle wrapper JAR is not committed in this scaffold. Generate it once with:
-
-```bash
-gradle wrapper --gradle-version 8.14.2
 ```
 
 ---
