@@ -121,6 +121,25 @@ class ColumnInferenceTest {
     }
 
     @Test
+    fun `debit, credit and balance together is the documented three-column gap -- lands in uncertainFields, not a wrong mapping`() {
+        // Withdrawal and Deposit are each populated on only half the rows,
+        // so every pairwise balance check (Balance-vs-Withdrawal, Balance-
+        // vs-Deposit, Withdrawal-vs-Deposit, in both directions) has fewer
+        // than MIN_CHECKABLE_BALANCE_PAIRS checkable rows in a file this
+        // size -- there's no relation test that can single out Balance, and
+        // the pairwise check has no way to net Withdrawal and Deposit
+        // together to test against it either. The point of this test isn't
+        // the exact column picked as a placeholder amountColumn -- it's
+        // that Deposit and Balance both end up unmapped rather than one of
+        // them being silently folded in as if it were understood.
+        val result = infer("debit-credit-and-balance.csv")
+
+        assertThat(result.mapping).isNotNull()
+        assertThat(result.uncertainFields).containsExactly(MappingField.AMOUNT_COLUMNS, MappingField.AMOUNT_SIGN)
+        assertThat(result.unmappedColumns).containsExactly(3, 4)
+    }
+
+    @Test
     fun `case 17 -- European and Indian amount formats in the same column don't confuse amount detection`() {
         val result = infer("european-and-indian-amount-formats.csv")
 
