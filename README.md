@@ -141,8 +141,8 @@ gradle wrapper --gradle-version 8.14.2
 ## Roadmap
 
 - [x] **M0** — Module structure, convention plugins, CI, Room schema + migration test harness
-- [ ] **M1** — Transaction CRUD, categories, list and detail screens
-- [ ] **M2** — CSV import: column-mapping inference, preview, de-duplication
+- [x] **M1** — Transaction CRUD, categories, list and detail screens
+- [x] **M2** — CSV import: column-mapping inference, preview, de-duplication
 - [ ] **M3** — Budgets and rule-based auto-categorisation
 - [ ] **M4** — Row-level sync with per-field conflict resolution
 - [ ] **M5** — Insights, baseline profile, Macrobenchmark startup numbers
