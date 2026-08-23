@@ -128,6 +128,19 @@ data class PreviewRow(
     val amount: Money?,
 )
 
+/**
+ * [imported] is every row that successfully mapped to a [Transaction], not
+ * only the ones that ended up newly written to the database -- some of
+ * these may have been recognised as duplicates and skipped by
+ * [dev.charanjeev.bahi.core.data.repository.TransactionRepository.importAll],
+ * which is what [duplicatesSkipped] counts. `imported.size - duplicatesSkipped`
+ * is the number actually new. This is a real limitation, not a choice:
+ * `importAll` returns how many rows it inserted, not which specific ones,
+ * so there's no way to know which [Transaction]s in [imported] correspond to
+ * real rows in the database and which don't -- their `id`s should not be
+ * relied on for anything (e.g. an undo action) without that distinction
+ * being resolved first.
+ */
 data class ImportResult(
     val imported: List<Transaction>,
     val duplicatesSkipped: Int,

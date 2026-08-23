@@ -124,8 +124,22 @@ private const val AMBIGUOUS_DATE_FORMAT_PLACEHOLDER = "AMBIGUOUS"
 private fun looksLikeDataRow(cells: List<String>): Boolean {
     val dateIndex = cells.indexOfFirst { looksLikeDate(it) }
     if (dateIndex == -1) return false
-    return cells.indices.any { it != dateIndex && Money.parse(cells[it]) != null }
+    return cells.indices.any { it != dateIndex && looksMoneyShaped(cells[it]) }
 }
+
+/**
+ * `Money.parse` is deliberately lenient once a cell is already known to hold
+ * an amount -- it strips currency symbols and formatting noise, which means
+ * it also succeeds on ordinary text that merely contains a digit somewhere
+ * ("Row 1", "Invoice 42", "Store #7"), extracting whatever digits it finds
+ * as if they were a value. That's fine for extraction; it's wrong for
+ * *deciding* whether a column holds amounts in the first place -- a
+ * description column with an incidental digit would otherwise get counted
+ * as a second amount-shaped candidate, and starve the real description
+ * column of anywhere left to be assigned (§2's "whatever's left"). A
+ * plausible amount has no letters in it at all.
+ */
+private fun looksMoneyShaped(cell: String): Boolean = cell.none { it.isLetter() } && Money.parse(cell) != null
 
 // --- date shape (column identification vs. format disambiguation, see below) ---
 
@@ -248,7 +262,7 @@ private fun resolveNumericDateFormat(values: List<String>, uncertain: MutableSet
 private fun isMoneyLikeColumn(sample: List<CsvRow>, column: Int): Boolean {
     val nonBlank = sample.count { it.cells[column].isNotBlank() }
     if (nonBlank == 0) return false
-    val parsed = sample.count { Money.parse(it.cells[column]) != null }
+    val parsed = sample.count { looksMoneyShaped(it.cells[column]) }
     return parsed.toDouble() / nonBlank >= ROLE_HIT_RATE_THRESHOLD
 }
 
