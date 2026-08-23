@@ -127,10 +127,12 @@ private fun looksLikeDataRow(cells: List<String>): Boolean {
     return cells.indices.any { it != dateIndex && Money.parse(cells[it]) != null }
 }
 
-// --- date shape (column identification only -- format disambiguation is slice 4) ---
+// --- date shape (column identification vs. format disambiguation, see below) ---
 
 private val ISO_DATE = Regex("""\d{4}-(\d{2})-(\d{2})""")
-private val NUMERIC_DATE = Regex("""(\d{1,2})[/\-.](\d{1,2})[/\-.]\d{4}""")
+
+/** Separator captured in group 2 so a resolved numeric format can echo it back, e.g. "dd-MM-yyyy". */
+private val NUMERIC_DATE = Regex("""(\d{1,2})([/\-.])(\d{1,2})[/\-.]\d{4}""")
 private val MONTH_NAME_DATE = Regex("""(\d{1,2})-([A-Za-z]{3})-\d{4}""")
 private val MONTH_ABBREVIATIONS = setOf(
     "jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec",
@@ -153,9 +155,8 @@ private fun looksLikeDate(cell: String): Boolean {
         return day.toInt() in 1..31 && month.lowercase() in MONTH_ABBREVIATIONS
     }
     NUMERIC_DATE.matchEntire(trimmed)?.let { m ->
-        val (a, b) = m.destructured
-        val ai = a.toInt()
-        val bi = b.toInt()
+        val ai = m.groupValues[1].toInt()
+        val bi = m.groupValues[3].toInt()
         return (ai in 1..31 && bi in 1..12) || (ai in 1..12 && bi in 1..31)
     }
     return false
@@ -180,20 +181,53 @@ private fun pickDateColumn(sample: List<CsvRow>, columns: IntRange, uncertain: M
 
 /**
  * ISO and month-name dates are unambiguous by construction -- resolved
- * confidently here with no need for slice 4's day-first/month-first logic.
- * Anything else reaching this point is the numeric dd/mm-vs-mm/dd family,
- * which this deliberately does not attempt to resolve (that's slice 4); it
- * always comes back as [AMBIGUOUS_DATE_FORMAT_PLACEHOLDER] with
- * [MappingField.DATE_FORMAT] added to [uncertain] -- never one without the
- * other, which is what makes the placeholder value safe to carry: nothing
- * downstream can mistake it for a confirmed format without also seeing the
- * uncertainty flag.
+ * confidently here with no day-first/month-first question to ask. Anything
+ * else reaching this point is the numeric dd/mm-vs-mm/dd family, handed to
+ * [resolveNumericDateFormat]. Either way, [AMBIGUOUS_DATE_FORMAT_PLACEHOLDER]
+ * is never returned without [MappingField.DATE_FORMAT] also landing in
+ * [uncertain] -- nothing downstream can mistake the placeholder for a
+ * confirmed format without also seeing the uncertainty flag.
  */
 private fun resolvedDateFormat(sample: List<CsvRow>, dateColumn: Int, uncertain: MutableSet<MappingField>): String {
     val values = sample.map { it.cells[dateColumn] }
     return when {
         values.all { looksLikeIsoDate(it) } -> "yyyy-MM-dd"
         values.all { MONTH_NAME_DATE.matchEntire(it.trim()) != null } -> "dd-MMM-yyyy"
+        else -> resolveNumericDateFormat(values, uncertain)
+    }
+}
+
+/**
+ * The rule from §2: a value with a component over 12 in the day position
+ * can only be day-first; over 12 in the month position, only month-first.
+ * Applied over the whole sampled column rather than one value, there are
+ * three outcomes, not two:
+ *
+ * - Every value parses validly as day-first, and at least one value rules
+ *   out month-first (its second component is over 12) -- day-first, confident.
+ * - The mirror image -- month-first, confident.
+ * - Every value parses validly under *both* orderings (no value's second
+ *   component ever exceeds 12 in either position -- genuinely possible for
+ *   a statement covering under 13 days of a month), or, less commonly,
+ *   values disagree with each other (one value is only valid day-first,
+ *   another only valid month-first, so no single format parses the whole
+ *   column) -- either way, this is undecidable and says so. There is no
+ *   locale fallback and no device-default tiebreak: a wrong guess here
+ *   silently shuffles every date in the file, and that's worse than asking.
+ */
+private fun resolveNumericDateFormat(values: List<String>, uncertain: MutableSet<MappingField>): String {
+    val matches = values.mapNotNull { NUMERIC_DATE.matchEntire(it.trim()) }
+    val separator = matches.firstOrNull()?.groupValues?.get(2) ?: "/"
+
+    fun component(m: MatchResult, index: Int) = m.groupValues[index].toInt()
+    val dayFirstValidForAll = matches.isNotEmpty() &&
+        matches.all { component(it, 1) in 1..31 && component(it, 3) in 1..12 }
+    val monthFirstValidForAll = matches.isNotEmpty() &&
+        matches.all { component(it, 3) in 1..31 && component(it, 1) in 1..12 }
+
+    return when {
+        dayFirstValidForAll && !monthFirstValidForAll -> "dd${separator}MM${separator}yyyy"
+        monthFirstValidForAll && !dayFirstValidForAll -> "MM${separator}dd${separator}yyyy"
         else -> {
             uncertain += MappingField.DATE_FORMAT
             AMBIGUOUS_DATE_FORMAT_PLACEHOLDER

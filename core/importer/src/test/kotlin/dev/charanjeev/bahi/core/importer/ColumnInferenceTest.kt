@@ -180,8 +180,3 @@ class ColumnInferenceTest {
     private fun infer(fixtureName: String): InferredMapping =
         inferColumnMapping(tokenizeCsv(loadCsvFixture(fixtureName)))
 }
-
-private fun loadCsvFixture(name: String): String =
-    checkNotNull(object {}.javaClass.getResourceAsStream("/csv/$name")) { "Missing fixture: $name" }
-        .bufferedReader(Charsets.UTF_8)
-        .use { it.readText() }
