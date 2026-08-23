@@ -140,9 +140,14 @@ dropdown).
 embedded quote, and quoted fields that themselves contain the delimiter) is a
 tokenizer problem, not an inference problem — it has to be handled correctly
 before any of the above runs, or a comma inside a merchant name silently
-shifts every column after it. This is the one place I want to flag: the module
-currently has no CSV parser at all, hand-rolled or otherwise (see §7 for the
-dependency question).
+shifts every column after it. Two variants that are easy to skip and worth
+naming explicitly: a quoted field containing a literal newline (the tokenizer
+has to be record-aware, not line-aware, or it splits one row into two), and a
+leading UTF-8 BOM (`﻿`), which Excel writes on save-as-CSV and which,
+left unstripped, silently breaks whatever parses the first cell of the first
+row. Both are in the fixture set (§8). This is the one place I want to flag:
+the module currently has no CSV parser at all, hand-rolled or otherwise (see
+§7 for the dependency question).
 
 ---
 
@@ -285,17 +290,32 @@ which de-duplication (§4) makes safe.
 
 ## 7. Where the logic lives, and the dependency question
 
-**No new CSV parsing dependency.** The quoting rules that matter here are
-narrow — quoted fields, comma and embedded-quote escaping inside them, CRLF
-vs LF — and hand-rolling a small state-machine tokenizer is very much in
-keeping with how `Money.parse` was built for this exact problem (parenthesized
-negatives, mixed separators) rather than pulling in a formatting library. A
-library like Commons CSV or opencsv buys correctness on edge cases this app
-doesn't hit (multi-line records inside a single field, alternate dialects,
-streaming huge files) at the cost of a dependency the CLAUDE.md explicitly
-wants to be asked about. I'd hand-roll it, tested against the fixture set in
-§8, and revisit only if real-world exports turn up quoting behavior the
-tokenizer gets wrong.
+**No new CSV parsing dependency, with one honest caveat.** The quoting rules
+that matter here are narrow — quoted fields, comma and embedded-quote
+escaping, embedded newlines inside a quoted field, a leading BOM, CRLF vs LF —
+and hand-rolling a small state-machine tokenizer is in keeping with how
+`Money.parse` was built for this exact problem (parenthesized negatives,
+mixed separators) rather than pulling in a formatting library.
+
+What a library actually buys, and hand-rolling actually risks, is *dialect
+coverage from exposure we haven't had*: Commons CSV and opencsv have been
+hammered against years of exports from Excel, LibreOffice, Google Sheets and
+whatever bank software produced them, including malformed-but-common cases
+(unbalanced quotes, mixed quoted/unquoted cells in the same column) that
+don't show up until a real file breaks them. A hand-rolled tokenizer is only
+as correct as its fixture set. The failure mode isn't a crash — it's a
+tokenizer that silently mis-splits a row (a comma inside an unquoted-but-
+should-have-been-quoted field, say) and produces a preview that still *looks*
+plausible, gets approved, and imports shifted data. That's a real argument
+for the library, and I don't want to understate it.
+
+I still lean hand-rolled, because the alternative to "our fixture set might
+be incomplete" isn't "a library's dialect coverage is complete" — it's
+trading one bounded risk for a dependency, and the CLAUDE.md default is to
+ask first. But this is the one place in the design where I'd actually
+change my recommendation if real fixture files (once we have some to test
+against, even synthetic ones sourced from more banks) turn up quoting
+behavior outside RFC 4180. See the decision list in §10.
 
 The tokenizer and the inference engine (§2) are pure functions over strings —
 no Room, no Android framework — even though `:core:importer` is an Android
@@ -345,7 +365,11 @@ Fixture cases, roughly in order of how likely each is to break something:
 13. Case 11 followed by a re-import that adds a third matching row — asserts
     two are skipped and one is kept (the count-aware fix in §4).
 14. CRLF line endings and a trailing blank line at EOF.
-15. European (`1.234,56`) and Indian (`12,34,567.89`) amount formats in the
+15. A quoted description field containing a literal newline — asserts the
+    tokenizer is record-aware, not line-aware.
+16. A file with a leading UTF-8 BOM — asserts it's stripped before the header/
+    first cell is parsed.
+17. European (`1.234,56`) and Indian (`12,34,567.89`) amount formats in the
     same file — `Money.parse` already covers the parsing; this is checking the
     column-role inference doesn't get confused by the formatting, not
     re-testing `Money.parse` itself.
@@ -365,8 +389,8 @@ here depends on a later slice to be reviewable.
 1. **Reshape `:core:importer` interfaces** to the §1 shape. No logic — just
    the contract, so everything after this reviews against a stable interface.
 2. **CSV tokenizer**: hand-rolled RFC 4180-ish parser (quoting, escaping,
-   CRLF/LF) with its own unit tests (fixture cases 3, 9, 14 from §8). Pure
-   function, no inference.
+   CRLF/LF, embedded newlines, BOM stripping) with its own unit tests
+   (fixture cases 3, 9, 14, 15, 16 from §8). Pure function, no inference.
 3. **Preamble/header detection + column role inference** (§2): the data-row
    finder, date/description/amount/debit-credit/balance role assignment, and
    confidence tracking via `uncertainFields`. This is the slice that most
@@ -390,21 +414,60 @@ here depends on a later slice to be reviewable.
 
 ## 10. Decisions I'd want before building
 
-- **Does batch undo (slice 8) belong in M2, or is per-row delete (already
-  built) sufficient for now?** It's a real schema change under rule 6, and
-  it's the kind of thing that's cheap to add now and mildly annoying to
-  retrofit later (existing `CSV_IMPORT` rows would have `importBatchId =
-  null` and be un-undoable), but it's also scope beyond "import a CSV."
-- **Does the import screen get its own module (`:feature:import`), or live
-  inside `:feature:transactions`?** CLAUDE.md says to ask before changing
-  module structure. A 16th module keeps the "features never depend on
-  features" boundary the cleanest and matches how the README frames CSV
-  import as one of the two hardest problems in the repo; folding it into
-  `:feature:transactions` avoids growing the module graph for what's
-  arguably a transactions-adjacent flow. I lean toward the new module, but
-  it's a graph change either way and the graph is the README centerpiece.
-- **Is hand-rolling the CSV tokenizer (§7) the right call, or would you
-  rather take the dependency?** I think hand-rolling is right given the
-  house style (`Money.parse` set the precedent) and that the quoting rules
-  actually needed here are narrow, but flagging it explicitly since it's a
-  parsing-correctness surface, not a cosmetic one.
+### 10.1 Does batch undo (slice 8) belong in M2?
+
+- **Options:** (a) build it — `importBatchId` column, migration,
+  `MigrationTest`, `undoImport`, as its own slice; (b) defer it — M2 ships
+  with only the existing per-row swipe-to-delete from M1.
+- **Recommendation:** (a), build it. It's one nullable column and a soft-
+  delete-by-batch-id query, reusing machinery that already exists — cheap
+  now.
+- **If we pick wrong:** Deferring and adding it later means every
+  `CSV_IMPORT` row inserted before the migration lands has `importBatchId =
+  null` forever — batch undo would only cover imports made *after* the
+  feature ships, not the ones that motivated it. Building it now and it
+  turns out unneeded costs one unused nullable column and a small migration
+  — low, bounded cost either way, which is most of why I lean toward
+  building it.
+
+### 10.2 Does the import screen get its own module?
+
+- **Options:** (a) new `:feature:import` module (16th module); (b) fold the
+  screens into `:feature:transactions`.
+- **Recommendation:** (a). The README already frames CSV import as one of
+  the two hardest problems in the repo; a module boundary around it is the
+  most legible way to show that in the architecture diagram a reviewer looks
+  at first.
+- **If we pick wrong:** A new module that turns out to be overkill costs
+  build-logic wiring, a `moduleGraph` regen, and a README diagram update —
+  annoying but mechanical. Folding it into `:feature:transactions` and
+  wanting to split it out later is worse: it means extracting files across
+  a module boundary after the fact, from a module that by then also owns
+  list/filter/CRUD, rather than starting with the boundary already in place.
+  Either mistake is recoverable; the module-split direction is cheaper to
+  recover from.
+
+### 10.3 Hand-rolled CSV tokenizer, or a parsing library?
+
+- **Options:** (a) hand-roll a small RFC 4180-ish tokenizer, no new
+  dependency; (b) take a dependency (Commons CSV or opencsv).
+- **Recommendation:** (a), consistent with how `Money.parse` was hand-built
+  for this exact class of problem, and CLAUDE.md's default to ask before
+  adding a dependency.
+- **What hand-rolling actually risks** (this is the real tradeoff, not a
+  formality): a library has been battle-tested against years of real-world
+  export quirks — malformed-but-common dialects, unbalanced quotes, mixed
+  quoted/unquoted cells in one column — that a fresh implementation hasn't
+  seen. The failure mode isn't a crash, it's worse: a tokenizer that
+  silently mis-splits a row on a quirk our fixtures didn't anticipate
+  produces a preview that still *looks* plausible, gets approved, and
+  imports shifted data.
+- **If we pick wrong:** picking (a) and hitting an uncovered dialect means a
+  bad preview on a real user's file — visible before commit if the shifted
+  columns produce nonsense (unparseable dates/amounts, caught by §5's
+  failure handling), but not necessarily visible if the shift still happens
+  to produce plausible-looking garbage. Picking (b) and it turning out
+  unneeded means one more entry in `gradle/libs.versions.toml` the
+  dependency list didn't need. I'd revisit this specific call the moment a
+  real fixture file turns up quoting behavior outside RFC 4180 — that's the
+  concrete trigger, not a vague "if it becomes a problem."
