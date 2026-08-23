@@ -87,8 +87,15 @@ enum class AmountSign {
  * A role inference couldn't confidently resolve. Named per-field, not as a
  * single confidence score, so the correction UI can ask about only the part
  * that's actually uncertain instead of re-confirming everything.
+ *
+ * [AMOUNT_COLUMNS] and [AMOUNT_SIGN] are deliberately separate: AMOUNT_COLUMNS
+ * covers not knowing *which columns* play which amount-related role -- is
+ * there a balance column at all, and for a debit/credit pair, which one is
+ * which -- while AMOUNT_SIGN covers not knowing how a single, already-
+ * identified amount column encodes its polarity. A file can have one
+ * uncertain without the other.
  */
-enum class MappingField { DATE_COLUMN, DATE_FORMAT, DESCRIPTION_COLUMN, AMOUNT_SIGN }
+enum class MappingField { DATE_COLUMN, DATE_FORMAT, DESCRIPTION_COLUMN, AMOUNT_COLUMNS, AMOUNT_SIGN }
 
 /**
  * [mapping] is null only on total inference failure -- no data rows found, or
