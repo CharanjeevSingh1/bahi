@@ -23,6 +23,8 @@ import androidx.room.PrimaryKey
         Index(value = ["account_id", "date"]),
         // Import de-duplication looks up by content hash.
         Index(value = ["content_hash"]),
+        // Batch undo looks up every row from one import in a single query.
+        Index(value = ["import_batch_id"]),
     ],
 )
 data class TransactionEntity(
@@ -45,6 +47,15 @@ data class TransactionEntity(
      * transaction id of their own.
      */
     @ColumnInfo(name = "content_hash") val contentHash: String,
+    /**
+     * Shared by every row one CSV import inserted; null for anything that
+     * predates this column or was never part of an import. What
+     * [dev.charanjeev.bahi.core.database.dao.TransactionDao.softDeleteBatch]
+     * matches on -- there is no separate import-batch table, since nothing
+     * needs to look a batch up by anything other than "which rows share this
+     * id" (docs/csv-import-design.md §11.1).
+     */
+    @ColumnInfo(name = "import_batch_id") val importBatchId: String? = null,
     @ColumnInfo(name = "created_at") val createdAt: Long,
     @ColumnInfo(name = "updated_at") val updatedAt: Long,
     // --- sync bookkeeping ---

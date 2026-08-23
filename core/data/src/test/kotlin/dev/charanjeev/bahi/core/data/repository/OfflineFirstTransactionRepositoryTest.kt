@@ -73,6 +73,69 @@ class OfflineFirstTransactionRepositoryTest {
         assertThat(dao.entity("missing")).isNull()
     }
 
+    // --- Import batches and undo ---
+
+    @Test
+    fun `importAll stamps every inserted row with the same generated batch id`() = runTest {
+        val result = repository.importAll(
+            listOf(TestData.transaction(id = "a"), TestData.transaction(id = "b")),
+        )
+
+        assertThat(result.insertedCount).isEqualTo(2)
+        assertThat(dao.entity("a")?.importBatchId).isEqualTo(result.batchId)
+        assertThat(dao.entity("b")?.importBatchId).isEqualTo(result.batchId)
+    }
+
+    @Test
+    fun `undoImport removes only rows from that batch, not an unrelated one`() = runTest {
+        // Distinct descriptions -- same content, same hash, would make the
+        // second import's row read as a duplicate of the first's and never
+        // get written at all, which isn't what this test is about.
+        val firstBatch = repository.importAll(listOf(TestData.transaction(id = "a", description = "Coffee Shop")))
+        val secondBatch = repository.importAll(listOf(TestData.transaction(id = "b", description = "Electricity Bill")))
+
+        val removedCount = repository.undoImport(firstBatch.batchId)
+
+        assertThat(removedCount).isEqualTo(1)
+        assertThat(dao.entity("a")?.deletedAt).isNotNull()
+        assertThat(dao.entity("b")?.deletedAt).isNull()
+        assertThat(dao.entity("b")?.importBatchId).isEqualTo(secondBatch.batchId)
+    }
+
+    @Test
+    fun `undoImport is a soft delete -- it tombstones, it doesn't erase`() = runTest {
+        val batch = repository.importAll(listOf(TestData.transaction(id = "a")))
+
+        repository.undoImport(batch.batchId)
+
+        val entity = dao.entity("a")
+        assertThat(entity).isNotNull()
+        assertThat(entity?.deletedAt).isNotNull()
+        assertThat(entity?.pendingOperation).isEqualTo("DELETE")
+    }
+
+    @Test
+    fun `a row hand-edited after import is left alone by a later undoImport, and the returned count says so`() = runTest {
+        val batch = repository.importAll(
+            listOf(
+                TestData.transaction(id = "a", description = "Coffee Shop"),
+                TestData.transaction(id = "b", description = "Electricity Bill"),
+            ),
+        )
+        repository.update(TestData.transaction(id = "a", description = "Corrected Merchant Name"))
+
+        // 1, not 2: "a" left the batch when it was edited, so only "b" is
+        // actually tombstoned. Reporting 2 here is exactly the bug this
+        // return value exists to prevent.
+        val removedCount = repository.undoImport(batch.batchId)
+
+        assertThat(removedCount).isEqualTo(1)
+        val edited = dao.entity("a")
+        assertThat(edited?.deletedAt).isNull()
+        assertThat(edited?.description).isEqualTo("Corrected Merchant Name")
+        assertThat(dao.entity("b")?.deletedAt).isNotNull()
+    }
+
     // --- Filtering: a query, not the caller filtering the returned list ---
 
     @Test

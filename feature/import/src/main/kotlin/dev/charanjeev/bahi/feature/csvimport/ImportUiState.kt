@@ -1,10 +1,7 @@
 package dev.charanjeev.bahi.feature.csvimport
 
-import dev.charanjeev.bahi.core.importer.FailedRow
 import dev.charanjeev.bahi.core.importer.ImportPreview
 import dev.charanjeev.bahi.core.importer.ImportResult
-import kotlinx.collections.immutable.ImmutableList
-import kotlinx.collections.immutable.toImmutableList
 
 /**
  * A sealed state, not a data class with nullable fields, for the same reason
@@ -31,17 +28,39 @@ sealed interface ImportUiState {
      * actually write (see [ImportResult.imported]'s own doc). Rendering it
      * directly would overcount a "18 imported" summary by however many of
      * those 18 already existed.
+     *
+     * [failedRowCount] rather than the full row list: this screen has only
+     * ever rendered the count (the per-row detail is Preview's job, before
+     * import). A bare Int is also what makes this state cheaply survivable
+     * across process death -- see [batchId]'s doc.
+     *
+     * [batchId] is only ever meaningful on this screen: it's not persisted
+     * anywhere else the app can look it back up later, so undo is offered
+     * here and nowhere else (see docs/csv-import-design.md §11.1 -- there's
+     * no import-batch table to list past imports from). Every field here is
+     * a plain String/Int, deliberately -- ImportViewModel mirrors this whole
+     * state into SavedStateHandle, and only primitive types survive process
+     * death that way without a Parcelable detour nothing else needs.
+     *
+     * [undoneCount] is null until undo has actually run, and holds the real
+     * number of rows removed once it has -- not [newCount] again, since a
+     * hand-edited row can make the two diverge (TransactionDao.update's
+     * doc). Null vs. non-null is also what gates the button from firing
+     * twice.
      */
     data class Result(
+        val batchId: String,
         val newCount: Int,
         val duplicatesSkipped: Int,
-        val failedRows: ImmutableList<FailedRow>,
+        val failedRowCount: Int,
+        val undoneCount: Int? = null,
     ) : ImportUiState {
         companion object {
             fun from(result: ImportResult) = Result(
+                batchId = result.batchId,
                 newCount = result.imported.size - result.duplicatesSkipped,
                 duplicatesSkipped = result.duplicatesSkipped,
-                failedRows = result.failedRows.toImmutableList(),
+                failedRowCount = result.failedRows.size,
             )
         }
     }

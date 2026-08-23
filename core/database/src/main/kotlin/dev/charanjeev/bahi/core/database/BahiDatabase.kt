@@ -12,7 +12,7 @@ import dev.charanjeev.bahi.core.database.entity.TransactionEntity
         TransactionEntity::class,
         CategoryEntity::class,
     ],
-    version = 1,
+    version = 2,
     exportSchema = true,
 )
 abstract class BahiDatabase : RoomDatabase() {

@@ -9,6 +9,7 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
+import java.util.UUID
 import javax.inject.Inject
 
 /**
@@ -68,8 +69,14 @@ class OfflineFirstTransactionRepository @Inject constructor(
         transactionDao.undoSoftDelete(id)
     }
 
-    override suspend fun importAll(transactions: List<Transaction>): Int =
+    override suspend fun importAll(transactions: List<Transaction>): ImportBatchResult =
         withContext(ioDispatcher) {
-            transactionDao.importBatch(transactions.map(::toEntity))
+            val batchId = UUID.randomUUID().toString()
+            val insertedCount = transactionDao.importBatch(transactions.map { toEntity(it, importBatchId = batchId) })
+            ImportBatchResult(batchId, insertedCount)
         }
+
+    override suspend fun undoImport(batchId: String): Int = withContext(ioDispatcher) {
+        transactionDao.softDeleteBatch(batchId, System.currentTimeMillis())
+    }
 }

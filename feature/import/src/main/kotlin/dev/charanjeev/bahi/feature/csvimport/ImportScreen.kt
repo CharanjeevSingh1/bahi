@@ -86,6 +86,7 @@ fun ImportRoute(
         onAmountColumnsSwapSelected = viewModel::onAmountColumnsSwapSelected,
         onRawGridMappingApplied = viewModel::onRawGridMappingApplied,
         onImportConfirmed = viewModel::onImportConfirmed,
+        onUndoImport = viewModel::onUndoImport,
         onDone = viewModel::onDone,
         onBack = onNavigateBack,
     )
@@ -106,6 +107,7 @@ internal fun ImportScreen(
     onAmountColumnsSwapSelected: (Int, Int) -> Unit = { _, _ -> },
     onRawGridMappingApplied: (ColumnMapping) -> Unit = {},
     onImportConfirmed: () -> Unit = {},
+    onUndoImport: () -> Unit = {},
     onDone: () -> Unit = {},
     onBack: () -> Unit = {},
 ) {
@@ -144,7 +146,7 @@ internal fun ImportScreen(
                     onImportConfirmed = onImportConfirmed,
                 )
                 ImportUiState.Importing -> LoadingContent(stringResource(R.string.import_importing), ImportTestTags.IMPORTING)
-                is ImportUiState.Result -> ResultContent(uiState, onDone)
+                is ImportUiState.Result -> ResultContent(uiState, onUndoImport, onDone)
                 is ImportUiState.Failed -> FailedContent(uiState, onPickAnotherFile)
             }
         }
@@ -210,7 +212,7 @@ private fun FailedContent(state: ImportUiState.Failed, onPickAnotherFile: () -> 
 }
 
 @Composable
-private fun ResultContent(state: ImportUiState.Result, onDone: () -> Unit) {
+private fun ResultContent(state: ImportUiState.Result, onUndoImport: () -> Unit, onDone: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -229,8 +231,8 @@ private fun ResultContent(state: ImportUiState.Result, onDone: () -> Unit) {
         if (state.duplicatesSkipped > 0) {
             Text(stringResource(R.string.import_result_duplicates, state.duplicatesSkipped))
         }
-        if (state.failedRows.isNotEmpty()) {
-            Text(stringResource(R.string.import_result_failed, state.failedRows.size))
+        if (state.failedRowCount > 0) {
+            Text(stringResource(R.string.import_result_failed, state.failedRowCount))
         }
         // Only true when something actually landed in the table -- pointing
         // at the transaction list when newCount is 0 would send the user
@@ -243,11 +245,47 @@ private fun ResultContent(state: ImportUiState.Result, onDone: () -> Unit) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+        if (state.undoneCount != null) {
+            Spacer(Modifier.padding(4.dp))
+            Text(
+                undoneSummary(state.undoneCount),
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.testTag(ImportTestTags.UNDONE_MESSAGE),
+            )
+            // A hand-edited row survives undo (TransactionDao.update's doc)
+            // -- when that leaves some of newCount behind, say so, rather
+            // than let "N removed" silently read as "the whole batch" when
+            // it wasn't.
+            val kept = state.newCount - state.undoneCount
+            if (kept > 0) {
+                Text(
+                    stringResource(R.string.import_result_undo_kept, kept),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.testTag(ImportTestTags.UNDONE_KEPT_MESSAGE),
+                )
+            }
+        } else if (state.newCount > 0) {
+            // Undo only makes sense while there's something to undo -- a
+            // batch where every row was a duplicate or a parse failure has
+            // nothing in the table with this batch id to remove.
+            Spacer(Modifier.padding(8.dp))
+            OutlinedButton(onClick = onUndoImport, modifier = Modifier.testTag(ImportTestTags.UNDO_BUTTON)) {
+                Text(stringResource(R.string.import_result_undo_button))
+            }
+        }
         Spacer(Modifier.padding(12.dp))
         Button(onClick = onDone, modifier = Modifier.testTag(ImportTestTags.DONE_BUTTON)) {
             Text(stringResource(R.string.import_result_done))
         }
     }
+}
+
+@Composable
+private fun undoneSummary(undoneCount: Int): String = when (undoneCount) {
+    0 -> stringResource(R.string.import_result_undo_none)
+    1 -> stringResource(R.string.import_result_undo_one)
+    else -> stringResource(R.string.import_result_undo_done, undoneCount)
 }
 
 @OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
@@ -474,6 +512,9 @@ internal object ImportTestTags {
     const val FAILED = "import:failed"
     const val RESULT = "import:result"
     const val DONE_BUTTON = "import:done"
+    const val UNDO_BUTTON = "import:undo"
+    const val UNDONE_MESSAGE = "import:undone_message"
+    const val UNDONE_KEPT_MESSAGE = "import:undone_kept_message"
     const val PREVIEW_COUNT = "import:preview_count"
     const val FAILED_ROWS_HEADER = "import:failed_rows_header"
     const val FAILED_ROWS_LIST = "import:failed_rows_list"

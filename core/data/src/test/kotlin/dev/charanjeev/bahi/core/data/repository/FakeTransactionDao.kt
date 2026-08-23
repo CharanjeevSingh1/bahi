@@ -77,6 +77,7 @@ class FakeTransactionDao : TransactionDao {
                 updatedAt = updatedAt,
                 pendingOperation = "UPSERT",
                 localRevision = existing.localRevision + 1,
+                importBatchId = null,
             )
         )
     }
@@ -107,6 +108,19 @@ class FakeTransactionDao : TransactionDao {
                 localRevision = existing.localRevision + 1,
             )
         )
+    }
+
+    override suspend fun softDeleteBatch(batchId: String, deletedAt: Long): Int {
+        var affected = 0
+        backing.value = backing.value.mapValues { (_, entity) ->
+            if (entity.importBatchId == batchId && entity.deletedAt == null) {
+                affected++
+                entity.copy(deletedAt = deletedAt, pendingOperation = "DELETE", localRevision = entity.localRevision + 1)
+            } else {
+                entity
+            }
+        }
+        return affected
     }
 
     override suspend fun pendingChanges(limit: Int): List<TransactionEntity> =

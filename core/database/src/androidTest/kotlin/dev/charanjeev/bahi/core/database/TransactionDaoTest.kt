@@ -81,11 +81,97 @@ class TransactionDaoTest {
         assertThat(allTransactions()).hasSize(3)
     }
 
+    @Test
+    fun softDeleteBatch_removesOnlyThatBatchsRows_notAnUnrelatedBatch() = runTest {
+        dao.importBatch(
+            listOf(
+                transactionEntity(id = "a1", contentHash = "h1", importBatchId = "batch-a"),
+                transactionEntity(id = "a2", contentHash = "h2", importBatchId = "batch-a"),
+            ),
+        )
+        dao.importBatch(listOf(transactionEntity(id = "b1", contentHash = "h3", importBatchId = "batch-b")))
+
+        val affected = dao.softDeleteBatch("batch-a", deletedAt = 1000L)
+
+        assertThat(affected).isEqualTo(2)
+        val remaining = allTransactions().map(TransactionEntity::id)
+        assertThat(remaining).containsExactly("b1")
+    }
+
+    @Test
+    fun softDeleteBatch_leavesARowTheUserHasSinceHandEditedAlone() = runTest {
+        dao.importBatch(
+            listOf(
+                transactionEntity(id = "a1", contentHash = "h1", importBatchId = "batch-a"),
+                transactionEntity(id = "a2", contentHash = "h2", importBatchId = "batch-a"),
+            ),
+        )
+        // update() clears import_batch_id (TransactionDao.update's own doc) --
+        // this is the mechanism, exercised directly against the real query.
+        dao.update(
+            id = "a2",
+            amountMinor = -45000,
+            currencyCode = "INR",
+            date = "2026-01-05",
+            description = "Corrected Merchant Name",
+            merchant = null,
+            categoryId = null,
+            accountId = "acct-1",
+            notes = null,
+            categoryLockedByUser = false,
+            contentHash = "h2",
+            updatedAt = 2000L,
+        )
+
+        // Only 1 tombstoned, not 2 -- the return value is what the Result
+        // screen reports, and claiming 2 here would overstate what actually
+        // happened to the edited row.
+        val affected = dao.softDeleteBatch("batch-a", deletedAt = 1000L)
+
+        assertThat(affected).isEqualTo(1)
+        val remaining = allTransactions().map(TransactionEntity::id)
+        assertThat(remaining).containsExactly("a2")
+    }
+
+    @Test
+    fun softDeleteBatch_leavesARowKeptByALaterOverlappingImportUntouched() = runTest {
+        val coffeeHash = "h-coffee"
+        // Batch A: a coffee that will get "re-imported" by an overlapping
+        // statement, plus a second, unrelated row.
+        dao.importBatch(
+            listOf(
+                transactionEntity(id = "a1", contentHash = coffeeHash, importBatchId = "batch-a"),
+                transactionEntity(id = "a2", contentHash = "h-rent", importBatchId = "batch-a"),
+            ),
+        )
+        // Batch B: overlaps on the coffee (de-duplicated away, so it never
+        // gets batch-b's id) and adds one genuinely new row.
+        dao.importBatch(
+            listOf(
+                transactionEntity(id = "b1", contentHash = coffeeHash, importBatchId = "batch-b"),
+                transactionEntity(id = "b2", contentHash = "h-salary", importBatchId = "batch-b"),
+            ),
+        )
+
+        val affected = dao.softDeleteBatch("batch-a", deletedAt = 1000L)
+
+        assertThat(affected).isEqualTo(2)
+        // Both of batch A's own rows are gone -- including the coffee, which
+        // is still batch A's row since the de-duplication skipped inserting
+        // batch B's copy of it. Batch B's genuinely new row survives.
+        val remaining = allTransactions().map(TransactionEntity::id)
+        assertThat(remaining).containsExactly("b2")
+    }
+
     private suspend fun allTransactions(): List<TransactionEntity> =
         dao.observeFiltered(categoryIds = emptyList(), categoryCount = 0, hasDateWindow = 0, from = "", to = "")
             .first()
 
-    private fun transactionEntity(id: String, contentHash: String): TransactionEntity = TransactionEntity(
+    private fun transactionEntity(
+        id: String,
+        contentHash: String,
+        importBatchId: String? = null,
+    ): TransactionEntity = TransactionEntity(
         id = id,
         amountMinor = -45000,
         currencyCode = "INR",
@@ -98,6 +184,7 @@ class TransactionDaoTest {
         notes = null,
         categoryLockedByUser = false,
         contentHash = contentHash,
+        importBatchId = importBatchId,
         createdAt = 0L,
         updatedAt = 0L,
     )

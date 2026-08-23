@@ -65,6 +65,12 @@ interface TransactionDao {
      * it in one atomic UPDATE rather than a read-then-write. Plain upsert
      * stays as-is for creation, seeding and CSV import, which don't have an
      * existing revision to bump.
+     *
+     * Also clears import_batch_id: once a user has hand-edited a row, a
+     * later "undo this import" is no longer allowed to delete it. That's the
+     * whole rule for what an edited row does on batch undo -- expressed here
+     * as "it leaves the batch," so [softDeleteBatch]'s query doesn't need to
+     * know anything about edits at all.
      */
     @Query(
         """
@@ -73,7 +79,7 @@ interface TransactionDao {
             description = :description, merchant = :merchant, category_id = :categoryId,
             account_id = :accountId, notes = :notes, category_locked_by_user = :categoryLockedByUser,
             content_hash = :contentHash, updated_at = :updatedAt,
-            pending_operation = 'UPSERT', local_revision = local_revision + 1
+            pending_operation = 'UPSERT', local_revision = local_revision + 1, import_batch_id = NULL
         WHERE id = :id
         """,
     )
@@ -120,6 +126,30 @@ interface TransactionDao {
         """,
     )
     suspend fun undoSoftDelete(id: String)
+
+    /**
+     * Batch undo, not a hard delete: reuses the same tombstone machinery as
+     * [softDelete] so sync learns about it exactly like any other deletion.
+     * `import_batch_id = :batchId` naturally excludes two kinds of row
+     * without any extra condition: rows from a different import (different
+     * id), and rows this one's [update] has since hand-edited (id cleared to
+     * NULL there, and NULL never equals a batchId in SQL). `deleted_at IS
+     * NULL` skips rows already removed, matching [softDelete]'s own guard.
+     *
+     * Returns the number of rows actually tombstoned -- Room fills this in
+     * automatically for an UPDATE @Query. That count can be less than the
+     * batch's original size (a hand-edited row left it, per the doc above),
+     * and the caller needs to report that honestly rather than assuming
+     * "undo ran" means "undo removed everything."
+     */
+    @Query(
+        """
+        UPDATE transactions
+        SET deleted_at = :deletedAt, pending_operation = 'DELETE', local_revision = local_revision + 1
+        WHERE import_batch_id = :batchId AND deleted_at IS NULL
+        """,
+    )
+    suspend fun softDeleteBatch(batchId: String, deletedAt: Long): Int
 
     @Query("SELECT * FROM transactions WHERE pending_operation IS NOT NULL LIMIT :limit")
     suspend fun pendingChanges(limit: Int = 200): List<TransactionEntity>

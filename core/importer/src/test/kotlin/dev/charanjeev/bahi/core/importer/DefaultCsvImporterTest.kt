@@ -81,6 +81,20 @@ class DefaultCsvImporterTest {
     }
 
     @Test
+    fun `result carries the repository's generated batch id, for undo`() = runTest {
+        val csv = """
+            Date,Description,Amount
+            2026-01-05,Coffee Shop,-450.00
+        """.trimIndent()
+        repository.importAllReturnValue = 1
+        repository.importAllBatchId = "batch-42"
+
+        val result = importer.import(csv, singleAmountMapping(), accountId = "acct-1")
+
+        assertThat(result.batchId).isEqualTo("batch-42")
+    }
+
+    @Test
     fun `duplicatesSkipped is read from the repository's return value, not re-derived from the batch`() = runTest {
         // Five rows with entirely distinct content -- nothing about them
         // looks like a duplicate of anything else. If this class were

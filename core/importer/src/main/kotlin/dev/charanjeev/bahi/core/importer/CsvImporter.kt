@@ -164,13 +164,18 @@ data class PreviewRow(
  * `importAll` returns how many rows it inserted, not which specific ones,
  * so there's no way to know which [Transaction]s in [imported] correspond to
  * real rows in the database and which don't -- their `id`s should not be
- * relied on for anything (e.g. an undo action) without that distinction
- * being resolved first.
+ * relied on for anything without that distinction being resolved first.
+ *
+ * [batchId], unlike those `id`s, IS reliable for exactly one thing: undoing
+ * this import. Every row `importAll` actually wrote carries it, regardless
+ * of which rows they were, so "undo batch [batchId]" is well-defined even
+ * though "which of [imported] are real rows" isn't.
  */
 data class ImportResult(
     val imported: List<Transaction>,
     val duplicatesSkipped: Int,
     val failedRows: List<FailedRow>,
+    val batchId: String,
 )
 
 data class FailedRow(val lineNumber: Int, val raw: String, val reason: String)

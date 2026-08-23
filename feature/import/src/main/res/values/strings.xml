@@ -60,6 +60,11 @@
     <string name="import_result_duplicates">%1$d already imported, skipped</string>
     <string name="import_result_failed">%1$d row(s) couldn\'t be read</string>
     <string name="import_result_location">They\'re in your transaction list now.</string>
+    <string name="import_result_undo_button">Undo import</string>
+    <string name="import_result_undo_none">Nothing removed — every transaction from this file had already been edited.</string>
+    <string name="import_result_undo_one">1 transaction removed.</string>
+    <string name="import_result_undo_done">%1$d transactions removed.</string>
+    <string name="import_result_undo_kept">%1$d kept, because you\'d already edited them.</string>
     <string name="import_result_done">Done</string>
 
     <string name="import_back_content_description">Back</string>

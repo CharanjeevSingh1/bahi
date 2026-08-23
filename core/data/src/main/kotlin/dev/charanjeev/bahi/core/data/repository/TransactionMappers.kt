@@ -27,7 +27,13 @@ internal fun toDomain(entity: TransactionEntity): Transaction = Transaction(
     updatedAt = Instant.fromEpochMilliseconds(entity.updatedAt),
 )
 
-internal fun toEntity(model: Transaction): TransactionEntity = TransactionEntity(
+/**
+ * [importBatchId] isn't on the domain [Transaction] -- like [contentHashOf],
+ * it's import/dedup bookkeeping the data layer owns, not something a feature
+ * reads or sets on a model it holds. The one caller that needs it,
+ * [OfflineFirstTransactionRepository.importAll], passes it in directly.
+ */
+internal fun toEntity(model: Transaction, importBatchId: String? = null): TransactionEntity = TransactionEntity(
     id = model.id,
     amountMinor = model.amount.minorUnits,
     currencyCode = model.currencyCode,
@@ -40,6 +46,7 @@ internal fun toEntity(model: Transaction): TransactionEntity = TransactionEntity
     notes = model.notes,
     categoryLockedByUser = model.categoryLockedByUser,
     contentHash = contentHashOf(model),
+    importBatchId = importBatchId,
     createdAt = model.createdAt.toEpochMilliseconds(),
     updatedAt = model.updatedAt.toEpochMilliseconds(),
 )

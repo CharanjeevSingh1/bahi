@@ -138,12 +138,13 @@ class DefaultCsvImporter @Inject constructor(
             // "is this a duplicate" here -- e.g. by checking existing hashes
             // independently -- would reintroduce presence-based counting at a
             // second layer, exactly the bug §4 fixed at the DAO layer.
-            val insertedCount = transactionRepository.importAll(mapped)
+            val batchResult = transactionRepository.importAll(mapped)
 
             ImportResult(
                 imported = mapped,
-                duplicatesSkipped = mapped.size - insertedCount,
+                duplicatesSkipped = mapped.size - batchResult.insertedCount,
                 failedRows = failed,
+                batchId = batchResult.batchId,
             )
         }
 

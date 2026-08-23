@@ -1,5 +1,6 @@
 package dev.charanjeev.bahi.feature.csvimport
 
+import androidx.lifecycle.SavedStateHandle
 import app.cash.turbine.test
 import com.google.common.truth.Truth.assertThat
 import dev.charanjeev.bahi.core.importer.AmountSign
@@ -27,7 +28,9 @@ class ImportViewModelTest {
 
     private val csvImporter = FakeCsvImporter()
     private val csvFileReader = FakeCsvFileReader()
-    private val viewModel = ImportViewModel(csvImporter, csvFileReader)
+    private val transactionRepository = FakeTransactionRepository()
+    private val savedStateHandle = SavedStateHandle()
+    private val viewModel = ImportViewModel(csvImporter, csvFileReader, transactionRepository, savedStateHandle)
 
     private val mapping = ColumnMapping(
         headerRowIndex = 0,
@@ -108,6 +111,7 @@ class ImportViewModelTest {
             imported = List(5) { TestData.transaction(id = "txn-$it") },
             duplicatesSkipped = 2,
             failedRows = listOf(FailedRow(lineNumber = 9, raw = "bad,row", reason = "unparseable amount")),
+            batchId = "batch-1",
         )
 
         viewModel.uiState.test {
@@ -121,8 +125,144 @@ class ImportViewModelTest {
             val result = awaitItem() as ImportUiState.Result
             assertThat(result.newCount).isEqualTo(3)
             assertThat(result.duplicatesSkipped).isEqualTo(2)
-            assertThat(result.failedRows).hasSize(1)
+            assertThat(result.failedRowCount).isEqualTo(1)
         }
+    }
+
+    @Test
+    fun `undo calls the repository with the result's batch id and records the removed count`() = runTest {
+        csvFileReader.result = CsvFileReadResult.Success("statement.csv", "raw csv")
+        csvImporter.previewResult = previewWith()
+        csvImporter.importResult = ImportResult(
+            imported = listOf(TestData.transaction(id = "txn-0")),
+            duplicatesSkipped = 0,
+            failedRows = emptyList(),
+            batchId = "batch-77",
+        )
+        transactionRepository.undoImportReturnValue = 1
+
+        viewModel.uiState.test {
+            skipItems(1) // Idle
+            viewModel.onFilePicked(fakeUri)
+            skipItems(2) // Reading, Preview
+            viewModel.onImportConfirmed()
+            skipItems(1) // Importing
+            awaitItem() as ImportUiState.Result // the fresh result, undoneCount == null
+
+            viewModel.onUndoImport()
+
+            val undone = awaitItem() as ImportUiState.Result
+            assertThat(undone.undoneCount).isEqualTo(1)
+            assertThat(transactionRepository.undoneBatchIds).containsExactly("batch-77")
+        }
+    }
+
+    @Test
+    fun `undo reports the repository's real removed count, not newCount, when a row was hand-edited first`() = runTest {
+        csvFileReader.result = CsvFileReadResult.Success("statement.csv", "raw csv")
+        csvImporter.previewResult = previewWith()
+        // 3 rows imported, but one was hand-edited before Undo was tapped --
+        // TransactionDao.update clears its import_batch_id, so the DAO's
+        // softDeleteBatch only actually removes 2. Reporting 3 here would be
+        // a lie the screen has no way to catch on its own.
+        csvImporter.importResult = ImportResult(
+            imported = List(3) { TestData.transaction(id = "txn-$it") },
+            duplicatesSkipped = 0,
+            failedRows = emptyList(),
+            batchId = "batch-partial",
+        )
+        transactionRepository.undoImportReturnValue = 2
+
+        viewModel.uiState.test {
+            skipItems(1) // Idle
+            viewModel.onFilePicked(fakeUri)
+            skipItems(2) // Reading, Preview
+            viewModel.onImportConfirmed()
+            skipItems(1) // Importing
+            val fresh = awaitItem() as ImportUiState.Result
+            assertThat(fresh.newCount).isEqualTo(3)
+
+            viewModel.onUndoImport()
+
+            val undone = awaitItem() as ImportUiState.Result
+            assertThat(undone.newCount).isEqualTo(3)
+            assertThat(undone.undoneCount).isEqualTo(2)
+        }
+    }
+
+    @Test
+    fun `undo is a no-op once the batch is already undone`() = runTest {
+        csvFileReader.result = CsvFileReadResult.Success("statement.csv", "raw csv")
+        csvImporter.previewResult = previewWith()
+        csvImporter.importResult = ImportResult(
+            imported = listOf(TestData.transaction(id = "txn-0")),
+            duplicatesSkipped = 0,
+            failedRows = emptyList(),
+            batchId = "batch-77",
+        )
+        transactionRepository.undoImportReturnValue = 1
+
+        viewModel.uiState.test {
+            skipItems(1) // Idle
+            viewModel.onFilePicked(fakeUri)
+            skipItems(2) // Reading, Preview
+            viewModel.onImportConfirmed()
+            skipItems(1) // Importing
+            awaitItem() // fresh result
+            viewModel.onUndoImport()
+            awaitItem() // undone result
+            cancelAndIgnoreRemainingEvents()
+        }
+
+        viewModel.onUndoImport()
+
+        assertThat(transactionRepository.undoneBatchIds).containsExactly("batch-77")
+    }
+
+    @Test
+    fun `result state survives a fresh ViewModel built from the same SavedStateHandle, and undo still targets the right batch`() = runTest {
+        // Approximates process death: a real process kill hands a brand new
+        // ImportViewModel a SavedStateHandle rehydrated from the Bundle the
+        // system saved before death. Reusing the same handle to construct a
+        // second ViewModel instance here exercises exactly the read path
+        // that recreation depends on -- restoredResult() -- rather than
+        // asserting it by inspection.
+        csvFileReader.result = CsvFileReadResult.Success("statement.csv", "raw csv")
+        csvImporter.previewResult = previewWith()
+        csvImporter.importResult = ImportResult(
+            imported = listOf(TestData.transaction(id = "txn-0"), TestData.transaction(id = "txn-1")),
+            duplicatesSkipped = 0,
+            failedRows = emptyList(),
+            batchId = "batch-survives-death",
+        )
+        transactionRepository.undoImportReturnValue = 2
+
+        viewModel.uiState.test {
+            skipItems(1) // Idle
+            viewModel.onFilePicked(fakeUri)
+            skipItems(2) // Reading, Preview
+            viewModel.onImportConfirmed()
+            skipItems(1) // Importing
+            awaitItem() // fresh result
+            cancelAndIgnoreRemainingEvents()
+        }
+
+        // The original ViewModel (and its process) is gone; only the
+        // SavedStateHandle's contents made it across.
+        val recreated = ImportViewModel(FakeCsvImporter(), FakeCsvFileReader(), transactionRepository, savedStateHandle)
+
+        val restored = recreated.uiState.value as ImportUiState.Result
+        assertThat(restored.batchId).isEqualTo("batch-survives-death")
+        assertThat(restored.newCount).isEqualTo(2)
+        assertThat(restored.undoneCount).isNull()
+
+        recreated.uiState.test {
+            skipItems(1) // the restored Result, as the StateFlow's initial value
+            recreated.onUndoImport()
+            val undone = awaitItem() as ImportUiState.Result
+            assertThat(undone.undoneCount).isEqualTo(2)
+        }
+        assertThat(transactionRepository.undoneBatchIds).containsExactly("batch-survives-death")
     }
 
     @Test

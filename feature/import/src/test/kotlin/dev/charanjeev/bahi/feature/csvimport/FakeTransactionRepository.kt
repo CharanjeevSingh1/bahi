@@ -1,4 +1,4 @@
-package dev.charanjeev.bahi.core.importer
+package dev.charanjeev.bahi.feature.csvimport
 
 import dev.charanjeev.bahi.core.data.repository.ImportBatchResult
 import dev.charanjeev.bahi.core.data.repository.TransactionRepository
@@ -8,20 +8,16 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 
 /**
- * [importAllReturnValue] is set directly by each test rather than derived
- * from [lastImportedBatch]'s content -- the point of this fake, for
- * DefaultCsvImporterTest's dedup tests, is that its return value has no
- * relationship to the batch's actual content, which is exactly what proves
- * duplicatesSkipped comes from the repository's answer and not from the
- * importer re-deriving one of its own.
+ * ImportViewModel only ever calls [undoImport] -- importing itself goes
+ * through CsvImporter, not this repository directly -- so that's the only
+ * method this fake tracks calls for.
  */
 class FakeTransactionRepository : TransactionRepository {
 
-    var importAllReturnValue: Int = 0
-    var importAllBatchId: String = "fake-batch-id"
-    var lastImportedBatch: List<Transaction> = emptyList()
-        private set
     val undoneBatchIds = mutableListOf<String>()
+
+    /** Scripted per test -- defaults to "removed everything", overridden to test the hand-edited-row case. */
+    var undoImportReturnValue: Int? = null
 
     override fun observeTransactions(filter: TransactionFilter): Flow<List<Transaction>> = flowOf(emptyList())
     override fun observeTransaction(id: String): Flow<Transaction?> = flowOf(null)
@@ -29,16 +25,11 @@ class FakeTransactionRepository : TransactionRepository {
     override suspend fun update(transaction: Transaction) = Unit
     override suspend fun delete(id: String) = Unit
     override suspend fun undoDelete(id: String) = Unit
-
-    override suspend fun importAll(transactions: List<Transaction>): ImportBatchResult {
-        lastImportedBatch = transactions
-        return ImportBatchResult(importAllBatchId, importAllReturnValue)
-    }
-
-    var undoImportReturnValue: Int = 0
+    override suspend fun importAll(transactions: List<Transaction>): ImportBatchResult =
+        ImportBatchResult(batchId = "unused", insertedCount = transactions.size)
 
     override suspend fun undoImport(batchId: String): Int {
         undoneBatchIds += batchId
-        return undoImportReturnValue
+        return undoImportReturnValue ?: 0
     }
 }

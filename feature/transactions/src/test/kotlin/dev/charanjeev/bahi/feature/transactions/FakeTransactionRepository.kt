@@ -1,5 +1,6 @@
 package dev.charanjeev.bahi.feature.transactions
 
+import dev.charanjeev.bahi.core.data.repository.ImportBatchResult
 import dev.charanjeev.bahi.core.data.repository.TransactionRepository
 import dev.charanjeev.bahi.core.model.Transaction
 import dev.charanjeev.bahi.core.model.TransactionFilter
@@ -77,5 +78,8 @@ class FakeTransactionRepository : TransactionRepository {
         backing.emit(current + restored)
     }
 
-    override suspend fun importAll(transactions: List<Transaction>): Int = transactions.size
+    override suspend fun importAll(transactions: List<Transaction>): ImportBatchResult =
+        ImportBatchResult(batchId = "unused", insertedCount = transactions.size)
+
+    override suspend fun undoImport(batchId: String): Int = 0
 }

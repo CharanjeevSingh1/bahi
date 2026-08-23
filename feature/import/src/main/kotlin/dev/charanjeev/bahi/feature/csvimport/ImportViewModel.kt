@@ -1,8 +1,10 @@
 package dev.charanjeev.bahi.feature.csvimport
 
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dev.charanjeev.bahi.core.data.repository.TransactionRepository
 import dev.charanjeev.bahi.core.importer.ColumnMapping
 import dev.charanjeev.bahi.core.importer.CsvImporter
 import dev.charanjeev.bahi.core.importer.MappingField
@@ -27,9 +29,19 @@ private const val DEFAULT_ACCOUNT_ID = "acct-1"
 class ImportViewModel @Inject constructor(
     private val csvImporter: CsvImporter,
     private val csvFileReader: CsvFileReader,
+    private val transactionRepository: TransactionRepository,
+    private val savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
 
-    private val _uiState = MutableStateFlow<ImportUiState>(ImportUiState.Idle)
+    // Restores a completed Result across process death (SavedStateHandle
+    // survives it; a plain in-memory default wouldn't). Reading/Preview/
+    // Importing don't get the same treatment -- csv is never persisted (see
+    // its own doc), so there's nothing to rebuild a Preview from after
+    // death, and re-picking the file is the accepted recovery path for that
+    // (docs/csv-import-design.md §6/§7). Only Result -- a handful of plain
+    // Ints and a String -- is both cheap to persist and load-bearing:
+    // without it, onUndoImport's batchId would silently go stale.
+    private val _uiState = MutableStateFlow<ImportUiState>(restoredResult() ?: ImportUiState.Idle)
     val uiState: StateFlow<ImportUiState> = _uiState.asStateFlow()
 
     private val events = Channel<ImportEvent>()
@@ -103,12 +115,56 @@ class ImportViewModel @Inject constructor(
         _uiState.value = ImportUiState.Importing
         viewModelScope.launch {
             val result = csvImporter.import(currentCsv, mapping, DEFAULT_ACCOUNT_ID)
-            _uiState.value = ImportUiState.Result.from(result)
+            setResult(ImportUiState.Result.from(result))
         }
     }
 
     fun onDone() {
         events.trySend(ImportEvent.Finished)
+    }
+
+    /**
+     * Guarded by [ImportUiState.Result.undoneCount] rather than just
+     * disabling the button in the UI layer -- a second tap racing the
+     * first's coroutine (e.g. a fast double-tap before recomposition) would
+     * otherwise call undoImport twice. The second call would be a harmless
+     * no-op against already-tombstoned rows (returning 0), but overwriting a
+     * real removed count with that 0 is a bug this guard avoids having to
+     * reason about.
+     *
+     * The removed count comes back from the repository, not from
+     * [ImportUiState.Result.newCount] -- a row hand-edited since import no
+     * longer carries this batch id (TransactionDao.update's doc) and
+     * survives undo, so the two can genuinely differ. Reporting newCount
+     * here would claim more was removed than actually was.
+     */
+    fun onUndoImport() {
+        val state = _uiState.value as? ImportUiState.Result ?: return
+        if (state.undoneCount != null) return
+        viewModelScope.launch {
+            val removedCount = transactionRepository.undoImport(state.batchId)
+            setResult(state.copy(undoneCount = removedCount))
+        }
+    }
+
+    private fun setResult(result: ImportUiState.Result) {
+        savedStateHandle[KEY_RESULT_BATCH_ID] = result.batchId
+        savedStateHandle[KEY_RESULT_NEW_COUNT] = result.newCount
+        savedStateHandle[KEY_RESULT_DUPLICATES_SKIPPED] = result.duplicatesSkipped
+        savedStateHandle[KEY_RESULT_FAILED_ROW_COUNT] = result.failedRowCount
+        savedStateHandle[KEY_RESULT_UNDONE_COUNT] = result.undoneCount
+        _uiState.value = result
+    }
+
+    private fun restoredResult(): ImportUiState.Result? {
+        val batchId = savedStateHandle.get<String>(KEY_RESULT_BATCH_ID) ?: return null
+        return ImportUiState.Result(
+            batchId = batchId,
+            newCount = savedStateHandle[KEY_RESULT_NEW_COUNT] ?: 0,
+            duplicatesSkipped = savedStateHandle[KEY_RESULT_DUPLICATES_SKIPPED] ?: 0,
+            failedRowCount = savedStateHandle[KEY_RESULT_FAILED_ROW_COUNT] ?: 0,
+            undoneCount = savedStateHandle[KEY_RESULT_UNDONE_COUNT],
+        )
     }
 
     private fun applyCorrectedMapping(transform: (ColumnMapping) -> ColumnMapping) {
@@ -163,6 +219,14 @@ class ImportViewModel @Inject constructor(
             it.rawCells.getOrNull(creditColumn)?.takeIf(String::isNotBlank)
         } ?: "-"
         return CorrectionTarget.AmountColumns(debitColumn, debitSample, creditColumn, creditSample)
+    }
+
+    private companion object {
+        const val KEY_RESULT_BATCH_ID = "importResultBatchId"
+        const val KEY_RESULT_NEW_COUNT = "importResultNewCount"
+        const val KEY_RESULT_DUPLICATES_SKIPPED = "importResultDuplicatesSkipped"
+        const val KEY_RESULT_FAILED_ROW_COUNT = "importResultFailedRowCount"
+        const val KEY_RESULT_UNDONE_COUNT = "importResultUndoneCount"
     }
 }
 
