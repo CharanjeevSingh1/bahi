@@ -247,7 +247,9 @@ The commit itself stays inside `TransactionDao.importBatch`'s single `@Room
 Transaction` — atomic at the DB level, so a crash mid-import can't leave a
 half-applied batch; worst case is the whole batch didn't happen and the user
 retries. That's a property the current implementation already has and this
-design doesn't need to touch.
+design doesn't need to touch. "Retries" means re-picking the file, not
+re-running a stored operation — see §7 for why, and §6 for what that implies
+if the process dies mid-import.
 
 **Undo** is the one gap: nothing currently identifies which rows came from
 which import run, so "undo this import" isn't expressible — only the existing
@@ -287,7 +289,15 @@ operation doesn't need.
 If the process is actually killed mid-import (not backgrounded — killed), the
 transaction's atomicity means there's nothing to resume: it either committed
 or it didn't. No explicit recovery path is needed beyond "re-run the import,"
-which de-duplication (§4) makes safe.
+which de-duplication (§4) makes safe — but "re-run" is doing real work in that
+sentence, not just standing in for "retry": §7 deliberately doesn't persist
+the SAF URI permission past the current session, so there's no saved Uri to
+resume against. Re-running after process death means the user opens the
+picker and re-selects the file, the same as if they'd started fresh — not an
+automatic retry the app can trigger on its own. Worth being explicit about
+that in the UI copy when this gets built (an error state that says "pick the
+file again," not "retry"), since the two read very differently to a user who
+just watched the app die mid-import.
 
 ---
 
@@ -336,9 +346,8 @@ which is the right place for it.
 **Where this lives.** `:core:importer` stays Android/SAF-agnostic — its
 interface still just takes a `String` (§1). The Uri → `ContentResolver` →
 decode → cap-check → sniff pipeline is platform/UI-adjacent code and belongs
-in the feature layer (`:feature:import`, pending §11.2), which keeps the
-tokenizer and inference engine testable as plain JVM logic, as already noted
-in §8.
+in the feature layer — `:feature:import` (§11.2) — which keeps the tokenizer
+and inference engine testable as plain JVM logic, as already noted in §8.
 
 **Size: an explicit cap, not full streaming.** `preview(csv: String)` reading
 a whole file into memory is fine at the scale this app actually targets — a
@@ -379,12 +388,34 @@ a wrong silent guess — it's detection: if the decoded text contains any
 U+FFFD, stop before inference runs and show a specific, actionable error
 ("Some characters in this file didn't decode correctly — it may not be saved
 as UTF-8. Try re-saving it as UTF-8 CSV and importing again.") rather than
-importing mangled descriptions. A nicer version — re-decode the same bytes as
-Windows-1252 and let the user pick between the two renderings, mirroring the
-date-correction sheet in §3 — is a natural extension once this exists, but
-I'm not proposing it for M2; the loud-error version is enough to stop data
-from being silently corrupted, and the fancier version is speculative until
-a real Windows-1252 file is in the fixture set.
+importing mangled descriptions.
+
+That detection is a heuristic, and it's worth being as exact about what it
+does and doesn't catch as the date-ambiguity rule in §2 is. A truly isolated
+non-ASCII Windows-1252 byte — a lone `£` (`0xA3`) or a lone smart quote
+(`0x91`–`0x94`) sitting between ASCII characters — genuinely is invalid UTF-8
+on its own (none of those byte values complete a valid sequence without an
+adjacent continuation byte), so the decoder does substitute U+FFFD there;
+that common case is actually caught. What the check misses is **two or more
+non-ASCII Windows-1252 bytes landing next to each other** — two accented
+letters close together in a name, or an accented letter immediately followed
+by a currency symbol or punctuation byte — because Windows-1252's high bytes
+overlap UTF-8's lead- and continuation-byte ranges, and an adjacent pair can
+coincidentally satisfy UTF-8's multi-byte grammar. That decodes *cleanly*, to
+a different, wrong character, with no U+FFFD anywhere in the file — the same
+mechanism behind classic "Ã©"-style mojibake, just running in the reverse
+direction. So the detection is real and worth having, but it's a floor, not
+a guarantee: it reliably catches an isolated stray byte, and can silently
+miss adjacent ones that happen to collide into something UTF-8-shaped.
+
+A nicer version — re-decode the same bytes as Windows-1252 and let the user
+pick between the two renderings, mirroring the date-correction sheet in §3 —
+would catch more of what U+FFFD-only detection misses, but it's a natural
+extension once this exists, not something I'm proposing for M2; the
+loud-error version stops the common case from being silently corrupted, and
+the fancier version is speculative until a real Windows-1252 file — ideally
+one that actually exercises the adjacent-byte gap above — is in the fixture
+set.
 
 This is feature-layer code, not `:core:importer`, so it's tested separately
 from §9's fixture list — a fake `ContentResolver`/Uri reader exercising the
@@ -545,8 +576,10 @@ here depends on a later slice to be reviewable.
    doesn't depend on slice 6 being done first, just on the interface from
    slice 1.
 8. **Preview/correction UI**: stateful/stateless screen pair, sealed
-   `ImportUiState`, the correction sheets from §3. Depends on the module-
-   structure decision in §11.2.
+   `ImportUiState`, the correction sheets from §3, built in the new
+   `:feature:import` module (§11.2) — the module itself (build file,
+   convention plugins, `moduleGraph`/README diagram regen) is this slice's
+   first step, not a separate one.
 9. **Import-batch undo** (§5): `importBatchId` column, migration,
    `MigrationTest`, `undoImport` — see §11.1.
 
@@ -582,22 +615,26 @@ here depends on a later slice to be reviewable.
   inserted before a later migration lands would have `importBatchId = null`
   forever, permanently un-undoable as a batch.
 
-### 11.2 Does the import screen get its own module? — still open
+### 11.2 Does the import screen get its own module? — resolved 2026-08-23: yes, `:feature:import`
 
-- **Options:** (a) new `:feature:import` module (16th module); (b) fold the
-  screens into `:feature:transactions`.
-- **Recommendation:** (a). The README already frames CSV import as one of
-  the two hardest problems in the repo; a module boundary around it is the
-  most legible way to show that in the architecture diagram a reviewer looks
-  at first.
-- **If we pick wrong:** A new module that turns out to be overkill costs
-  build-logic wiring, a `moduleGraph` regen, and a README diagram update —
-  annoying but mechanical. Folding it into `:feature:transactions` and
-  wanting to split it out later is worse: it means extracting files across
-  a module boundary after the fact, from a module that by then also owns
-  list/filter/CRUD, rather than starting with the boundary already in place.
-  Either mistake is recoverable; the module-split direction is cheaper to
-  recover from.
+- **Decision: (a), a new `:feature:import` module (16th module)**, not (b)
+  folding the screens into `:feature:transactions`.
+- **The recoverability asymmetry** was the first reason: extracting files out
+  of a module that also owns list/filter/CRUD, after the fact, is harder than
+  merging a small module in later if `:feature:import` turns out overkill.
+- **The stronger reason:** the README already claims CSV import as one of the
+  two hard problems in this repo, and the architecture diagram is the first
+  thing a visitor scrolls past — it's the artifact people actually look at,
+  more than any file they might open. A `:feature:import` node in that
+  diagram makes the claim visible exactly where it's being made. A package
+  living inside `:feature:transactions` doesn't show up in the diagram at
+  all — the same work would exist, but the README's claim about it would have
+  nothing in the picture to point to.
+- **If this turns out wrong:** an unneeded module costs build-logic wiring, a
+  `moduleGraph` regen, and a README diagram update — mechanical, bounded.
+  Folding it in and wanting to split it out later costs more: extracting
+  files from a module that by then also owns list/filter/CRUD. Both mistakes
+  are recoverable; this one is the cheaper direction to have erred in.
 
 ### 11.3 CSV parsing library — resolved 2026-08-23: Apache Commons CSV
 
