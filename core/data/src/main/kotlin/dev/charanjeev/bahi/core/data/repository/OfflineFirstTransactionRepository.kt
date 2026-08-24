@@ -9,6 +9,7 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
+import kotlinx.datetime.Clock
 import java.util.UUID
 import javax.inject.Inject
 
@@ -21,6 +22,10 @@ import javax.inject.Inject
  */
 class OfflineFirstTransactionRepository @Inject constructor(
     private val transactionDao: TransactionDao,
+    // Injected for the same reason dispatchers are: a tombstone's deleted_at
+    // is observable behaviour that sync depends on, and System
+    // .currentTimeMillis() makes it unassertable in a test.
+    private val clock: Clock,
     // @param: pins the qualifier to the constructor parameter, which is what Hilt
     // reads. Kotlin 2.2 warns that the default target is changing in a future
     // release; being explicit keeps injection working either way.
@@ -62,7 +67,7 @@ class OfflineFirstTransactionRepository @Inject constructor(
     }
 
     override suspend fun delete(id: String) = withContext(ioDispatcher) {
-        transactionDao.softDelete(id, System.currentTimeMillis())
+        transactionDao.softDelete(id, clock.now().toEpochMilliseconds())
     }
 
     override suspend fun undoDelete(id: String) = withContext(ioDispatcher) {
@@ -77,6 +82,6 @@ class OfflineFirstTransactionRepository @Inject constructor(
         }
 
     override suspend fun undoImport(batchId: String): Int = withContext(ioDispatcher) {
-        transactionDao.softDeleteBatch(batchId, System.currentTimeMillis())
+        transactionDao.softDeleteBatch(batchId, clock.now().toEpochMilliseconds())
     }
 }

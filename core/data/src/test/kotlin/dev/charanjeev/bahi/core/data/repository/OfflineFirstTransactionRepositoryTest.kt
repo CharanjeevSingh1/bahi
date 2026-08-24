@@ -4,17 +4,20 @@ import com.google.common.truth.Truth.assertThat
 import dev.charanjeev.bahi.core.model.DateWindow
 import dev.charanjeev.bahi.core.model.Money
 import dev.charanjeev.bahi.core.model.TransactionFilter
+import dev.charanjeev.bahi.core.testing.FixedClock
 import dev.charanjeev.bahi.core.testing.TestData
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
+import kotlinx.datetime.Instant
 import kotlinx.datetime.LocalDate
 import org.junit.Test
 
 class OfflineFirstTransactionRepositoryTest {
 
     private val dao = FakeTransactionDao()
-    private val repository = OfflineFirstTransactionRepository(dao, UnconfinedTestDispatcher())
+    private val clock = FixedClock(Instant.fromEpochMilliseconds(DELETED_AT))
+    private val repository = OfflineFirstTransactionRepository(dao, clock, UnconfinedTestDispatcher())
 
     @Test
     fun `delete sets a pending DELETE and a tombstone`() = runTest {
@@ -23,8 +26,23 @@ class OfflineFirstTransactionRepositoryTest {
         repository.delete("a")
 
         val entity = dao.entity("a")
-        assertThat(entity?.deletedAt).isNotNull()
+        // The exact instant, not merely non-null: deleted_at is what sync
+        // orders a deletion against, so a repository free to invent its own
+        // "now" is a repository whose tombstones can't be reasoned about.
+        assertThat(entity?.deletedAt).isEqualTo(DELETED_AT)
         assertThat(entity?.pendingOperation).isEqualTo("DELETE")
+    }
+
+    @Test
+    fun `undoing an import tombstones the batch at the injected instant`() = runTest {
+        val result = repository.importAll(
+            listOf(TestData.transaction(id = "a"), TestData.transaction(id = "b", description = "OTHER")),
+        )
+
+        repository.undoImport(result.batchId)
+
+        assertThat(dao.entity("a")?.deletedAt).isEqualTo(DELETED_AT)
+        assertThat(dao.entity("b")?.deletedAt).isEqualTo(DELETED_AT)
     }
 
     @Test
@@ -210,5 +228,9 @@ class OfflineFirstTransactionRepositoryTest {
         val result = repository.observeTransactions(TransactionFilter(categoryIds = setOf("food"))).first()
 
         assertThat(result.single().amount).isEqualTo(Money(-4500))
+    }
+
+    private companion object {
+        const val DELETED_AT = 1_700_000_000_000L
     }
 }
