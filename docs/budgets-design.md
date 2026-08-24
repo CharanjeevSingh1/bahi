@@ -254,11 +254,26 @@ about to happen before it happens, rather than doing it and reporting after.
 Budget(
     id: String,
     categoryId: String,     // NOT nullable -- see below
-    yearMonth: String,      // "2026-08"
-    limitMinor: Long,
+    month: YearMonth,       // value class over "2026-08"
+    limit: Money,
     currencyCode: String,
 )
 ```
+
+**`month` is a `YearMonth` value class, not a `String`.** This is the
+`Money`-over-`Double` argument applied to dates. A raw String accepts
+`"August 2026"` or `"2026-8"`, both of which construct fine, store fine, and
+then match no transaction at all — the budget reads ₹0 spent forever rather
+than failing, which is precisely the silently-wrong failure mode this
+document refuses elsewhere (the date-format refusal in the CSV design, the
+encoding detection, the `NULL`-uniqueness trap two paragraphs down). One
+parse in one place makes the whole class of bug unrepresentable instead of
+merely unlikely. `YearMonth` lives in `:core:model`, zero-pads the month so
+the stored column still sorts lexicographically, and owns `dateRange()` —
+the single place a month becomes a concrete `LocalDate` pair (§2.3).
+
+The column stays `TEXT` holding `"2026-08"` (§4.1): this is a domain-type
+decision, not a storage one.
 
 **Calendar month, not rolling.** A budget covers one named month
 (`year_month`), full stop. Rolling windows ("the last 30 days") are a
@@ -344,10 +359,12 @@ genuinely is a different calendar date now.
 `TransactionFilter.kt` already states the precedent this design leans on:
 "resolving what \[a relative period\] means today needs 'now', which is a
 presentation-layer concern. The data layer only ever sees \[concrete\]
-dates." Budget period resolution follows the identical rule. A `yearMonth`
-like `"2026-08"` is resolved to a concrete `[from, to]` `LocalDate` pair —
-`LocalDate(2026, 8, 1)` to `LocalDate(2026, 8, 31)` — entirely in `LocalDate`
-arithmetic, by the ViewModel, before the query runs. The DAO query in §4.2
+dates." Budget period resolution follows the identical rule. A `YearMonth`
+is resolved to a concrete `[from, to]` `LocalDate` pair — `LocalDate(2026, 8,
+1)` to `LocalDate(2026, 8, 31)` — by `YearMonth.dateRange()`, entirely in
+`LocalDate` arithmetic, before the query runs. Month length is derived
+(`first.plus(1, MONTH).minus(1, DAY)`) rather than looked up, so February in
+a leap year is 29 days without leap years being special-cased anywhere. The DAO query in §4.2
 never sees "this month" as a concept and never converts through `Instant` or
 a device timezone to get there. The trap this avoids: computing "start of
 August" by taking a UTC timestamp and localising it through
@@ -469,7 +486,7 @@ category_rules
 budgets
   id                 TEXT PK
   category_id        TEXT NOT NULL  REFERENCES categories(id) ON DELETE CASCADE
-  year_month         TEXT NOT NULL   -- "2026-08"
+  year_month         TEXT NOT NULL   -- "2026-08", a YearMonth (§2.1)
   limit_minor        INTEGER NOT NULL
   currency_code      TEXT NOT NULL
   created_at         INTEGER NOT NULL
@@ -506,11 +523,19 @@ instead: the invariant lives in the repository, the same place
 `OfflineFirstCategoryRepository.upsert` already keeps its own invariant (the
 comment on why `upsert` reads the existing row before writing, so a caller
 can't launder a system category into a deletable one by copying it). A
-budget "upsert" looks up the non-deleted row for `(categoryId, yearMonth)`
-first; if one exists, it updates that row's `id` in place; if not, it
-inserts a new one. No caller ever constructs a `Budget` with its own `id` for
-an edit — the repository owns that decision the same way `upsertAll` for
+budget "upsert" looks up the non-deleted row for `(categoryId, month)`
+first; if one exists, it updates that row and keeps its existing `id`,
+discarding whatever id the caller passed; if not, it inserts a new one. So
+`Budget.id` is not what identifies the row on the way in — a caller editing
+a budget needn't have loaded it first, and a caller creating one cannot end
+up with two. The repository owns that decision the same way `upsertAll` for
 categories does.
+
+The `year_month` column stays `TEXT`; the domain type is `YearMonth` (§2.1)
+and the mapping is one `toString()`/`parse` pair in `BudgetMappers.kt`. That
+parse is the boundary where a malformed month would surface — which is the
+point of the type, since nothing downstream of it can then be handed a month
+that no query will ever match.
 
 **The same trap is waiting for `category_rules`, and it is worth recording
 here rather than being rediscovered.** Rules have no natural key today —
@@ -567,22 +592,38 @@ priority-ordered `CASE` logic:
 
 ```kotlin
 // :core:data, no Room/Android types involved
-fun applyRules(rules: List<CategoryRule>, candidates: List<Transaction>): Map<String, String> {
-    val sorted = rules.sortedBy { it.priority }
-    return candidates.mapNotNull { tx ->
-        val haystack = (tx.merchant ?: tx.description).trim().uppercase()
-        sorted.firstOrNull { haystack.contains(it.merchantContains.trim().uppercase()) }
-            ?.let { tx.id to it.categoryId }
-    }.toMap()
-}
+internal fun applyRules(
+    rules: List<CategoryRule>,
+    candidates: List<Transaction>,
+): Map<String, String>   // transaction id -> category id, changes only
 ```
 
-`candidates` is assumed already filtered to `categoryLockedByUser == false`
-by the caller (§1.4, layer 1); this function doesn't re-check it, and the
-DB-level guard in `applyRuleCategory` (§1.4, layer 2) is what makes that
-assumption safe to make. Every caller (import, on-demand, apply-this-rule)
-funnels through this one function and then through `applyRuleCategory` —
-one matching implementation, one write path, not three of each.
+Every caller (import, on-demand, apply-this-rule) funnels through this one
+function and then through `applyRuleCategory` — one matching
+implementation, one write path, not three of each. Four things it does that
+the obvious one-liner version doesn't, each of which is a case that would
+otherwise be wrong rather than merely unhandled:
+
+- **It re-checks `categoryLockedByUser` itself.** An earlier draft of this
+  section said `candidates` is assumed pre-filtered by the caller and that
+  this function doesn't re-check — while §5 simultaneously specified a test
+  asserting a locked transaction passed in is *not* returned. Those can't
+  both hold. Resolved in favour of checking: it's one `filterNot`, it makes
+  the function safe to call with any list rather than only one somebody
+  remembered to filter, and it gives the constraint three independent
+  guards (caller's query, here, and `applyRuleCategory`'s `WHERE`) rather
+  than two.
+- **It sorts by `(priority, id)`, not by `priority` alone.** §1.5 promises a
+  total order; sorting on priority alone leaves ties resolved by whatever
+  order the caller supplied, which is deterministic only by accident.
+- **It drops rules whose `merchantContains` is blank.** `contains("")` is
+  true for every string, so a single empty rule reaching this function
+  recategorises the user's entire history in one pass. Rule creation should
+  reject it too; the damage is unbounded enough to be worth stopping twice.
+- **It omits transactions already in the category the rule would assign.**
+  Those are no-op writes, and including them inflates the "this will
+  recategorise 14 transactions" count in §1.6 into a number that disagrees
+  with what actually happens.
 
 ### 4.4 Module placement
 
@@ -606,12 +647,18 @@ one matching implementation, one write path, not three of each.
 ## 5. Testing strategy
 
 - **`applyRules`** (§4.3): pure-Kotlin unit tests in `:core:data/src/test` —
-  no match, exact substring, case-insensitivity, priority tie-breaking by
-  order, a merchant-populated transaction preferred over description, and
-  (explicitly, since it's the constraint the whole feature exists to
-  protect) a locked transaction passed in anyway does *not* appear in the
-  result if the test deliberately doesn't pre-filter it — this is the test
-  that would catch layer 1 regressing.
+  no match, substring buried in export noise, case-insensitivity in both
+  directions, priority order, tie-break by id with the rules supplied in
+  reverse order, a merchant-populated transaction preferred over
+  description, a blank rule matching nothing rather than everything, and a
+  transaction already in the rule's category not being reported as a
+  change. Plus, explicitly, since it's the constraint the whole feature
+  exists to protect: a locked transaction passed in *unfiltered* does not
+  appear in the result. Note what that last one does and doesn't prove — it
+  tests this function's own guard, not the caller's query. Layer 1
+  regressing is only caught by a test of the caller; layer 2 by the DAO test
+  below. Three guards need three tests, and no unit test of a pure function
+  can stand in for the other two.
 - **`applyRuleCategory`** (§1.4): an `androidTest` against a real in-memory
   Room DB, mirroring `TransactionDaoTest`'s existing style — asserts a
   locked row is untouched by a direct DAO call even when passed its id

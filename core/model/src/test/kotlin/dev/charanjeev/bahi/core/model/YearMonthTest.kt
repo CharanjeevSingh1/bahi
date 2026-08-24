@@ -34,6 +34,11 @@ class YearMonthTest {
         assertThat(YearMonth.of(2026, 12) < YearMonth.of(2027, 1)).isTrue()
     }
 
+    // dateRange() is the input to every budget total, so a boundary that is
+    // off by one day silently mis-attributes a real transaction to the
+    // neighbouring month rather than failing. These cover it exhaustively
+    // enough that a rewrite of the arithmetic can't quietly regress.
+
     @Test
     fun `date range covers the whole month, inclusive on both ends`() {
         val range = YearMonth.of(2026, 8).dateRange()
@@ -43,23 +48,65 @@ class YearMonthTest {
     }
 
     @Test
-    fun `date range handles a 30-day month`() {
-        val range = YearMonth.of(2026, 9).dateRange()
+    fun `every month ends on its own last day`() {
+        val lastDays = (1..12).map { month -> YearMonth.of(2026, month).dateRange().to.dayOfMonth }
 
-        assertThat(range.to).isEqualTo(LocalDate(2026, 9, 30))
+        // 2026 is not a leap year, so February is 28.
+        assertThat(lastDays).containsExactly(31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31).inOrder()
     }
 
     @Test
-    fun `date range handles February in a leap year and a non-leap year`() {
+    fun `every month starts on the first`() {
+        val firstDays = (1..12).map { month -> YearMonth.of(2026, month).dateRange().from.dayOfMonth }
+
+        assertThat(firstDays).containsExactly(1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1)
+    }
+
+    @Test
+    fun `February is 29 days in a leap year and 28 otherwise`() {
         assertThat(YearMonth.of(2028, 2).dateRange().to).isEqualTo(LocalDate(2028, 2, 29))
         assertThat(YearMonth.of(2026, 2).dateRange().to).isEqualTo(LocalDate(2026, 2, 28))
+        // 2000 is a leap year and 1900 is not -- the century rule, which a
+        // hand-rolled `year % 4` check gets wrong and calendar arithmetic
+        // gets right for free.
+        assertThat(YearMonth.of(2000, 2).dateRange().to).isEqualTo(LocalDate(2000, 2, 29))
+        assertThat(YearMonth.of(1900, 2).dateRange().to).isEqualTo(LocalDate(1900, 2, 28))
     }
 
     @Test
-    fun `date range for December stays inside the year`() {
+    fun `December rolls into the next year without escaping its own month`() {
         val range = YearMonth.of(2026, 12).dateRange()
 
+        assertThat(range.from).isEqualTo(LocalDate(2026, 12, 1))
         assertThat(range.to).isEqualTo(LocalDate(2026, 12, 31))
+    }
+
+    @Test
+    fun `the first and last day of a month fall inside the range`() {
+        val range = YearMonth.of(2026, 8).dateRange()
+
+        // The two dates a wrong boundary would exclude -- and the case the
+        // task worried about: a transaction dated the 31st belongs to August.
+        assertThat(LocalDate(2026, 8, 1) >= range.from).isTrue()
+        assertThat(LocalDate(2026, 8, 31) <= range.to).isTrue()
+    }
+
+    @Test
+    fun `the neighbouring months' adjacent days fall outside the range`() {
+        val range = YearMonth.of(2026, 8).dateRange()
+
+        assertThat(LocalDate(2026, 7, 31) < range.from).isTrue()
+        assertThat(LocalDate(2026, 9, 1) > range.to).isTrue()
+    }
+
+    @Test
+    fun `consecutive months' ranges are adjacent with no gap or overlap`() {
+        // If they overlapped, a transaction would count toward two budgets;
+        // if they gapped, toward none.
+        val august = YearMonth.of(2026, 8).dateRange()
+        val september = YearMonth.of(2026, 9).dateRange()
+
+        assertThat(august.to.toEpochDays() + 1).isEqualTo(september.from.toEpochDays())
     }
 
     @Test
