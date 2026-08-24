@@ -84,4 +84,10 @@ class OfflineFirstTransactionRepository @Inject constructor(
     override suspend fun undoImport(batchId: String): Int = withContext(ioDispatcher) {
         transactionDao.softDeleteBatch(batchId, clock.now().toEpochMilliseconds())
     }
+
+    override suspend fun applyRuleCategories(assignments: Map<String, String>): Int =
+        withContext(ioDispatcher) {
+            if (assignments.isEmpty()) return@withContext 0
+            transactionDao.applyRuleCategories(assignments, clock.now().toEpochMilliseconds())
+        }
 }

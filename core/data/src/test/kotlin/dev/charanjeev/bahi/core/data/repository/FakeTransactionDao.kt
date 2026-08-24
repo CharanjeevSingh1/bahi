@@ -123,6 +123,26 @@ class FakeTransactionDao : TransactionDao {
         return affected
     }
 
+    /**
+     * The real query's guard is three conditions in a WHERE clause; here it
+     * has to be written out by hand. Getting it wrong would make the fake
+     * more permissive than SQLite and let a repository test pass while the
+     * real write is blocked -- or worse, the reverse.
+     */
+    override suspend fun applyRuleCategory(id: String, categoryId: String, updatedAt: Long): Int {
+        val existing = backing.value[id] ?: return 0
+        if (existing.categoryLockedByUser || existing.deletedAt != null) return 0
+        backing.value = backing.value + (
+            id to existing.copy(
+                categoryId = categoryId,
+                updatedAt = updatedAt,
+                pendingOperation = "UPSERT",
+                localRevision = existing.localRevision + 1,
+            )
+        )
+        return 1
+    }
+
     override suspend fun pendingChanges(limit: Int): List<TransactionEntity> =
         backing.value.values.filter { it.pendingOperation != null }.take(limit)
 

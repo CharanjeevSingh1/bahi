@@ -5,6 +5,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.google.common.truth.Truth.assertThat
 import dev.charanjeev.bahi.core.database.dao.TransactionDao
+import dev.charanjeev.bahi.core.database.entity.CategoryEntity
 import dev.charanjeev.bahi.core.database.entity.TransactionEntity
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
@@ -163,6 +164,111 @@ class TransactionDaoTest {
         assertThat(remaining).containsExactly("b2")
     }
 
+    // --- applyRuleCategory: the guard the auto-categoriser is built around ---
+
+    /**
+     * The test that matters: not "the caller filtered correctly" but "the
+     * write itself refuses." Called directly with a locked row's id, with
+     * nothing upstream to stop it -- which is exactly the situation a future
+     * feature forgetting layer 1 would produce.
+     */
+    @Test
+    fun applyRuleCategory_leavesALockedRowAlone_evenWhenCalledDirectlyWithItsId() = runTest {
+        seedCategories()
+        dao.upsert(transactionEntity(id = "locked", contentHash = "h1", categoryId = "food", locked = true))
+
+        val affected = dao.applyRuleCategory(id = "locked", categoryId = "groceries", updatedAt = 5000L)
+
+        // 0, not 1: the row was not merely left unchanged, the UPDATE matched
+        // nothing -- which is what lets the caller report honestly.
+        assertThat(affected).isEqualTo(0)
+        val row = allTransactions().single()
+        assertThat(row.categoryId).isEqualTo("food")
+        // Untouched means untouched: no revision bump, no pending write, no
+        // updated_at. A locked row must not even look changed to sync.
+        assertThat(row.localRevision).isEqualTo(1)
+        assertThat(row.pendingOperation).isNull()
+        assertThat(row.updatedAt).isEqualTo(0L)
+    }
+
+    @Test
+    fun applyRuleCategory_categorisesAnUnlockedRow() = runTest {
+        seedCategories()
+        dao.upsert(transactionEntity(id = "unlocked", contentHash = "h1"))
+
+        val affected = dao.applyRuleCategory(id = "unlocked", categoryId = "food", updatedAt = 5000L)
+
+        assertThat(affected).isEqualTo(1)
+        val row = allTransactions().single()
+        assertThat(row.categoryId).isEqualTo("food")
+        assertThat(row.updatedAt).isEqualTo(5000L)
+        assertThat(row.pendingOperation).isEqualTo("UPSERT")
+        assertThat(row.localRevision).isEqualTo(2)
+    }
+
+    @Test
+    fun applyRuleCategory_leavesATombstonedRowAlone() = runTest {
+        seedCategories()
+        dao.upsert(transactionEntity(id = "gone", contentHash = "h1"))
+        dao.softDelete("gone", deletedAt = 1000L)
+
+        val affected = dao.applyRuleCategory(id = "gone", categoryId = "food", updatedAt = 5000L)
+
+        assertThat(affected).isEqualTo(0)
+    }
+
+    @Test
+    fun applyRuleCategory_keepsTheRowInItsImportBatch_unlikeAHandEdit() = runTest {
+        // update() evicts a row from its batch because a hand-edit means the
+        // user owns it now. A rule categorising it is not that, so batch undo
+        // must still reach it.
+        seedCategories()
+        dao.importBatch(listOf(transactionEntity(id = "a1", contentHash = "h1", importBatchId = "batch-a")))
+
+        dao.applyRuleCategory(id = "a1", categoryId = "food", updatedAt = 5000L)
+
+        assertThat(dao.softDeleteBatch("batch-a", deletedAt = 6000L)).isEqualTo(1)
+    }
+
+    @Test
+    fun applyRuleCategories_appliesOnlyTheRowsItIsAllowedTo_andSaysHowMany() = runTest {
+        seedCategories()
+        dao.upsert(transactionEntity(id = "unlocked", contentHash = "h1"))
+        dao.upsert(transactionEntity(id = "locked", contentHash = "h2", categoryId = "food", locked = true))
+
+        // 1, not 2. Reporting 2 here -- "recategorised 2 transactions" when
+        // one was refused -- is the bug the return value exists to prevent.
+        val affected = dao.applyRuleCategories(
+            assignments = mapOf("unlocked" to "groceries", "locked" to "groceries"),
+            updatedAt = 5000L,
+        )
+
+        assertThat(affected).isEqualTo(1)
+        val byId = allTransactions().associateBy(TransactionEntity::id)
+        assertThat(byId.getValue("unlocked").categoryId).isEqualTo("groceries")
+        assertThat(byId.getValue("locked").categoryId).isEqualTo("food")
+    }
+
+    /**
+     * Room enables foreign key constraints by default, so a transaction can
+     * only carry a category_id that exists. Only these tests need it -- the
+     * de-duplication tests above leave every row uncategorised.
+     */
+    private suspend fun seedCategories() {
+        database.categoryDao().insertAllIgnoringConflicts(
+            listOf(categoryEntity("food"), categoryEntity("groceries")),
+        )
+    }
+
+    private fun categoryEntity(id: String) = CategoryEntity(
+        id = id,
+        name = id.replaceFirstChar { it.uppercase() },
+        parentId = null,
+        colorArgb = 0,
+        iconKey = "help_outline",
+        isSystemDefined = true,
+    )
+
     private suspend fun allTransactions(): List<TransactionEntity> =
         dao.observeFiltered(categoryIds = emptyList(), categoryCount = 0, hasDateWindow = 0, from = "", to = "")
             .first()
@@ -171,6 +277,8 @@ class TransactionDaoTest {
         id: String,
         contentHash: String,
         importBatchId: String? = null,
+        categoryId: String? = null,
+        locked: Boolean = false,
     ): TransactionEntity = TransactionEntity(
         id = id,
         amountMinor = -45000,
@@ -178,11 +286,11 @@ class TransactionDaoTest {
         date = "2026-01-05",
         description = "Coffee Shop",
         merchant = null,
-        categoryId = null,
+        categoryId = categoryId,
         accountId = "acct-1",
         source = "CSV_IMPORT",
         notes = null,
-        categoryLockedByUser = false,
+        categoryLockedByUser = locked,
         contentHash = contentHash,
         importBatchId = importBatchId,
         createdAt = 0L,

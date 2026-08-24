@@ -32,4 +32,12 @@ class FakeTransactionRepository : TransactionRepository {
         undoneBatchIds += batchId
         return undoImportReturnValue ?: 0
     }
+
+    /** Recorded, not applied -- the import screen never calls this itself. */
+    val appliedRuleCategories = mutableListOf<Map<String, String>>()
+
+    override suspend fun applyRuleCategories(assignments: Map<String, String>): Int {
+        appliedRuleCategories += assignments
+        return assignments.size
+    }
 }

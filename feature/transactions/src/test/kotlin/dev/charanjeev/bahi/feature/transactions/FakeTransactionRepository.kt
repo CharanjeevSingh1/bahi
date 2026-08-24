@@ -82,4 +82,12 @@ class FakeTransactionRepository : TransactionRepository {
         ImportBatchResult(batchId = "unused", insertedCount = transactions.size)
 
     override suspend fun undoImport(batchId: String): Int = 0
+
+    /** Nothing in :feature:transactions triggers auto-categorisation; recorded so a test could. */
+    val appliedRuleCategories = mutableListOf<Map<String, String>>()
+
+    override suspend fun applyRuleCategories(assignments: Map<String, String>): Int {
+        appliedRuleCategories += assignments
+        return assignments.size
+    }
 }

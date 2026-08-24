@@ -41,4 +41,17 @@ class FakeTransactionRepository : TransactionRepository {
         undoneBatchIds += batchId
         return undoImportReturnValue
     }
+
+    /**
+     * Recorded rather than applied: nothing in :core:importer calls this yet
+     * (that's the slice that runs rules at import time), and when it does,
+     * what the test needs to assert is which assignments were handed over.
+     */
+    val appliedRuleCategories = mutableListOf<Map<String, String>>()
+    var applyRuleCategoriesReturnValue: Int = 0
+
+    override suspend fun applyRuleCategories(assignments: Map<String, String>): Int {
+        appliedRuleCategories += assignments
+        return applyRuleCategoriesReturnValue
+    }
 }

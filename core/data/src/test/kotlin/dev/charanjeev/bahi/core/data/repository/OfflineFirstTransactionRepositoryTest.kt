@@ -154,6 +154,61 @@ class OfflineFirstTransactionRepositoryTest {
         assertThat(dao.entity("b")?.deletedAt).isNotNull()
     }
 
+    // --- Auto-categorisation writes ---
+
+    @Test
+    fun `applyRuleCategories categorises unlocked rows and reports how many actually changed`() = runTest {
+        repository.upsert(TestData.transaction(id = "a"))
+        repository.upsert(TestData.transaction(id = "b", description = "OTHER"))
+
+        val changed = repository.applyRuleCategories(mapOf("a" to "food", "b" to "transport"))
+
+        assertThat(changed).isEqualTo(2)
+        assertThat(dao.entity("a")?.categoryId).isEqualTo("food")
+        assertThat(dao.entity("b")?.categoryId).isEqualTo("transport")
+    }
+
+    @Test
+    fun `applyRuleCategories never overwrites a category the user locked`() = runTest {
+        repository.upsert(
+            TestData.transaction(id = "a", categoryId = "shopping").copy(categoryLockedByUser = true),
+        )
+
+        val changed = repository.applyRuleCategories(mapOf("a" to "food"))
+
+        // 0, and the user's category stands. The repository doesn't check
+        // this itself -- the DAO's WHERE clause does, which is the point.
+        assertThat(changed).isEqualTo(0)
+        assertThat(dao.entity("a")?.categoryId).isEqualTo("shopping")
+    }
+
+    @Test
+    fun `applyRuleCategories marks changed rows pending sync at the injected instant`() = runTest {
+        repository.upsert(TestData.transaction(id = "a"))
+
+        repository.applyRuleCategories(mapOf("a" to "food"))
+
+        val entity = dao.entity("a")!!
+        assertThat(entity.updatedAt).isEqualTo(DELETED_AT)
+        assertThat(entity.pendingOperation).isEqualTo("UPSERT")
+    }
+
+    @Test
+    fun `applyRuleCategories keeps a categorised row in its import batch, unlike a hand edit`() = runTest {
+        val batch = repository.importAll(listOf(TestData.transaction(id = "a")))
+
+        repository.applyRuleCategories(mapOf("a" to "food"))
+
+        // Still undoable as part of the import: a rule categorising a row is
+        // not the user taking ownership of it.
+        assertThat(repository.undoImport(batch.batchId)).isEqualTo(1)
+    }
+
+    @Test
+    fun `applyRuleCategories with nothing to do is a no-op`() = runTest {
+        assertThat(repository.applyRuleCategories(emptyMap())).isEqualTo(0)
+    }
+
     // --- Filtering: a query, not the caller filtering the returned list ---
 
     @Test

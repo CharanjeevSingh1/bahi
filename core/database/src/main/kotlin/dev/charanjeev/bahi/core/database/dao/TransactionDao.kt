@@ -151,6 +151,52 @@ interface TransactionDao {
     )
     suspend fun softDeleteBatch(batchId: String, deletedAt: Long): Int
 
+    /**
+     * The only write path allowed to set a category without the user having
+     * chosen it -- the auto-categoriser today, and anything that behaves like
+     * one later. Never [update] or [upsert] for that: those are user intent.
+     *
+     * `category_locked_by_user = 0` lives in the WHERE clause rather than in
+     * the caller because that is what makes the guarantee independent of the
+     * caller being correct. A caller is *also* expected to have selected
+     * candidates with the same condition (docs/budgets-design.md §1.4, layer
+     * 1), and applyRules filters it again -- but if both of those regress,
+     * this UPDATE still matches zero rows and the user's own categorisation
+     * survives. A rule silently reverting a category the user set by hand is
+     * the failure this whole feature is built around not doing.
+     *
+     * Deliberately does not clear import_batch_id, unlike [update]: a rule
+     * categorising a row is not the user hand-editing it, so the row stays
+     * part of its import batch and batch undo still reaches it. It also
+     * leaves content_hash alone, which is correct because the hash already
+     * excludes category by design (see contentHashOf).
+     *
+     * Returns rows actually updated -- 0 when the row is locked, already
+     * deleted, or absent. Callers report that number, not how many they
+     * asked for, the same way [softDeleteBatch] does.
+     */
+    @Query(
+        """
+        UPDATE transactions
+        SET category_id = :categoryId, updated_at = :updatedAt,
+            pending_operation = 'UPSERT', local_revision = local_revision + 1
+        WHERE id = :id AND category_locked_by_user = 0 AND deleted_at IS NULL
+        """,
+    )
+    suspend fun applyRuleCategory(id: String, categoryId: String, updatedAt: Long): Int
+
+    /**
+     * One transaction for the whole pass, matching [importBatch]'s reasoning:
+     * a recategorisation over hundreds of rows that half-applied on process
+     * death would leave the user's ledger in a state no screen explains.
+     *
+     * The returned count can be lower than `assignments.size` -- every skip
+     * in [applyRuleCategory] is a row that was locked, deleted or gone.
+     */
+    @Transaction
+    suspend fun applyRuleCategories(assignments: Map<String, String>, updatedAt: Long): Int =
+        assignments.entries.sumOf { (id, categoryId) -> applyRuleCategory(id, categoryId, updatedAt) }
+
     @Query("SELECT * FROM transactions WHERE pending_operation IS NOT NULL LIMIT :limit")
     suspend fun pendingChanges(limit: Int = 200): List<TransactionEntity>
 
