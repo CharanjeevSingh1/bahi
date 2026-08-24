@@ -54,20 +54,42 @@ Rejecting the other two options the task asks about, explicitly:
   later — an additive migration, not a rewrite — so under-scoping this now
   is cheap to fix. See decision D1.
 
-**What the rule actually matches against is worth being precise about,
-because the obvious answer is wrong.** `Transaction.merchant` exists in the
-model and the entity, but nothing in the app populates it today:
+**Rules match on `description`, not on `merchant`** — the obvious answer is
+the wrong one here. `Transaction.merchant` exists in the model and the
+entity, but nothing in the app populates it today:
 `DefaultCsvImporter.import()` hard-codes `merchant = null` (there's no
 merchant column in `ColumnMapping` — csv-import-design.md never proposed
 one), and the manual entry form doesn't expose a merchant field at all
 (`TransactionFormViewModel.kt`: "Fields this form never shows — merchant,
-source, id, createdAt"). A rule engine that matches against `merchant` would
-be matching against a column that is `null` for every transaction that
-exists in this app right now. **Rules match against `description`**, with a
-fallback to `merchant` if it's ever populated later (matching against
-`merchant ?: description`, uppercase-trimmed) — same normalisation
-`contentHashOf` already applies to description, so this reuses an existing
-convention rather than inventing a second one.
+source, id, createdAt"). A rule engine matching on `merchant` would be
+matching a column that is `null` for every transaction in this app, and
+every rule would match nothing — the feature would look built and do
+nothing. So the matched string is `description`, uppercase-trimmed, the same
+normalisation `contentHashOf` already applies to it. The engine in §4.3
+reads `merchant ?: description` rather than `description` outright, but that
+is forward-compatibility for a field that is presently always null, not a
+live code path — worth stating plainly so nobody reads it as evidence the
+field works.
+
+**So should `merchant` be populated, or dropped from the model?** It is
+currently a column nothing writes and nothing reads, which is dead weight in
+a schema that now has real migrations against it — but the two ways out are
+not symmetric, and neither is free. Populating it means *extracting* a
+merchant from the description (stripping `UPI/`, `POS `, reference numbers,
+trailing city names), because bank CSVs have no merchant column to map — the
+merchant is embedded in the description string. That extraction is a real
+normalisation feature with the same silently-wrong risk profile as
+everything else in the CSV design, and it is also the single change that
+would most improve rule matching, since `SWIGGY` matched against a clean
+merchant beats the same substring matched against `UPI/SWIGGY*ORDER/
+BANGALORE/423891`. Dropping it is the more expensive direction than it
+looks: `minSdk` is 26, and `ALTER TABLE ... DROP COLUMN` needs SQLite 3.35+
+(Android 14 / API 34) — on API 26 removal means the full 12-step table
+rebuild, migrating every row. Recommendation: keep the column, treat
+merchant extraction as the named future slice that justifies it, and if that
+slice hasn't been built by the end of M4, drop it then — folded into
+whatever table rebuild M4's sync work needs anyway, never as a rebuild of
+its own. This is D6 so it gets decided rather than drifting.
 
 ### 1.2 Where rules come from
 
@@ -338,18 +360,29 @@ representation carry an implicit assumption that only holds sometimes).
 ### 2.4 Carry-over
 
 **No.** A budget resets to its own `limitMinor` every month; underspending
-in July has no effect on August's Food budget. This is the simpler of two
-options and it's also the one that doesn't need to be revisited every month
-it runs: carry-over means "limit" stops being a stored number and becomes a
-computed one (base limit ± whatever rolled in from the month before), which
-has to handle the first month it's ever turned on (nothing to roll over
-from), a month where the category didn't have a budget at all (does that
-break the chain or treat it as zero?), and editing a past month's limit
-after later months have already rolled numbers forward from it. None of that
-is impossible, all of it is real design work this milestone doesn't need.
-See decision D4 — this is the one I'd flag as costliest to get wrong in the
-"ship it and reverse the decision later" direction, since by then users have
-a mental model built around whichever answer shipped first.
+in July has no effect on August's Food budget. Carry-over means "limit"
+stops being a stored number and becomes a computed one (base limit ±
+whatever rolled in from the month before), which has to handle the first
+month it's ever turned on (nothing to roll over from), a month where the
+category had no budget at all (does that break the chain, or count as
+zero?), and editing a past month's limit after later months have already
+rolled numbers forward from it. None of that is impossible; all of it is
+real design work this milestone doesn't need. That — not reversal cost — is
+why the simple version ships.
+
+The reversal asymmetry is still worth naming, because it tells whoever adds
+carry-over later what to watch for, and it runs the opposite way to the
+usual intuition. **Adding rollover later is the retroactive direction:** the
+data to reconstruct a rollover chain all the way back already exists (every
+past month has a stored limit and a computable spend), so switching it on
+would silently restate what every past month's effective limit *was* —
+January's underspend suddenly meaning something it did not mean when
+January happened. **Removing rollover later is merely forward-looking:** it
+stops compounding from the month it's turned off, and nothing already
+displayed changes meaning. So a future carry-over feature must be scoped to
+start from the month it is enabled rather than reconstructing history —
+which defuses the retroactive problem entirely, and is the one thing about
+this decision worth writing down now. See D4.
 
 ### 2.5 What the user sees when over budget
 
@@ -478,6 +511,22 @@ first; if one exists, it updates that row's `id` in place; if not, it
 inserts a new one. No caller ever constructs a `Budget` with its own `id` for
 an edit — the repository owns that decision the same way `upsertAll` for
 categories does.
+
+**The same trap is waiting for `category_rules`, and it is worth recording
+here rather than being rediscovered.** Rules have no natural key today —
+two rules may legitimately share a `merchant_contains` string pointing at
+different categories, and §1.5 resolves that by priority rather than by
+forbidding it. But the moment anyone decides they *should* be unique (say,
+"one rule per merchant string," to stop a user creating a rule that can
+never win), the soft-delete interaction above applies unchanged: a `UNIQUE`
+index over that key would be satisfied by a tombstoned row the user cannot
+see and cannot delete again, so re-creating a rule they previously deleted
+would fail with a constraint violation that has no visible cause. Any
+uniqueness rule added to either table must either live in the repository
+(the pattern above) or be a partial index excluding tombstones — which Room's
+`@Entity(indices = ...)` cannot declare. This is a general consequence of
+soft deletes, not a fact about budgets; it will apply to every table this
+app adds while CLAUDE.md rule 7 stands.
 
 ### 4.2 Budget totals: computed by query, per the M2 precedent
 
@@ -620,7 +669,7 @@ depend only on earlier data slices, not on each other.
 
 ## 7. Decisions
 
-### D1 — Rule matching: substring only, or add amount range now?
+### D1 — Rule matching: substring only, or add amount range now? — resolved 2026-08-24: substring only
 
 - **Options:** (a) merchant substring only, as proposed in §1.1. (b)
   substring plus an optional amount-range condition, ANDed. (c) full regex.
@@ -632,7 +681,7 @@ depend only on earlier data slices, not on each other.
   regretting it is the expensive direction — it would mean migrating
   user-authored regexes, not just a schema.
 
-### D2 — Starter rule set: none, seeded, or suggested?
+### D2 — Starter rule set: none, seeded, or suggested? — resolved 2026-08-24: none, user-created only
 
 - **Options:** (a) none — user-created only, as proposed in §1.2. (b) seed a
   curated Indian-merchant set, active by default. (c) build the
@@ -648,7 +697,7 @@ depend only on earlier data slices, not on each other.
   then it's not a design problem, it's already-wrong data sitting in a
   user's ledger.
 
-### D3 — "Overall" (non-category) budgets: support in v1?
+### D3 — "Overall" (non-category) budgets: support in v1? — resolved 2026-08-24: no, per-category only
 
 - **Options:** (a) no — per-category only, as proposed in §2.1. (b) yes, via
   a real sentinel category row (like `"uncategorised"`), non-null
@@ -661,20 +710,25 @@ depend only on earlier data slices, not on each other.
   category-like row) plus a repository check, not a rewrite — the schema in
   §4.1 already doesn't preclude it.
 
-### D4 — Carry-over: does underspending roll forward?
+### D4 — Carry-over: does underspending roll forward? — resolved 2026-08-24: no rollover
 
 - **Options:** (a) no rollover, as proposed in §2.4. (b) unspent amount
   automatically adds to next month's limit. (c) rollover is opt-in per
   budget (a boolean on the row).
-- **Recommendation: (a).**
-- **If wrong:** this is the one to be most sure about before shipping,
-  flagged as such in §2.4 — retrofitting (b) or (c) after users have formed
-  a mental model around flat monthly resets means introducing behaviour that
-  looks like a bug the first time someone notices a limit that's higher than
-  what they set, unless it's clearly surfaced as a new feature turning on.
-  Not unrecoverable, just the most user-facing of these four to reverse.
+- **Recommendation: (a)** — resolved 2026-08-24. Not because it's the easier
+  decision to reverse, but because carry-over is materially more design
+  (§2.4's three unresolved cases) for something this milestone doesn't need.
+  The simpler thing ships on its own merits.
+- **If wrong:** the direction of the risk is the opposite of the intuitive
+  one, and §2.4 spells it out: **adding** rollover later is the retroactive
+  change — every past month already has the stored limit and computable
+  spend needed to reconstruct a chain, so switching it on could silently
+  restate what historical months meant. **Removing** it later would only
+  stop a forward-looking behaviour. The mitigation is a constraint on the
+  future feature, not on this decision: any carry-over added later must
+  start from the month it is enabled and must not reconstruct history.
 
-### D5 — Module placement for rule management: inside `:feature:budgets`, or its own module?
+### D5 — Module placement for rule management: inside `:feature:budgets`, or its own module? — resolved 2026-08-24: inside `:feature:budgets`
 
 - **Options:** (a) both budgets and rule-management screens live in
   `:feature:budgets`, as proposed in §4.4 — it's the only module this
@@ -689,3 +743,23 @@ depend only on earlier data slices, not on each other.
 - **If wrong:** same "mechanical, bounded" cost §11.2 already names for its
   own reversed case — extracting a package into its own module later is
   build-logic wiring and a `moduleGraph` regen, not a rewrite.
+
+### D6 — `Transaction.merchant`: populate it, or drop it?
+
+- **The problem:** as §1.1 sets out, `merchant` is written by nothing and
+  read by nothing. It is a column carried by every row, in a schema that now
+  has real migrations run against it, doing no work.
+- **Options:** (a) keep it as-is, with merchant extraction from
+  `description` named as the slice that would justify it — the one change
+  that would most improve rule matching quality. (b) build that extraction
+  now, as part of M3. (c) drop the column and the model field.
+- **Recommendation: (a)**, with a deadline rather than an open-ended keep:
+  if extraction hasn't been built by the end of M4, drop it then. (b) is
+  real normalisation work with its own silently-wrong failure modes and
+  would compete with the two features M3 is actually about.
+- **If wrong:** (c) is the direction that is more expensive than it looks
+  and gets more expensive with time, which is why the deadline matters.
+  `minSdk` is 26; `ALTER TABLE ... DROP COLUMN` needs SQLite 3.35+ (Android
+  14 / API 34), so removal on API 26 is the 12-step table rebuild — every
+  row copied through a new table. Cheap to fold into a rebuild M4's sync
+  work needs anyway; not worth a dedicated migration on its own.
