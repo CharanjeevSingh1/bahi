@@ -1,6 +1,7 @@
 package dev.charanjeev.bahi.core.database
 
 import androidx.room.testing.MigrationTestHelper
+import androidx.sqlite.db.SupportSQLiteDatabase
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.google.common.truth.Truth.assertThat
@@ -70,8 +71,74 @@ class MigrationTest {
         }
     }
 
+    /**
+     * MIGRATION_2_3 is purely additive (docs/budgets-design.md §4.1), so
+     * there is no "did existing data survive" question to ask -- the thing
+     * worth asserting instead is that the tables it creates are the ones
+     * Room expects. `runMigrationsAndValidate` covers the shape; these
+     * inserts cover that the columns are usable in the declared order, and
+     * the delete covers the ON DELETE CASCADE both entities declare, which
+     * is the one behavioural difference from `transactions`' SET_NULL.
+     */
+    @Test
+    fun migrate2To3_createsRuleAndBudgetTables_cascadingFromTheirCategory() {
+        helper.createDatabase(TEST_DB, 2).apply {
+            execSQL(
+                """
+                INSERT INTO categories (id, name, parent_id, color_argb, icon_key, is_system_defined)
+                VALUES ('food', 'Food', NULL, 0, 'restaurant', 1)
+                """.trimIndent(),
+            )
+            close()
+        }
+
+        val migrated = helper.runMigrationsAndValidate(TEST_DB, 3, true, Migrations.MIGRATION_2_3)
+
+        migrated.execSQL(
+            """
+            INSERT INTO category_rules (
+                id, category_id, merchant_contains, priority,
+                created_at, updated_at, local_revision, remote_revision, pending_operation, deleted_at
+            ) VALUES ('rule-1', 'food', 'SWIGGY', 0, 0, 0, 1, NULL, NULL, NULL)
+            """.trimIndent(),
+        )
+        migrated.execSQL(
+            """
+            INSERT INTO budgets (
+                id, category_id, year_month, limit_minor, currency_code,
+                created_at, updated_at, local_revision, remote_revision, pending_operation, deleted_at
+            ) VALUES ('budget-1', 'food', '2026-08', 800000, 'INR', 0, 0, 1, NULL, NULL, NULL)
+            """.trimIndent(),
+        )
+        assertThat(countOf(migrated, "category_rules")).isEqualTo(1)
+        assertThat(countOf(migrated, "budgets")).isEqualTo(1)
+
+        // Asserted rather than assumed: a cascade is invisible unless foreign
+        // keys are enforced on this connection, and enforcement is off by
+        // default on a raw SupportSQLiteDatabase -- Room only turns it on for
+        // databases opened through its own builder. Without this check, a
+        // migration that dropped the foreign key entirely would still pass
+        // the delete below.
+        migrated.setForeignKeyConstraintsEnabled(true)
+        migrated.query("PRAGMA foreign_keys").use { cursor ->
+            assertThat(cursor.moveToFirst()).isTrue()
+            assertThat(cursor.getInt(0)).isEqualTo(1)
+        }
+
+        migrated.execSQL("DELETE FROM categories WHERE id = 'food'")
+
+        assertThat(countOf(migrated, "category_rules")).isEqualTo(0)
+        assertThat(countOf(migrated, "budgets")).isEqualTo(0)
+    }
+
+    private fun countOf(db: SupportSQLiteDatabase, table: String): Int =
+        db.query("SELECT COUNT(*) FROM $table").use { cursor ->
+            cursor.moveToFirst()
+            cursor.getInt(0)
+        }
+
     private companion object {
         const val TEST_DB = "migration-test.db"
-        const val LATEST_VERSION = 2
+        const val LATEST_VERSION = 3
     }
 }
