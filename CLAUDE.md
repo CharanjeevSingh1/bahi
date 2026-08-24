@@ -19,7 +19,7 @@ Kotlin, Jetpack Compose, Room, Hilt, WorkManager, Coroutines/Flow. Single-activi
 3. **Room entities never leave `:core:data`.** Features consume domain models from `:core:model` via repository interfaces. Mapping lives in `TransactionMappers.kt`.
 4. **Features talk to repositories, never to DAOs.** `:core:database` is not on a feature's dependency list and must not be added to one.
 5. **Money is `Money` (value class over `Long` minor units). Never `Double`, never `Float`, never `BigDecimal` in the domain model.** Floating point in currency is a correctness bug.
-6. **No `fallbackToDestructiveMigration()`.** Ever. A schema change requires: the migration in `Migrations.ALL`, a test in `MigrationTest`, and the exported schema JSON committed — all in the same commit.
+6. **No `fallbackToDestructiveMigration()`.** Ever. A schema change requires: the migration in `Migrations.ALL`, a test in `MigrationTest`, and the exported schema JSON committed — all in the same commit. When a `MigrationTest` fails, read the report under `core/database/build/reports/androidTests/` rather than the console, which prints only `Migration didn't properly handle: <table>`. Note that Room 2.7.2's `TableInfo.toString()` renders every nested column list as `columns = {kotlin.Unit` in both Expected and Found, so table, index and foreign-key *names* are diffable but a mismatch in index column *ordering* is not — check that case against the exported schema JSON directly.
 7. **Soft deletes only.** Set `deleted_at` and a pending `DELETE` operation. Sync needs the tombstone.
 8. **Dispatchers are injected**, never referenced directly. Use `@Dispatcher(BahiDispatcher.IO)`.
 
