@@ -8,8 +8,12 @@ import dagger.hilt.components.SingletonComponent
 import dev.charanjeev.bahi.core.common.ApplicationScope
 import dev.charanjeev.bahi.core.common.Dispatcher
 import dev.charanjeev.bahi.core.common.BahiDispatcher
+import dev.charanjeev.bahi.core.data.repository.BudgetRepository
 import dev.charanjeev.bahi.core.data.repository.CategoryRepository
+import dev.charanjeev.bahi.core.data.repository.CategoryRuleRepository
+import dev.charanjeev.bahi.core.data.repository.OfflineFirstBudgetRepository
 import dev.charanjeev.bahi.core.data.repository.OfflineFirstCategoryRepository
+import dev.charanjeev.bahi.core.data.repository.OfflineFirstCategoryRuleRepository
 import dev.charanjeev.bahi.core.data.repository.OfflineFirstTransactionRepository
 import dev.charanjeev.bahi.core.data.repository.TransactionRepository
 import kotlinx.coroutines.CoroutineDispatcher
@@ -33,6 +37,18 @@ interface DataModule {
     fun bindCategoryRepository(
         implementation: OfflineFirstCategoryRepository,
     ): CategoryRepository
+
+    @Binds
+    @Singleton
+    fun bindCategoryRuleRepository(
+        implementation: OfflineFirstCategoryRuleRepository,
+    ): CategoryRuleRepository
+
+    @Binds
+    @Singleton
+    fun bindBudgetRepository(
+        implementation: OfflineFirstBudgetRepository,
+    ): BudgetRepository
 }
 
 @Module

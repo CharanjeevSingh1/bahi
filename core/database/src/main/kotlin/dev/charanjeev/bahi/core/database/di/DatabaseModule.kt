@@ -9,7 +9,9 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import dev.charanjeev.bahi.core.database.BahiDatabase
 import dev.charanjeev.bahi.core.database.Migrations
+import dev.charanjeev.bahi.core.database.dao.BudgetDao
 import dev.charanjeev.bahi.core.database.dao.CategoryDao
+import dev.charanjeev.bahi.core.database.dao.CategoryRuleDao
 import dev.charanjeev.bahi.core.database.dao.TransactionDao
 import javax.inject.Singleton
 
@@ -37,4 +39,10 @@ object DatabaseModule {
 
     @Provides
     fun provideCategoryDao(database: BahiDatabase): CategoryDao = database.categoryDao()
+
+    @Provides
+    fun provideCategoryRuleDao(database: BahiDatabase): CategoryRuleDao = database.categoryRuleDao()
+
+    @Provides
+    fun provideBudgetDao(database: BahiDatabase): BudgetDao = database.budgetDao()
 }
