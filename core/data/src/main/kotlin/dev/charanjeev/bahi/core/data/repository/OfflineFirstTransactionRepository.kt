@@ -77,8 +77,8 @@ class OfflineFirstTransactionRepository @Inject constructor(
     override suspend fun importAll(transactions: List<Transaction>): ImportBatchResult =
         withContext(ioDispatcher) {
             val batchId = UUID.randomUUID().toString()
-            val insertedCount = transactionDao.importBatch(transactions.map { toEntity(it, importBatchId = batchId) })
-            ImportBatchResult(batchId, insertedCount)
+            val insertedIds = transactionDao.importBatch(transactions.map { toEntity(it, importBatchId = batchId) })
+            ImportBatchResult(batchId, insertedIds)
         }
 
     override suspend fun undoImport(batchId: String): Int = withContext(ioDispatcher) {

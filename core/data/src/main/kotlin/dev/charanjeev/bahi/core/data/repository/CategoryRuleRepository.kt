@@ -16,6 +16,9 @@ interface CategoryRuleRepository {
      */
     fun observeRules(): Flow<List<CategoryRule>>
 
+    /** [observeRules]'s one-shot twin, same order. A rule run reads once; it doesn't subscribe. */
+    suspend fun rules(): List<CategoryRule>
+
     /**
      * Keyed on [CategoryRule.id], unlike BudgetRepository.upsert: rules have
      * no natural key, and two rules may legitimately share a

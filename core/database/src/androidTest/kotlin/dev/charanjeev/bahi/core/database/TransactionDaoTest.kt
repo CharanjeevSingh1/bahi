@@ -51,8 +51,10 @@ class TransactionDaoTest {
             transactionEntity(id = "t1", contentHash = coffeeHash),
             transactionEntity(id = "t2", contentHash = coffeeHash),
         )
-        val firstImportedCount = dao.importBatch(firstImport)
-        assertThat(firstImportedCount).isEqualTo(2)
+        val firstInsertedIds = dao.importBatch(firstImport)
+        // The ids, not just the count: auto-categorisation runs against
+        // exactly these, so naming them wrongly is a silent bug downstream.
+        assertThat(firstInsertedIds).containsExactly("t1", "t2")
         assertThat(allTransactions()).hasSize(2)
 
         // Step 2: the exact same file, re-imported. This is where presence-
@@ -62,8 +64,8 @@ class TransactionDaoTest {
             transactionEntity(id = "t3", contentHash = coffeeHash),
             transactionEntity(id = "t4", contentHash = coffeeHash),
         )
-        val secondImportedCount = dao.importBatch(secondImport)
-        assertThat(secondImportedCount).isEqualTo(0)
+        val secondInsertedIds = dao.importBatch(secondImport)
+        assertThat(secondInsertedIds).isEmpty()
         assertThat(allTransactions()).hasSize(2)
 
         // Step 3: an overlapping re-export that now contains a third,
@@ -77,8 +79,10 @@ class TransactionDaoTest {
             transactionEntity(id = "t6", contentHash = coffeeHash),
             transactionEntity(id = "t7", contentHash = coffeeHash),
         )
-        val thirdImportedCount = dao.importBatch(thirdImport)
-        assertThat(thirdImportedCount).isEqualTo(1)
+        // The third row of the incoming batch is the one kept -- the first
+        // two are consumed as matches for the two already present.
+        val thirdInsertedIds = dao.importBatch(thirdImport)
+        assertThat(thirdInsertedIds).containsExactly("t7")
         assertThat(allTransactions()).hasSize(3)
     }
 

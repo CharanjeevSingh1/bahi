@@ -70,5 +70,13 @@ interface TransactionRepository {
     suspend fun applyRuleCategories(assignments: Map<String, String>): Int
 }
 
-/** [insertedCount] excludes rows the DAO's de-duplication recognised as duplicates and didn't write. */
-data class ImportBatchResult(val batchId: String, val insertedCount: Int)
+/**
+ * [insertedIds] are the transactions de-duplication actually wrote -- not
+ * everything handed to `importAll`. Identifying them, rather than only
+ * counting them, is what lets a caller act on exactly the new rows: running
+ * auto-categorisation over the whole parsed file instead would report work
+ * against rows that were never inserted.
+ */
+data class ImportBatchResult(val batchId: String, val insertedIds: List<String>) {
+    val insertedCount: Int get() = insertedIds.size
+}

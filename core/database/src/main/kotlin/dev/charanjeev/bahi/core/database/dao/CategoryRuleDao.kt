@@ -25,6 +25,16 @@ interface CategoryRuleDao {
     )
     fun observeAll(): Flow<List<CategoryRuleEntity>>
 
+    /** [observeAll]'s one-shot twin, in the same evaluation order -- a rule run is a one-off, not a subscription. */
+    @Query(
+        """
+        SELECT * FROM category_rules
+        WHERE deleted_at IS NULL
+        ORDER BY priority ASC, id ASC
+        """,
+    )
+    suspend fun getAll(): List<CategoryRuleEntity>
+
     @Query("SELECT * FROM category_rules WHERE id = :id AND deleted_at IS NULL")
     suspend fun getById(id: String): CategoryRuleEntity?
 

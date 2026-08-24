@@ -20,6 +20,10 @@ class OfflineFirstCategoryRuleRepository @Inject constructor(
     override fun observeRules(): Flow<List<CategoryRule>> =
         categoryRuleDao.observeAll().map { entities -> entities.map(::toDomain) }
 
+    override suspend fun rules(): List<CategoryRule> = withContext(ioDispatcher) {
+        categoryRuleDao.getAll().map(::toDomain)
+    }
+
     override suspend fun upsert(rule: CategoryRule) = withContext(ioDispatcher) {
         val now = clock.now().toEpochMilliseconds()
         // Editing a rule must not restate when it was created, so an existing

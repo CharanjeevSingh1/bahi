@@ -222,7 +222,7 @@ interface TransactionDao {
      * would still look right, which is what would make it easy to miss.
      */
     @Transaction
-    suspend fun importBatch(transactions: List<TransactionEntity>): Int {
+    suspend fun importBatch(transactions: List<TransactionEntity>): List<String> {
         val remainingExisting = countExistingHashes(transactions.map { it.contentHash }).toMutableMap()
         val fresh = transactions.filter { transaction ->
             val remaining = remainingExisting.getOrDefault(transaction.contentHash, 0)
@@ -233,7 +233,16 @@ interface TransactionDao {
                 true
             }
         }
-        insertAllIgnoringConflicts(fresh)
-        return fresh.size
+        // Which rows were written, not merely how many. Auto-categorisation
+        // has to run against exactly these -- running it over everything
+        // parsed would count rows that de-duplication threw away.
+        //
+        // Filtered on the insert's own answer rather than assuming `fresh`
+        // all landed: onConflict = IGNORE returns -1 for a row it skipped.
+        // That can't happen today (ids are freshly generated UUIDs), which
+        // is precisely why assuming it would be the kind of thing nobody
+        // notices when it stops being true.
+        val rowIds = insertAllIgnoringConflicts(fresh)
+        return fresh.filterIndexed { index, _ -> rowIds[index] != -1L }.map { it.id }
     }
 }

@@ -79,7 +79,7 @@ class FakeTransactionRepository : TransactionRepository {
     }
 
     override suspend fun importAll(transactions: List<Transaction>): ImportBatchResult =
-        ImportBatchResult(batchId = "unused", insertedCount = transactions.size)
+        ImportBatchResult(batchId = "unused", insertedIds = transactions.map { it.id })
 
     override suspend fun undoImport(batchId: String): Int = 0
 

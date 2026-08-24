@@ -130,6 +130,18 @@ Three triggers, no others:
    rows that batch just inserted. This is `:core:importer` calling into
    `:core:data`, which it already does for the repository call — no new
    module edge.
+
+   **"Exactly the rows that batch just inserted" is load-bearing, not
+   phrasing.** Rules must run *after* de-duplication and only over its
+   output. A row de-duplicated away was never written — the copy already in
+   the table is a different row with a different id — so matching rules
+   against everything parsed would report recategorising transactions this
+   import never created. The count would look plausible and nothing would
+   error, which is this project's recurring failure shape. It also leaves the
+   pre-existing copy alone, which is the right call independently: that row
+   may carry a category the user chose, and re-importing a statement is not a
+   reason to revisit it. This requires `importAll` to return *which* rows it
+   inserted rather than only how many — `ImportBatchResult.insertedIds`.
 2. **On demand**, via an explicit "Recategorise uncategorised transactions"
    action (a button, not a background job) that runs every active rule over
    every transaction with `categoryId IS NULL AND categoryLockedByUser = 0`.
@@ -600,9 +612,38 @@ internal fun applyRules(
 
 Every caller (import, on-demand, apply-this-rule) funnels through this one
 function and then through `applyRuleCategory` — one matching
-implementation, one write path, not three of each. Four things it does that
-the obvious one-liner version doesn't, each of which is a case that would
-otherwise be wrong rather than merely unhandled:
+implementation, one write path, not three of each. **`AutoCategoriser`, a
+small class in `:core:data`, is what makes that literally true rather than a
+convention:**
+
+```kotlin
+class AutoCategoriser(categoryRuleRepository, transactionRepository) {
+    /** Returns how many rows actually changed -- not how many matched. */
+    suspend fun categorise(candidates: List<Transaction>): Int
+}
+```
+
+It reads the rules, calls `applyRules`, and hands the result to
+`TransactionRepository.applyRuleCategories`. The alternative was making
+`applyRules` public — `:core:importer` can't call an `internal` function in
+`:core:data` — and letting each of the three triggers do the two steps
+itself. That works right up until one of them doesn't: matching is harmless
+on its own, so a caller that matched and then wrote through `update()`
+instead of `applyRuleCategory` would look perfectly reasonable in review and
+would silently overwrite categories the user had locked. Keeping `applyRules`
+internal means the pairing isn't something a caller can get wrong, because
+matching without the guarded write isn't reachable from outside the module
+at all.
+
+What `AutoCategoriser` deliberately does *not* do is choose the candidates.
+Each trigger has a genuinely different answer — an import means the rows
+that import actually inserted (§3 below), the on-demand action means every
+uncategorised row — and folding that in would hide the one decision each
+caller has to make for itself.
+
+Four things `applyRules` does that the obvious one-liner version doesn't,
+each of which is a case that would otherwise be wrong rather than merely
+unhandled:
 
 - **It re-checks `categoryLockedByUser` itself.** An earlier draft of this
   section said `candidates` is assumed pre-filtered by the caller and that

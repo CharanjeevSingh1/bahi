@@ -21,6 +21,11 @@ class FakeCategoryRuleDao : CategoryRuleDao {
                 .sortedWith(compareBy({ it.priority }, { it.id }))
         }
 
+    override suspend fun getAll(): List<CategoryRuleEntity> =
+        backing.value.values
+            .filter { it.deletedAt == null }
+            .sortedWith(compareBy({ it.priority }, { it.id }))
+
     override suspend fun getById(id: String): CategoryRuleEntity? =
         backing.value[id]?.takeIf { it.deletedAt == null }
 
