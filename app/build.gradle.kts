@@ -33,6 +33,8 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.navigation.compose)
 
+    testImplementation(projects.core.testing)
+
     androidTestImplementation(projects.core.testing)
     androidTestImplementation(libs.androidx.espresso.core)
 }

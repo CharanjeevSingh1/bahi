@@ -6,11 +6,11 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import dagger.hilt.android.AndroidEntryPoint
 import dev.charanjeev.bahi.core.designsystem.theme.BahiTheme
-import dev.charanjeev.bahi.navigation.BahiNavHost
+import dev.charanjeev.bahi.ui.BahiApp
 
 /**
  * Single-activity architecture: this is the only Activity in the app.
- * Every screen is a Compose destination inside [BahiNavHost].
+ * Every screen is a Compose destination inside [BahiApp]'s nav host.
  */
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
@@ -19,7 +19,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             BahiTheme {
-                BahiNavHost()
+                BahiApp()
             }
         }
     }
