@@ -126,16 +126,37 @@ class BudgetsScreenTest {
         }
 
         composeTestRule.onNodeWithTag(BudgetsTestTags.overBudget("b-food")).assertDoesNotExist()
+        composeTestRule.onNodeWithTag(BudgetsTestTags.nearLimit("b-food")).assertDoesNotExist()
         composeTestRule.onNodeWithTag(BudgetsTestTags.bar("b-food")).assertIsDisplayed()
     }
 
+    /**
+     * The state a user most needs a signal in, and the one that previously
+     * rendered identically to having plenty left.
+     */
     @Test
-    fun spendingExactlyTheLimitIsNotOverBudget() {
+    fun spendingExactlyTheLimitIsNotOverBudget_butIsCalledOut() {
         composeTestRule.setContent {
             BudgetsScreen(uiState = success(listOf(row(limit = Money(800_000), spent = Money(800_000)))))
         }
 
         composeTestRule.onNodeWithTag(BudgetsTestTags.overBudget("b-food")).assertDoesNotExist()
+        composeTestRule.onNodeWithTag(BudgetsTestTags.nearLimit("b-food")).assertIsDisplayed()
+        // "₹0.00 left" is accurate and reads like nothing happened.
+        composeTestRule.onNodeWithText(string(R.string.budgets_limit_reached)).assertIsDisplayed()
+    }
+
+    @Test
+    fun approachingTheLimitIsCalledOutBeforeItIsPassed() {
+        composeTestRule.setContent {
+            BudgetsScreen(uiState = success(listOf(row(limit = Money(800_000), spent = Money(760_000)))))
+        }
+
+        composeTestRule.onNodeWithTag(BudgetsTestTags.nearLimit("b-food")).assertIsDisplayed()
+        composeTestRule.onNodeWithTag(BudgetsTestTags.overBudget("b-food")).assertDoesNotExist()
+        // Still says what's left -- the warning is the colour, not a
+        // replacement for the number.
+        composeTestRule.onNodeWithText(string(R.string.budgets_remaining, "₹400.00")).assertIsDisplayed()
     }
 
     @Test
@@ -147,16 +168,15 @@ class BudgetsScreenTest {
         composeTestRule.onNodeWithTag(BudgetsTestTags.overBudget("b-food")).assertIsDisplayed()
     }
 
-    // --- the zero-limit case, rendered rather than assumed ---
+    // --- the zero-limit case ---
+    //
+    // The editor no longer lets one be created (a zero limit has no state but
+    // "over budget"), so these are not reachable through the UI. They stay
+    // because the screen must render whatever the repository hands it, and M4
+    // sync will hand it budgets this device's editor never validated.
 
-    /**
-     * A ₹0 budget is something the editor lets a user create, so this checks
-     * what it actually looks like rather than trusting that fractionOfLimit's
-     * guard is enough. With nothing spent it is not over budget: an empty bar
-     * and "₹0 left", which is the truthful reading.
-     */
     @Test
-    fun aZeroLimitBudgetWithNothingSpentRendersAsEmptyAndNotOverBudget() {
+    fun aZeroLimitBudgetArrivingFromElsewhereStillRendersWithoutNaN() {
         composeTestRule.setContent {
             BudgetsScreen(uiState = success(listOf(row(limit = Money.ZERO, spent = Money.ZERO))))
         }
@@ -165,13 +185,8 @@ class BudgetsScreenTest {
         composeTestRule.onNodeWithTag(BudgetsTestTags.overBudget("b-food")).assertDoesNotExist()
     }
 
-    /**
-     * The case that would be Infinity without the model's guard. It renders
-     * as a full bar and a real over-budget figure, not as NaN, an empty bar,
-     * or a crash.
-     */
     @Test
-    fun aZeroLimitBudgetWithSpendingRendersAsFullAndOverBudget() {
+    fun aZeroLimitBudgetWithSpendingRendersAsOverBudgetRatherThanInfinity() {
         composeTestRule.setContent {
             BudgetsScreen(uiState = success(listOf(row(limit = Money.ZERO, spent = Money(50_000)))))
         }

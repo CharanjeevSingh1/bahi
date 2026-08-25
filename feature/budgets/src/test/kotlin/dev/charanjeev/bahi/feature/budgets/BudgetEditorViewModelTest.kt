@@ -84,10 +84,7 @@ class BudgetEditorViewModelTest {
     }
 
     @Test
-    fun `a zero limit is allowed`() = runTest {
-        // "I intend to spend nothing here" is a real budget, and
-        // BudgetProgress.fractionOfLimit already decides what it renders as --
-        // rejecting it at the editor would make that decision unreachable.
+    fun `a zero limit is refused, because it can only ever be over budget`() = runTest {
         val viewModel = viewModel()
         viewModel.onCategorySelected("food")
         viewModel.onLimitTextChange("0")
@@ -95,9 +92,38 @@ class BudgetEditorViewModelTest {
         viewModel.uiState.test {
             skipItems(1) // Loading
             val state = awaitItem() as BudgetEditorUiState.Editing
+            assertThat(state.limitError).isEqualTo(LimitError.NOT_POSITIVE)
+            assertThat(state.canSave).isFalse()
+        }
+    }
+
+    @Test
+    fun `onSave refuses a zero limit even when called directly`() = runTest {
+        val viewModel = viewModel()
+        viewModel.onCategorySelected("food")
+        viewModel.onLimitTextChange("0")
+
+        viewModel.onSave()
+        advanceUntilIdle()
+
+        budgetRepository.observeBudgets(august).test {
+            assertThat(awaitItem()).isEmpty()
+        }
+    }
+
+    @Test
+    fun `the smallest positive limit is still allowed`() = runTest {
+        // The rule is "above zero", not "above some round number" -- a ₹0.01
+        // budget is odd but it has real states, unlike a zero one.
+        val viewModel = viewModel()
+        viewModel.onCategorySelected("food")
+        viewModel.onLimitTextChange("0.01")
+
+        viewModel.uiState.test {
+            skipItems(1) // Loading
+            val state = awaitItem() as BudgetEditorUiState.Editing
             assertThat(state.limitError).isNull()
-            assertThat(state.canSave).isTrue()
-            assertThat(state.limit).isEqualTo(Money.ZERO)
+            assertThat(state.limit).isEqualTo(Money(1))
         }
     }
 

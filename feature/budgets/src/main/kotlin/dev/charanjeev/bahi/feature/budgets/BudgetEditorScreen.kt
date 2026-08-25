@@ -132,7 +132,7 @@ private fun BudgetEditorForm(
 ) {
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         Text(
-            text = stringResource(R.string.budget_editor_month, state.month.toString()),
+            text = stringResource(R.string.budget_editor_month, state.month.displayName()),
             style = MaterialTheme.typography.bodyMedium,
         )
 
@@ -153,8 +153,8 @@ private fun BudgetEditorForm(
                 Text(
                     text = when {
                         !state.showLimitError -> stringResource(R.string.budget_editor_limit_hint)
-                        state.limitError == LimitError.NEGATIVE ->
-                            stringResource(R.string.budget_editor_limit_error_negative)
+                        state.limitError == LimitError.NOT_POSITIVE ->
+                            stringResource(R.string.budget_editor_limit_error_not_positive)
                         else -> stringResource(R.string.budget_editor_limit_error_invalid)
                     },
                     modifier = Modifier.testTag(BudgetEditorTestTags.LIMIT_ERROR),

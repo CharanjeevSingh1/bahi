@@ -134,7 +134,9 @@ class BudgetEditorViewModel @Inject constructor(
     fun onSave() {
         if (isSaving.value) return
         val limit = Money.parse(limitText.value.trim()) ?: return
-        if (limit.isNegative) return
+        // Mirrors Editing.limitError rather than trusting the button's
+        // enabled state, for the reason RuleEditorViewModel.onSave gives.
+        if (limit <= Money.ZERO) return
         val category = categoryId.value ?: return
 
         isSaving.value = true

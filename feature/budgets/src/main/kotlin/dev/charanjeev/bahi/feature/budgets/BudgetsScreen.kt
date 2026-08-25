@@ -40,12 +40,12 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.charanjeev.bahi.core.model.BudgetStatus
 import dev.charanjeev.bahi.core.model.Money
 import dev.charanjeev.bahi.core.model.YearMonth
+import dev.charanjeev.bahi.core.designsystem.theme.LocalSemanticColors
 import dev.charanjeev.bahi.core.ui.MoneyText
 import dev.charanjeev.bahi.core.ui.formatMoney
-import java.time.format.DateTimeFormatter
-import java.util.Locale
 
 @Composable
 fun BudgetsRoute(
@@ -275,17 +275,28 @@ private fun BudgetRowItem(
 
         Spacer(Modifier.height(6.dp))
 
+        // Three colours, because there are three things worth saying. Under
+        // and over were never the hard part: the state that needed its own
+        // signal is "at or nearly at the limit", which rendered in the normal
+        // colour is a warning the user only receives after it stops being
+        // actionable.
+        //
         // fractionOfLimit is deliberately unclamped in the model, so nothing
         // is lost there -- but LinearProgressIndicator clamps anyway, so an
         // over-budget bar can't communicate overflow by length. Colour and
-        // the explicit "over budget" line below carry it instead, which reads
-        // better than a bar pinned at full either way.
+        // the line below carry it instead, which reads better than a bar
+        // pinned at full either way.
+        //
+        // At progress = 0f Material3 1.3.2 draws the track and its stop
+        // indicator and no fill at all, which is the correct "nothing spent"
+        // rendering and is only ambiguous if a zero-limit row can exist
+        // alongside it -- which the editor no longer allows.
         LinearProgressIndicator(
             progress = { progress.fractionOfLimit.coerceIn(0f, 1f) },
-            color = if (progress.isOverBudget) {
-                MaterialTheme.colorScheme.error
-            } else {
-                MaterialTheme.colorScheme.primary
+            color = when (progress.status) {
+                BudgetStatus.OVER -> MaterialTheme.colorScheme.error
+                BudgetStatus.NEAR_LIMIT -> LocalSemanticColors.current.warning
+                BudgetStatus.UNDER -> MaterialTheme.colorScheme.primary
             },
             modifier = Modifier
                 .fillMaxWidth()
@@ -295,8 +306,8 @@ private fun BudgetRowItem(
 
         Spacer(Modifier.height(6.dp))
 
-        if (progress.isOverBudget) {
-            Text(
+        when (progress.status) {
+            BudgetStatus.OVER -> Text(
                 text = stringResource(
                     R.string.budgets_over_by,
                     formatMoney(progress.remaining.absolute, currencyCode),
@@ -305,8 +316,24 @@ private fun BudgetRowItem(
                 style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.testTag(BudgetsTestTags.overBudget(progress.budget.id)),
             )
-        } else {
-            Text(
+
+            BudgetStatus.NEAR_LIMIT -> Text(
+                // "₹0.00 left" is accurate and reads like nothing happened.
+                // Naming the state is what makes it land.
+                text = if (progress.isExactlyAtLimit) {
+                    stringResource(R.string.budgets_limit_reached)
+                } else {
+                    stringResource(
+                        R.string.budgets_remaining,
+                        formatMoney(progress.remaining, currencyCode),
+                    )
+                },
+                color = LocalSemanticColors.current.warning,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.testTag(BudgetsTestTags.nearLimit(progress.budget.id)),
+            )
+
+            BudgetStatus.UNDER -> Text(
                 text = stringResource(
                     R.string.budgets_remaining,
                     formatMoney(progress.remaining, currencyCode),
@@ -393,6 +420,3 @@ private fun EmptyBudgets(
         }
     }
 }
-
-private fun YearMonth.displayName(): String =
-    java.time.YearMonth.of(year, month).format(DateTimeFormatter.ofPattern("LLLL yyyy", Locale.getDefault()))

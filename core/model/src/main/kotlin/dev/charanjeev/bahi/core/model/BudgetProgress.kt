@@ -21,8 +21,35 @@ data class BudgetProgress(
     /** Goes negative once [spent] passes the limit; §2.5's "₹340 over budget" is its [Money.absolute]. */
     val remaining: Money get() = budget.limit - spent
 
+    /**
+     * Three states, not two.
+     *
+     * Splitting [BudgetStatus.NEAR_LIMIT] out of "under" is the difference
+     * between a budget that is working and one that is about to stop being
+     * useful. Rendering ₹0 left the same as ₹3,700 left hides the moment the
+     * user most needs to see -- by the time the display changes at all, the
+     * limit has already been passed and the warning is a post-mortem.
+     *
+     * The band starts at [NEAR_LIMIT_FRACTION] rather than only at exactly
+     * 100%: ₹0 left and ₹50 left are the same practical situation, and a
+     * signal that fires only on an exact equality would almost never fire at
+     * all, since spend rarely lands on a round limit.
+     */
+    val status: BudgetStatus
+        get() = when {
+            spent > budget.limit -> BudgetStatus.OVER
+            // Guarded on the limit, not the fraction: fractionOfLimit reports
+            // 0f for a zero limit with nothing spent, which must stay UNDER
+            // rather than being swept into the warning band.
+            budget.limit > Money.ZERO && fractionOfLimit >= NEAR_LIMIT_FRACTION -> BudgetStatus.NEAR_LIMIT
+            else -> BudgetStatus.UNDER
+        }
+
     /** Strictly past the limit -- spending exactly the limit is on budget, not over it. */
-    val isOverBudget: Boolean get() = spent > budget.limit
+    val isOverBudget: Boolean get() = status == BudgetStatus.OVER
+
+    /** Exactly on the line. Worth its own name: "₹0.00 left" reads better as "limit reached". */
+    val isExactlyAtLimit: Boolean get() = budget.limit > Money.ZERO && spent == budget.limit
 
     /**
      * How full the progress bar is. Deliberately not clamped at 1f, so an
@@ -31,15 +58,45 @@ data class BudgetProgress(
      * A `Float` here does not contradict rule 5: that rule is about currency,
      * and this is a ratio of two amounts, not an amount. The division lives
      * here rather than in the composable so the zero-limit case is handled
-     * once -- a ₹0 budget is something a user can create, and `spent / 0` is
-     * Infinity or NaN, which a progress bar renders as a full bar or an empty
-     * one depending on which toolkit gets it.
+     * once -- `spent / 0` is Infinity or NaN, which a progress bar renders as
+     * a full bar or an empty one depending on which toolkit gets it.
+     *
+     * The budget editor no longer lets a zero limit be created (it can only
+     * ever be over budget, which makes every state it has degenerate), so
+     * this guard is defence rather than a live path -- the same standing as
+     * applyRules' blank-needle filter. It still matters: M4 sync will write
+     * budgets this device's editor never validated, and a repository call is
+     * not obliged to go through a screen.
      */
     val fractionOfLimit: Float
         get() = when {
             budget.limit.minorUnits <= 0L -> if (spent > Money.ZERO) 1f else 0f
             else -> spent.minorUnits.toFloat() / budget.limit.minorUnits.toFloat()
         }
+
+    companion object {
+        /**
+         * 90%. A round number chosen for being early enough to act on and
+         * late enough not to cry wolf -- there is no research behind it, and
+         * it is one constant to change if it turns out to nag.
+         */
+        const val NEAR_LIMIT_FRACTION = 0.9f
+    }
+}
+
+/**
+ * What a budget row should be telling the user, decided once here rather than
+ * by each screen comparing numbers and reaching its own conclusion.
+ */
+enum class BudgetStatus {
+    /** Comfortably within the limit. */
+    UNDER,
+
+    /** At or approaching the limit -- the state a warning colour exists for. */
+    NEAR_LIMIT,
+
+    /** Past the limit. */
+    OVER,
 }
 
 /**

@@ -341,6 +341,17 @@ the single place a month becomes a concrete `LocalDate` pair (§2.3).
 The column stays `TEXT` holding `"2026-08"` (§4.1): this is a domain-type
 decision, not a storage one.
 
+**A limit of ₹0 is refused at creation, reversed from slice 8's first pass.**
+"I intend to spend nothing on this" is a real intention, and that was the
+original argument for allowing it. It is not a real *budget*: a zero limit
+has no state except over budget, so the row is red from the first rupee and
+stays red, and every part of the progress display is degenerate. The
+intention is better served by having no budget for that category, which costs
+the user nothing to express. `BudgetProgress.fractionOfLimit`'s zero-limit
+guard stays regardless — it is defence, on the same standing as `applyRules`'
+blank-needle filter: M4 sync will write budgets this device's editor never
+validated, and a repository call is not obliged to go through a screen.
+
 **Calendar month, not rolling.** A budget covers one named month
 (`year_month`), full stop. Rolling windows ("the last 30 days") are a
 different, harder feature — see §2.4, which is really the same question —
@@ -416,9 +427,8 @@ Rendered, the two states are
 [`budgets-all-uncategorised.png`](screenshots/budgets-all-uncategorised.png)
 — the budget rows are pixel-identical and everything below them differs,
 which is the whole point.
-[`budgets-zero-limit.png`](screenshots/budgets-zero-limit.png) covers the
-₹0-limit case §2.1 allows, in both the nothing-spent and something-spent
-directions.
+[`budget-editor-zero-limit-rejected.png`](screenshots/budget-editor-zero-limit-rejected.png)
+shows the ₹0 limit being refused at creation, per §2.1.
 
 The repository still runs two queries — uncategorised spending has no
 category to join a budget on, so it can't be a column of the totals query —
@@ -524,11 +534,36 @@ this decision worth writing down now. See D4.
 
 ### 2.5 What the user sees when over budget
 
-A visual state on the budget's own row (progress bar past 100%, a colour
-change, "₹340 over budget") computed live from the same query as everything
-else on the screen — there's no separate "check if any budget is exceeded"
-step, it falls out of rendering `BudgetProgress.spentMinor > budget.limitMinor`
-for whatever's already being displayed.
+A visual state on the budget's own row (a colour change, "₹340 over budget")
+computed live from the same query as everything else on the screen — there's
+no separate "check if any budget is exceeded" step, it falls out of rendering
+`BudgetProgress.status` for whatever's already being displayed.
+
+**Three states, not two — a correction from reviewing the slice 8
+screenshots.** Under and over were never the hard part. The state that needed
+its own signal is *at or approaching* the limit: ₹0.00 left rendered in the
+same colour as ₹3,700.00 left, which is a warning the user receives only
+after it has stopped being actionable. `BudgetStatus` is therefore
+`UNDER`/`NEAR_LIMIT`/`OVER`, with the warning band starting at 90% —
+₹0 left and ₹50 left are the same practical situation, and a signal keyed on
+exact equality would almost never fire, since spend rarely lands on a round
+limit. Exactly at the limit also gets its own copy ("Limit reached"), because
+"₹0.00 left" is accurate and reads like nothing happened.
+
+The warning colour cannot come from `MaterialTheme.colorScheme`. Dynamic
+colour derives every slot from the user's wallpaper, so `tertiary` and
+`secondary` are whatever hue that produces — on a blue wallpaper they read as
+another shade of the same blue as `primary`, which is exactly the distinction
+the colour exists to make. It lives in a `SemanticColors` CompositionLocal
+provided by `BahiTheme` instead, the same standing `error` already has.
+
+**The progress bar does not render overflow by length.** `fractionOfLimit`
+stays unclamped so the model loses nothing, but `LinearProgressIndicator`
+clamps regardless; colour and the line beneath carry the over-budget state,
+which reads better than a bar pinned at full. At `progress = 0f` Material3
+1.3.2 draws the track and its stop indicator and no fill — the correct
+"nothing spent" rendering, and unambiguous now that a zero-limit row can no
+longer sit beside it (§2.1).
 
 **No notifications.** Nothing in the app currently uses
 `NotificationManager` or a `CoroutineWorker` — there's no notification

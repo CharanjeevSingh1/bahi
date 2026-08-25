@@ -17,3 +17,9 @@ release/
 # matches any app/src/release build-type source set -- claw that back.
 !app/src/release/
 .claude/
+
+# JVM crash dumps. The emulator or a Gradle worker can drop these in the repo
+# root mid-run, where a `git add -A` will happily sweep one up -- they are
+# hundreds of KB of machine state and belong to a single crashed process.
+hs_err_pid*.log
+replay_pid*.log

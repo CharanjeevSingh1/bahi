@@ -75,6 +75,7 @@
     <string name="budgets_spent_of_limit">%1$s of %2$s</string>
     <string name="budgets_remaining">%1$s left</string>
     <string name="budgets_over_by">%1$s over budget</string>
+    <string name="budgets_limit_reached">Limit reached</string>
     <string name="budgets_empty_title">No budgets for this month</string>
     <string name="budgets_empty_body">Set a monthly limit for a category and this screen will track what you\'ve spent against it.</string>
     <!-- Deliberately narrow: spending in a category with no budget is invisible
@@ -99,6 +100,6 @@
     <string name="budget_editor_limit_label">Monthly limit</string>
     <string name="budget_editor_limit_hint">What you intend to spend in this category this month.</string>
     <string name="budget_editor_limit_error_invalid">Enter an amount, like 8000 or 8,000.50.</string>
-    <string name="budget_editor_limit_error_negative">A limit can\'t be negative.</string>
+    <string name="budget_editor_limit_error_not_positive">Enter a limit above zero. A zero budget can only ever be over budget, so it can\'t show you anything useful — leave the category without a budget instead.</string>
     <string name="budget_editor_save">Save</string>
 </resources>

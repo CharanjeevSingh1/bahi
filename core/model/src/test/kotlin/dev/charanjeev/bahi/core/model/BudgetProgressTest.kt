@@ -37,6 +37,52 @@ class BudgetProgressTest {
         assertThat(exactly.remaining).isEqualTo(Money.ZERO)
     }
 
+    // --- the three states a row can be in ---
+
+    @Test
+    fun `comfortably under the limit is UNDER`() {
+        assertThat(progress(spent = Money(300_000)).status).isEqualTo(BudgetStatus.UNDER)
+    }
+
+    @Test
+    fun `approaching the limit is NEAR_LIMIT, not UNDER`() {
+        // 90% of 8,000. Rendering this the same as 3,700 left is the warning
+        // the user only gets after it stops being useful.
+        assertThat(progress(spent = Money(720_000)).status).isEqualTo(BudgetStatus.NEAR_LIMIT)
+    }
+
+    @Test
+    fun `just below the warning band is still UNDER`() {
+        assertThat(progress(spent = Money(719_999)).status).isEqualTo(BudgetStatus.UNDER)
+    }
+
+    @Test
+    fun `spending exactly the limit is NEAR_LIMIT, not UNDER and not OVER`() {
+        // The case that prompted this: zero left rendered identically to
+        // plenty left, in the state where the signal matters most.
+        val exactly = progress(spent = Money(800_000))
+        assertThat(exactly.status).isEqualTo(BudgetStatus.NEAR_LIMIT)
+        assertThat(exactly.isExactlyAtLimit).isTrue()
+    }
+
+    @Test
+    fun `past the limit is OVER`() {
+        val over = progress(spent = Money(834_000))
+        assertThat(over.status).isEqualTo(BudgetStatus.OVER)
+        // Over is not also "at the limit" -- the copy for the two differs.
+        assertThat(over.isExactlyAtLimit).isFalse()
+    }
+
+    @Test
+    fun `isOverBudget and status cannot disagree`() {
+        // isOverBudget derives from status rather than recomparing, so there
+        // is one decision about where the line is, not two.
+        listOf(Money.ZERO, Money(300_000), Money(800_000), Money(800_001), Money(2_000_000)).forEach { spent ->
+            val row = progress(spent = spent)
+            assertThat(row.isOverBudget).isEqualTo(row.status == BudgetStatus.OVER)
+        }
+    }
+
     @Test
     fun `one minor unit past the limit is over budget`() {
         assertThat(progress(spent = Money(800_001)).isOverBudget).isTrue()
@@ -67,6 +113,15 @@ class BudgetProgressTest {
     @Test
     fun `a zero limit is over budget as soon as anything is spent`() {
         assertThat(progress(limit = Money.ZERO, spent = Money(1)).isOverBudget).isTrue()
+    }
+
+    @Test
+    fun `a zero limit with nothing spent is UNDER rather than swept into the warning band`() {
+        // fractionOfLimit reports 0f here, and the NEAR_LIMIT test is guarded
+        // on the limit as well as the fraction so this can't read as 0f >= 0.9f
+        // by some future rearrangement of the comparison.
+        assertThat(progress(limit = Money.ZERO, spent = Money.ZERO).status).isEqualTo(BudgetStatus.UNDER)
+        assertThat(progress(limit = Money.ZERO, spent = Money.ZERO).isExactlyAtLimit).isFalse()
     }
 
     // --- MonthlyBudgets: the two months that must not look the same ---

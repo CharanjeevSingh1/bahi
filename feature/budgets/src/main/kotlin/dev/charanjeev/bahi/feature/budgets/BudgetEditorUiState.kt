@@ -40,11 +40,17 @@ sealed interface BudgetEditorUiState {
             get() = when {
                 limitText.isBlank() -> LimitError.EMPTY
                 limit == null -> LimitError.INVALID
-                // Zero is allowed on purpose -- "I intend to spend nothing on
-                // this" is a real budget, and BudgetProgress.fractionOfLimit
-                // already decides what a zero limit renders as. Negative is
-                // not: a limit below zero has no meaning to compare against.
-                limit!!.isNegative -> LimitError.NEGATIVE
+                // Zero is rejected, having previously been allowed on the
+                // grounds that "I intend to spend nothing here" is a real
+                // intention. It is -- but it is not a real *budget*: a zero
+                // limit has no state except over budget, so the row is red
+                // from the first rupee and stays red, and none of the
+                // progress display means anything. An intention to spend
+                // nothing is better served by having no budget and watching
+                // the category, which costs the user nothing to express.
+                // Negative is rejected for the older reason: there is nothing
+                // to compare against.
+                limit!! <= Money.ZERO -> LimitError.NOT_POSITIVE
                 else -> null
             }
 
@@ -65,7 +71,7 @@ sealed interface BudgetEditorUiState {
 
 enum class BudgetEditorMode { ADD, EDIT }
 
-enum class LimitError { EMPTY, INVALID, NEGATIVE }
+enum class LimitError { EMPTY, INVALID, NOT_POSITIVE }
 
 internal object BudgetEditorTestTags {
     const val LOADING = "budgetEditor:loading"

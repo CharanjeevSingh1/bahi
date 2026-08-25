@@ -86,4 +86,5 @@ internal object BudgetsTestTags {
     fun row(budgetId: String) = "budgets:row:$budgetId"
     fun bar(budgetId: String) = "budgets:bar:$budgetId"
     fun overBudget(budgetId: String) = "budgets:over:$budgetId"
+    fun nearLimit(budgetId: String) = "budgets:near:$budgetId"
 }
