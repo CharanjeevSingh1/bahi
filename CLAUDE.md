@@ -36,6 +36,7 @@ Kotlin, Jetpack Compose, Room, Hilt, WorkManager, Coroutines/Flow. Single-activi
 - **Fakes, not mocks.** No MockK, no Mockito. Hand-write a fake implementing the repository interface. A mock verifies a call happened; a fake lets you assert on behaviour.
 - ViewModel tests use `MainDispatcherRule` + Turbine.
 - Assertions use Truth (`assertThat`).
+- **Prefer `containsExactly` over `isEqualTo` for collections.** `assertThat(Any)` resolves to the generic `Subject` overload, which happily accepts a collection compared against a scalar -- so a return type widening from `Int` to `List<String>` still compiles and only fails at runtime, if a test happens to cover it. `containsExactly` won't type-check against a non-collection, and it asserts contents rather than identity, so it's both stronger and harder to hold wrong.
 - Every new public behaviour in `:core:model` or `:core:data` gets a unit test in the same commit.
 - Test names: JVM unit tests under `test/` use backticked names with spaces, e.g. `` `emits empty when repository has no transactions` ``. Instrumented tests under `androidTest/` use `lowerCamelCase_withUnderscores` -- DEX rejects method names containing spaces below API 30, and `minSdk` is 26.
 
