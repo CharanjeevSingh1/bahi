@@ -46,24 +46,34 @@ class OfflineFirstBudgetRepository @Inject constructor(
         // combine has a transient, and it is real rather than theoretical:
         // both flows are invalidated by the same write to `transactions` but
         // re-query independently, so combine can pair one's new value with
-        // the other's old one. Categorising a transaction emits one
-        // intermediate frame counting it in both its new budget and the
-        // uncategorised line.
+        // the other's old one. Moving a transaction between a budget and the
+        // uncategorised line emits one intermediate frame where the two sides
+        // disagree about which write they reflect.
         //
-        // Measured, not assumed -- BudgetTotalsTransientTest records every
-        // emission against real Room. The intermediate frame appears in most
-        // runs and lasts 0.24-0.68ms, which is 20-70x shorter than a single
-        // 60Hz display frame, and collectAsStateWithLifecycle conflates it
-        // away before composition ever reads it. So it exists in the flow and
-        // cannot reach the screen.
+        // Nothing orders those two re-queries, so that frame lands either way:
+        // if the budget query wins, the transaction is counted twice; if the
+        // uncategorised query wins, it is counted in neither. An earlier
+        // version of this comment claimed the transient could only ever
+        // overstate, on a nine-run sample. It cannot -- both shapes were
+        // observed in both directions over 22 instrumented runs, and
+        // BudgetTotalsTransientTest now asserts only what is
+        // order-independent: each side moves exactly once, never through a
+        // value no query would return, and the pair settles correctly.
         //
-        // It is also self-correcting and can only ever overstate, never lose
-        // money -- the test asserts no frame drops the transaction from both
-        // sides at once, which is the failure that would actually matter.
-        // Eliminating it would mean folding both into one query, which the
-        // paragraph above rules out. distinctUntilChanged keeps the settled
-        // result from re-emitting for unrelated writes; it can't collapse the
-        // intermediate, since that is a genuinely different value.
+        // What makes it invisible is duration, not direction. Measured against
+        // real Room over those 22 runs, the longest intermediate frame was
+        // 2.66ms against a 16.7ms 60Hz frame, and collectAsStateWithLifecycle
+        // conflates a superseded value before composition reads it. So it
+        // exists in the flow and does not reach the screen.
+        //
+        // That holds only while these values are rendered and nothing else.
+        // Anything that acts on the pair -- a budget alert above all -- needs
+        // the single-query redesign first; see docs/budgets-design.md 2.2.
+        //
+        // Eliminating it rather than tolerating it would mean one query, which
+        // the paragraph above rules out. distinctUntilChanged keeps the
+        // settled result from re-emitting for unrelated writes; it cannot
+        // collapse the intermediate, since that is a genuinely different value.
         return combine(
             budgetDao.observeBudgetsWithSpend(month.toString(), from, to),
             transactionDao.observeUncategorisedSpend(from, to),

@@ -435,31 +435,100 @@ category to join a budget on, so it can't be a column of the totals query —
 and `combine`s them. That has one transient worth naming: both flows are
 invalidated by the same write to `transactions` but re-query independently,
 so combine can briefly pair one's new value with the other's old one, and
-categorising a transaction emits a single intermediate frame counting it in
-both its new budget and the uncategorised line. Removing it entirely would
-mean one query, which the paragraph above rules out.
+moving a transaction between a budget and the uncategorised line emits a
+single intermediate frame where the two sides disagree about which write
+they reflect. Removing it entirely would mean one query, which the paragraph
+above rules out.
 
-**Measured in slice 8, rather than left as a worry.**
-`BudgetTotalsTransientTest` collects every emission from that combine against
-a real Room database and times them. Findings across nine runs:
+**Measured in slice 8, and re-measured in slice 9 after CI called the first
+reading wrong.** `BudgetTotalsTransientTest` collects every emission from that
+combine against a real Room database and times them.
 
-- The intermediate frame is **real**, not theoretical — it appeared in seven
-  of nine runs when a transaction was categorised.
-- It lasts **0.24–0.68 ms**. A 60Hz frame is 16.7 ms, so the state exists for
-  roughly one twenty-fifth to one seventieth of a single display frame, and
+The slice-8 reading, across nine runs, was that the intermediate frame always
+counted the transaction *twice* — in its new budget and in the uncategorised
+line — and therefore that the transient could only ever overstate, never lose
+money. That was wrong, and it was wrong in the way small samples usually are:
+it described which way a race happened to fall nine times, not a property of
+the design.
+
+Nothing orders the two re-queries. Whichever lands first decides the shape of
+the intermediate frame:
+
+| first flow to re-query | intermediate frame                          |
+|------------------------|---------------------------------------------|
+| budget spend           | counted twice — in the budget *and* uncategorised |
+| uncategorised spend    | counted in neither — both lines read zero   |
+
+Both shapes occur, in both directions. Re-measurement was 22 instrumented
+runs on one machine (an arm64 Pixel 9 Pro XL emulator, API 36): 12 runs
+against the original assertions, of which **6 failed** — so it was never a
+CI-only failure, just one nobody had run often enough to see — then 10 runs
+with every emission captured, which is where both shapes appear in both
+directions. The slice-8 claim that the reverse direction (clearing a
+category) showed no intermediate frame at all is likewise just a small
+sample; it tears about as often as the forward direction does.
+
+What survives re-measurement (counts are from those 22 runs; anyone
+re-checking should say how many runs their own numbers came from):
+
+- The intermediate frame is **real**, not theoretical, and appeared in
+  roughly half of runs in either direction.
+- The longest torn frame observed was **2.66 ms**, against a 16.7 ms 60Hz
+  frame, so the state exists for a fraction of a single display refresh and
   `collectAsStateWithLifecycle` conflates a superseded value before
-  composition reads it. **It cannot be seen, and is not worth designing
-  around.**
-- The reverse direction (clearing a category, moving money *out* of a budget)
-  showed no intermediate frame at all in any run — both queries landed in one
-  combine emission.
+  composition reads it. **It cannot be seen.** That — duration, not direction
+  — is the whole reason it is not worth designing around. Note that slice 8
+  reported 0.24–0.68 ms from nine runs; the real spread is wider, which is
+  the same sampling mistake in miniature.
 
-What the test asserts, rather than prints, is the part that would matter if
-it regressed: the flow settles on the correct pair, and no frame ever has the
-transaction missing from *both* sides. Overstating for half a millisecond is
-invisible; dropping a transaction off the screen would not be. The frame
-count itself is printed rather than asserted, because pinning it would make
-the test a change-detector for Room's invalidation batching.
+So the test no longer asserts "no frame ever drops the transaction from both
+sides at once." That assertion was not a guard on a property; it was a bet on
+scheduling, and it fails about half the time — 6 of 12 runs — which CI
+surfaced once the instrumented suite began running on every push. What it asserts instead is
+order-independent:
+
+1. **Neither side ever reports a total no query would return.** Tearing pairs
+   two individually-valid snapshots; it never invents a third value. This is
+   the assertion that fires if the join, the sign filter, or the write
+   regresses.
+2. **Each side changes value exactly once per write.** That bounds the
+   transient to a single intermediate frame without pinning which of the two
+   shapes it is, and catches a flow that oscillates or re-emits on unrelated
+   invalidations.
+3. **The pair settles on the correct totals, and the torn frame is not the
+   resting state.**
+
+The shape, count and duration of the transient are printed rather than
+asserted, because pinning them would make the test a change-detector for
+Room's invalidation batching.
+
+If the "money is never missing from both sides" property is ever actually
+wanted, it needs a design change rather than a stronger assertion: one query
+carrying both numbers, so a single invalidation produces a single consistent
+snapshot. The uncategorised total would have to ride along as a scalar
+subquery rather than a joined column, and the zero-budget case — where the
+totals query returns no rows and so has nowhere to hang the subquery — is the
+part that needs designing, not the SQL.
+
+**When that redesign stops being optional.** Everything above rests on one
+assumption: these values are *rendered* and nothing else. Tearing is tolerable
+only because the sole consumer is a composable that conflates a superseded
+value before it is ever drawn, so a wrong number that exists for two
+milliseconds has no effect on anything. That assumption expires the moment
+anything *acts* on the pair rather than displaying it.
+
+A budget alert is the obvious case. "Notify when spend crosses the limit"
+evaluated against a torn frame fires on a number that was never true — or,
+in the other direction, misses a crossing because the budget side still reads
+zero. Neither self-corrects: a notification, once sent, is sent, and the
+next frame settling correctly does not unsend it. The same goes for anything
+that writes back, exports, or otherwise makes a torn read durable.
+
+So: **the single-query redesign is a prerequisite for any alerting,
+notification, or automation feature built on `observeMonthlyBudgets`, and
+that work should be scoped as part of it rather than discovered during it.**
+A half-millisecond wrong number on screen is not a bug. The same number
+triggering a push notification is.
 
 ### 2.3 Period boundaries, `LocalDate`, and the timezone question
 
