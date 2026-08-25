@@ -427,6 +427,14 @@ Rendered, the two states are
 [`budgets-all-uncategorised.png`](screenshots/budgets-all-uncategorised.png)
 — the budget rows are pixel-identical and everything below them differs,
 which is the whole point.
+[`budgets-empty-with-uncategorised.png`](screenshots/budgets-empty-with-uncategorised.png)
+is the third state, and it makes the argument more sharply than either:
+there are no budgets at all, so nothing on screen is attached to a budget
+row, and the uncategorised figure is the only thing separating a month
+holding ₹6,200 of real spending from a blank one.
+`BudgetsUiState.Empty` carries that figure for exactly this reason — a
+second flow the screen consulted only when it had budgets to show would
+have gone quiet here, on the state that needs it most.
 [`budget-editor-zero-limit-rejected.png`](screenshots/budget-editor-zero-limit-rejected.png)
 shows the ₹0 limit being refused at creation, per §2.1.
 
