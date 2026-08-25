@@ -411,6 +411,15 @@ the two states can't be the one a caller forgot to ask for, and both numbers
 arrive in the same emission rather than from two flows that can disagree
 about which write they reflect.
 
+Rendered, the two states are
+[`budgets-no-transactions.png`](screenshots/budgets-no-transactions.png) and
+[`budgets-all-uncategorised.png`](screenshots/budgets-all-uncategorised.png)
+— the budget rows are pixel-identical and everything below them differs,
+which is the whole point.
+[`budgets-zero-limit.png`](screenshots/budgets-zero-limit.png) covers the
+₹0-limit case §2.1 allows, in both the nothing-spent and something-spent
+directions.
+
 The repository still runs two queries — uncategorised spending has no
 category to join a budget on, so it can't be a column of the totals query —
 and `combine`s them. That has one transient worth naming: both flows are

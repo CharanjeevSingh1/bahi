@@ -6,7 +6,7 @@ Project context for Claude Code. Read this before making changes.
 
 Bahi — an offline-first personal finance tracker for Android. It is a **portfolio project**: the code is read by hiring managers, so clarity and correctness matter more than feature count. A reviewer should be able to open any file and understand why it is written the way it is.
 
-Current state: **M0 complete** (scaffolding). See the Roadmap in README.md.
+Current state: **M3 complete**. M0 scaffolding, M1 transactions, M2 CSV import, M3 budgets and rule-based auto-categorisation. See the Roadmap in README.md.
 
 ## Stack
 
