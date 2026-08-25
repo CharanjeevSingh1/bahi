@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="insights_title">Insights</string>
+
+    <!-- Names what the screen will hold rather than promising a date. A user
+         who reads this should be able to tell an unbuilt screen from a broken
+         one, and should know what to do now so the numbers are worth reading
+         when it arrives. -->
+    <string name="insights_placeholder_title">Nothing to chart yet</string>
+    <string name="insights_placeholder_body">This screen will break a month down by category, set it against the months before it, and show which budgets you overshoot and by how much. None of that is built — this is a placeholder, not a screen that failed to load.</string>
+    <string name="insights_placeholder_prerequisite">All of it is counted by category, so any transaction without one will be missing from the numbers. Rules are what give them one.</string>
+    <string name="insights_placeholder_action">Set up categorisation rules</string>
+</resources>
