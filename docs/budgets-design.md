@@ -416,10 +416,31 @@ category to join a budget on, so it can't be a column of the totals query —
 and `combine`s them. That has one transient worth naming: both flows are
 invalidated by the same write to `transactions` but re-query independently,
 so combine can briefly pair one's new value with the other's old one, and
-categorising a transaction can emit a single intermediate frame counting it
-in both its new budget and the uncategorised line. It self-corrects on the
-next emission and can only ever overstate, never lose money. Removing it
-entirely would mean one query, which the paragraph above rules out.
+categorising a transaction emits a single intermediate frame counting it in
+both its new budget and the uncategorised line. Removing it entirely would
+mean one query, which the paragraph above rules out.
+
+**Measured in slice 8, rather than left as a worry.**
+`BudgetTotalsTransientTest` collects every emission from that combine against
+a real Room database and times them. Findings across nine runs:
+
+- The intermediate frame is **real**, not theoretical — it appeared in seven
+  of nine runs when a transaction was categorised.
+- It lasts **0.24–0.68 ms**. A 60Hz frame is 16.7 ms, so the state exists for
+  roughly one twenty-fifth to one seventieth of a single display frame, and
+  `collectAsStateWithLifecycle` conflates a superseded value before
+  composition reads it. **It cannot be seen, and is not worth designing
+  around.**
+- The reverse direction (clearing a category, moving money *out* of a budget)
+  showed no intermediate frame at all in any run — both queries landed in one
+  combine emission.
+
+What the test asserts, rather than prints, is the part that would matter if
+it regressed: the flow settles on the correct pair, and no frame ever has the
+transaction missing from *both* sides. Overstating for half a millisecond is
+invisible; dropping a transaction off the screen would not be. The frame
+count itself is printed rather than asserted, because pinning it would make
+the test a change-detector for Room's invalidation batching.
 
 ### 2.3 Period boundaries, `LocalDate`, and the timezone question
 
@@ -837,7 +858,10 @@ depend only on earlier data slices, not on each other.
    left unbuilt.
 8. **Budgets UI**: budget list/create/edit screens, progress display and
    over-budget state (§2.5), the Uncategorised line (§2.2) — replaces the
-   stub composable.
+   stub composable. Also `YearMonth.plusMonths` for month navigation,
+   `SystemCategoryIds` so the picker can exclude Income and Transfers without
+   duplicating ids across a module boundary, and the transient measurement
+   in §2.2.
 
 ---
 

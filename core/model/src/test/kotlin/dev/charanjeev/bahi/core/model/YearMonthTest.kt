@@ -113,4 +113,37 @@ class YearMonthTest {
     fun `from takes the month a date falls in`() {
         assertThat(YearMonth.from(LocalDate(2026, 8, 31))).isEqualTo(YearMonth.of(2026, 8))
     }
+
+    // --- plusMonths: the budgets screen's month navigation ---
+
+    @Test
+    fun `plusMonths moves within a year`() {
+        assertThat(YearMonth.of(2026, 8).plusMonths(1)).isEqualTo(YearMonth.of(2026, 9))
+        assertThat(YearMonth.of(2026, 8).plusMonths(-1)).isEqualTo(YearMonth.of(2026, 7))
+    }
+
+    @Test
+    fun `plusMonths rolls over the year in both directions`() {
+        // The case arithmetic on the month number alone gets wrong, and gets
+        // wrong silently -- month 13 would format as "2026-13" and match no
+        // transaction ever.
+        assertThat(YearMonth.of(2026, 12).plusMonths(1)).isEqualTo(YearMonth.of(2027, 1))
+        assertThat(YearMonth.of(2026, 1).plusMonths(-1)).isEqualTo(YearMonth.of(2025, 12))
+    }
+
+    @Test
+    fun `plusMonths spans more than a year`() {
+        assertThat(YearMonth.of(2026, 8).plusMonths(14)).isEqualTo(YearMonth.of(2027, 10))
+        assertThat(YearMonth.of(2026, 8).plusMonths(-20)).isEqualTo(YearMonth.of(2024, 12))
+    }
+
+    @Test
+    fun `plusMonths keeps the range usable for a budget`() {
+        // A navigated-to month has to produce a real date window, since that
+        // is what every total on the screen is scoped by.
+        val february = YearMonth.of(2027, 12).plusMonths(2)
+
+        assertThat(february).isEqualTo(YearMonth.of(2028, 2))
+        assertThat(february.dateRange().to).isEqualTo(LocalDate(2028, 2, 29))
+    }
 }

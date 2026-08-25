@@ -42,6 +42,16 @@ value class YearMonth private constructor(val value: String) : Comparable<YearMo
         )
     }
 
+    /**
+     * The month [count] months after this one; negative goes back.
+     *
+     * Calendar arithmetic on the first of the month, for the same reason
+     * [dateRange] derives its own bounds: month lengths and year rollover
+     * come from the date library rather than from arithmetic here that would
+     * have to special-case December.
+     */
+    fun plusMonths(count: Int): YearMonth = from(LocalDate(year, month, 1).plus(count, DateTimeUnit.MONTH))
+
     override fun compareTo(other: YearMonth): Int = value.compareTo(other.value)
 
     override fun toString(): String = value

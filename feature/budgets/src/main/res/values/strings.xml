@@ -61,4 +61,44 @@
 
     <string name="rules_cancel">Cancel</string>
     <string name="rules_ok">OK</string>
+
+    <!-- Budgets screen -->
+    <string name="budgets_title">Budgets</string>
+    <string name="budgets_back_content_description">Back</string>
+    <string name="budgets_add_content_description">Add budget</string>
+    <string name="budgets_previous_month">Previous month</string>
+    <string name="budgets_next_month">Next month</string>
+    <string name="budgets_rules_action">Rules</string>
+    <string name="budgets_edit">Edit</string>
+    <string name="budgets_delete_content_description">Delete budget</string>
+    <string name="budgets_unknown_category">Unknown category</string>
+    <string name="budgets_spent_of_limit">%1$s of %2$s</string>
+    <string name="budgets_remaining">%1$s left</string>
+    <string name="budgets_over_by">%1$s over budget</string>
+    <string name="budgets_empty_title">No budgets for this month</string>
+    <string name="budgets_empty_body">Set a monthly limit for a category and this screen will track what you\'ve spent against it.</string>
+    <!-- Deliberately narrow: spending in a category with no budget is invisible
+         here too, so this must not claim the month was empty. -->
+    <string name="budgets_nothing_counted">Nothing has been counted against these budgets yet this month.</string>
+
+    <string name="budgets_uncategorised_title">Uncategorised spending</string>
+    <string name="budgets_uncategorised_body">Not counted toward any budget — these transactions have no category yet.</string>
+    <string name="budgets_uncategorised_action">Set up rules</string>
+
+    <string name="budgets_delete_title">Delete the %1$s budget?</string>
+    <string name="budgets_delete_body">Your transactions are untouched. Only the limit for this month goes.</string>
+    <string name="budgets_delete_confirm">Delete</string>
+    <string name="budgets_cancel">Cancel</string>
+
+    <!-- Budget editor -->
+    <string name="budget_editor_add_title">New budget</string>
+    <string name="budget_editor_edit_title">Edit budget</string>
+    <string name="budget_editor_month">For %1$s</string>
+    <string name="budget_editor_category_label">Category</string>
+    <string name="budget_editor_category_none">Choose a category</string>
+    <string name="budget_editor_limit_label">Monthly limit</string>
+    <string name="budget_editor_limit_hint">What you intend to spend in this category this month.</string>
+    <string name="budget_editor_limit_error_invalid">Enter an amount, like 8000 or 8,000.50.</string>
+    <string name="budget_editor_limit_error_negative">A limit can\'t be negative.</string>
+    <string name="budget_editor_save">Save</string>
 </resources>
