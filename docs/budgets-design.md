@@ -91,6 +91,31 @@ slice hasn't been built by the end of M4, drop it then — folded into
 whatever table rebuild M4's sync work needs anyway, never as a rebuild of
 its own. This is D6 so it gets decided rather than drifting.
 
+**Four layers on the blank needle, not one — and three of them were missing
+until slice 7.** `merchantContains = ""` is the one input to this feature
+whose damage is unbounded: `"".contains` is true of every string, so a blank
+rule doesn't match nothing, it matches the user's entire history and files
+all of it under one category. This document said creation should reject it;
+until slice 7 nothing did, and `applyRules`' own filter was the only thing
+standing between a user and that outcome. It is now, outermost first:
+
+1. The rule editor's save action is disabled while the field is blank, so an
+   empty rule cannot be submitted at all.
+2. `RuleEditorViewModel.onSave` refuses independently of that flag, reading
+   the field flows rather than the derived UI state — `canSave` is a property
+   of a state object, and a redesign or a new entry point that stopped
+   consulting it must not be one mistake away from persisting the rule.
+3. `CategoryRuleRepository.upsert` throws. By the time a blank rule reaches
+   it, both layers above have failed, so this is a programming error —
+   crashing on one is strictly better than storing a rule that will
+   recategorise everything the next time any trigger fires.
+4. `applyRules` filters blank needles out of the rule set, so even a rule
+   somehow already in the table never matches.
+
+Only the first is meant to be what a real user ever meets. Each of the other
+three is caught by its own test, because a layer nothing tests independently
+is a layer that has already stopped working and not told anyone.
+
 ### 1.2 Where rules come from
 
 **User-created only. No seeded starter set, including the Indian-merchant one
@@ -255,6 +280,35 @@ case, scoped to that one rule, with a preview count before committing
 ("this will recategorise 14 transactions — locked ones are never touched").
 This mirrors the CSV import preview's consent model directly: show what's
 about to happen before it happens, rather than doing it and reporting after.
+
+**How the preview is kept honest, added in slice 7.** The count and the write
+come from one object: `previewApplyToExisting` returns a
+`RuleApplicationPreview` carrying the actual `transactionId -> categoryId`
+assignments, and `apply(preview)` commits exactly those rather than matching
+again. A preview that recomputed on confirm could show one number and write
+another.
+
+The preview carries a second number the original design didn't name:
+`lockedSkippedCount`, how many transactions the rules matched but will not
+touch. Without it, "12 transactions will change" reads as wrong to someone
+looking at 15 that obviously match, and the lock — the guarantee this whole
+feature is built around — stays invisible at the exact moment it is doing its
+job. Counting them needs a second query, because layer 1's candidate query
+structurally cannot return a locked row (§1.4), which is precisely the
+property that makes it safe. `countLockedMatches` returns an integer and
+never a map, so there is no route from that second query to a write; it
+shares `applyRules`' matching internals so the two can't drift, because a
+preview computed with different matching from the write it previews is worse
+than no preview at all.
+
+Scope differs between the two triggers, and the difference is deliberate.
+"Apply to existing" (this section) runs over unlocked transactions in *any*
+category — moving an already-categorised transaction is the reason someone
+edits a rule, so a preview that only filled in blanks would never show the
+change they were trying to make. "Recategorise uncategorised" (§1.3) runs
+only over transactions with no category, because a user reaching for
+"fill in the blanks" should not have to worry that it will also rearrange
+categories they already chose.
 
 ---
 
@@ -693,7 +747,8 @@ unhandled:
 
 ### 4.4 Module placement
 
-- `:core:model` — `CategoryRule`, `Budget`, `BudgetProgress`, `MonthlyBudgets`
+- `:core:model` — `CategoryRule`, `Budget`, `BudgetProgress`, `MonthlyBudgets`,
+  `RuleApplicationPreview`
   (domain models, pure Kotlin, same tier as `Category`/`TransactionFilter`).
   `MonthlyBudgets` wasn't in the original list; §2.2 gained the paragraph
   below that explains why it exists.
@@ -775,7 +830,11 @@ depend only on earlier data slices, not on each other.
 7. **Rules UI**: list/create/edit/delete/reorder screens in `:feature:budgets`
    (stateful/stateless pair, sealed `RulesUiState`, test tags), plus the
    "apply to existing transactions" preview-and-confirm flow from §1.6 and
-   the "Recategorise uncategorised transactions" action from §1.3.
+   the "Recategorise uncategorised transactions" action from §1.3. Also the
+   data layer both flows need — `RuleApplicationPreview`, the candidate
+   queries that are §1.4's layer 1, `countLockedMatches`, and rule
+   reordering — plus the blank-needle guards §1.1 called for and slice 3
+   left unbuilt.
 8. **Budgets UI**: budget list/create/edit screens, progress display and
    over-budget state (§2.5), the Uncategorised line (§2.2) — replaces the
    stub composable.

@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Rules list -->
+    <string name="rules_title">Auto-categorisation rules</string>
+    <string name="rules_back_content_description">Back</string>
+    <string name="rules_add_content_description">Add rule</string>
+    <string name="rules_empty_title">No rules yet</string>
+    <string name="rules_empty_body">A rule files any transaction whose description contains a word you choose under a category you choose. Add one and it\'ll run on your next import.</string>
+    <string name="rules_summary">Contains \"%1$s\"</string>
+    <string name="rules_unknown_category">Unknown category</string>
+    <string name="rules_move_up_content_description">Move up</string>
+    <string name="rules_move_down_content_description">Move down</string>
+    <string name="rules_delete_content_description">Delete rule</string>
+    <string name="rules_order_note">Rules run top to bottom. The first one that matches wins.</string>
+    <string name="rules_recategorise">Recategorise uncategorised transactions</string>
+
+    <!-- Delete confirmation -->
+    <string name="rules_delete_title">Delete this rule?</string>
+    <string name="rules_delete_body">Transactions it already categorised keep their categories. Only the rule goes.</string>
+    <string name="rules_delete_confirm">Delete</string>
+
+    <!-- Apply-to-existing consent gate -->
+    <string name="rule_apply_title">Apply to existing transactions?</string>
+    <plurals name="rule_apply_body">
+        <item quantity="one">This will recategorise %1$d transaction that already exists.</item>
+        <item quantity="other">This will recategorise %1$d transactions that already exist.</item>
+    </plurals>
+    <plurals name="rule_apply_locked_note">
+        <item quantity="one">%1$d transaction you categorised yourself also matches. It will be skipped — rules never overwrite a category you chose.</item>
+        <item quantity="other">%1$d transactions you categorised yourself also match. They will be skipped — rules never overwrite a category you chose.</item>
+    </plurals>
+    <string name="rule_apply_confirm">Apply</string>
+    <string name="rule_apply_skip">Not now</string>
+
+    <string name="rule_apply_nothing_title">Nothing to change</string>
+    <string name="rule_apply_nothing_body">No existing transactions match. The rule is saved and will run on new imports.</string>
+    <plurals name="rule_apply_nothing_locked_note">
+        <item quantity="one">%1$d transaction matches, but you categorised it yourself, so it was left alone.</item>
+        <item quantity="other">%1$d transactions match, but you categorised them yourself, so they were left alone.</item>
+    </plurals>
+
+    <string name="rule_apply_done_title">Done</string>
+    <plurals name="rule_apply_done_body">
+        <item quantity="one">Recategorised %1$d transaction.</item>
+        <item quantity="other">Recategorised %1$d transactions.</item>
+    </plurals>
+    <string name="rule_apply_done_fell_short">%1$d of the %2$d shown changed. The rest were locked or removed while this was open.</string>
+
+    <!-- Rule editor -->
+    <string name="rule_editor_add_title">New rule</string>
+    <string name="rule_editor_edit_title">Edit rule</string>
+    <string name="rule_editor_merchant_label">Description contains</string>
+    <string name="rule_editor_merchant_hint">Matched anywhere in the transaction description, ignoring case. \"SWIGGY\" matches \"UPI/SWIGGY*ORDER/BANGALORE\".</string>
+    <string name="rule_editor_merchant_error_blank">Enter some text to match. A rule with nothing in it would match every transaction you have.</string>
+    <string name="rule_editor_category_label">File under</string>
+    <string name="rule_editor_category_error">Choose a category.</string>
+    <string name="rule_editor_category_none">Choose a category</string>
+    <string name="rule_editor_save">Save</string>
+    <string name="rule_editor_delete_content_description">Delete rule</string>
+    <string name="rule_editor_error_title">Couldn\'t load this rule</string>
+
+    <string name="rules_cancel">Cancel</string>
+    <string name="rules_ok">OK</string>
+</resources>
