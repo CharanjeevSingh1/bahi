@@ -86,6 +86,58 @@ interface TransactionDao {
     )
     fun observeUncategorisedSpend(from: String, to: String): Flow<Long>
 
+    /**
+     * Layer 1 of the lock guard (docs/budgets-design.md §1.4): the candidate
+     * set for a rule run, with `category_locked_by_user = 0` as a *query
+     * condition* rather than a filter the caller applies afterwards. A
+     * transaction the user categorised by hand never becomes a candidate in
+     * the first place, so forgetting to filter downstream isn't a way to
+     * reach one.
+     *
+     * There is deliberately no parameter that can switch the lock condition
+     * off. [lockedRuleMatchCandidates] returns those rows instead, and it
+     * can't feed a write.
+     *
+     * [uncategorisedOnly] selects between the two triggers §1.3 allows:
+     * 1 for "recategorise uncategorised transactions", which only ever fills
+     * in a blank, and 0 for applying one rule to existing transactions,
+     * which has to be able to move an already-categorised row -- that is the
+     * entire point of editing a rule (§1.6). Written as a flag rather than
+     * two queries for the same reason [observeFiltered] does it: one query
+     * whose conditions are visible together, not two that can drift apart.
+     */
+    @Query(
+        """
+        SELECT * FROM transactions
+        WHERE deleted_at IS NULL
+          AND category_locked_by_user = 0
+          AND (:uncategorisedOnly = 0 OR category_id IS NULL)
+        ORDER BY date DESC, created_at DESC
+        """,
+    )
+    suspend fun ruleCandidates(uncategorisedOnly: Int): List<TransactionEntity>
+
+    /**
+     * The rows a rule run must refuse to touch, scoped exactly like
+     * [ruleCandidates] so the two partition the same population.
+     *
+     * **Only ever counted, never written.** countLockedMatches turns these
+     * into an integer for the preview's "3 locked transactions will be
+     * skipped" line and returns no assignments, so there is no route from
+     * this query to applyRuleCategory. Telling the user why a number is
+     * smaller than they expected is worth a query; it is not worth a second
+     * write path.
+     */
+    @Query(
+        """
+        SELECT * FROM transactions
+        WHERE deleted_at IS NULL
+          AND category_locked_by_user = 1
+          AND (:uncategorisedOnly = 0 OR category_id IS NULL)
+        """,
+    )
+    suspend fun lockedRuleMatchCandidates(uncategorisedOnly: Int): List<TransactionEntity>
+
     @Upsert
     suspend fun upsert(transaction: TransactionEntity)
 

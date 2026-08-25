@@ -65,6 +65,23 @@ class FakeTransactionDao : TransactionDao {
             .groupingBy { it }
             .eachCount()
 
+    /**
+     * The real query's lock condition is `category_locked_by_user = 0` in the
+     * WHERE clause -- mirrored here rather than left implicit, because a fake
+     * that returned a locked row would make a repository test pass while the
+     * real candidate set can't produce one.
+     */
+    override suspend fun ruleCandidates(uncategorisedOnly: Int): List<TransactionEntity> =
+        backing.value.values
+            .filter { it.deletedAt == null && !it.categoryLockedByUser }
+            .filter { uncategorisedOnly == 0 || it.categoryId == null }
+            .sortedWith(compareByDescending<TransactionEntity> { it.date }.thenByDescending { it.createdAt })
+
+    override suspend fun lockedRuleMatchCandidates(uncategorisedOnly: Int): List<TransactionEntity> =
+        backing.value.values
+            .filter { it.deletedAt == null && it.categoryLockedByUser }
+            .filter { uncategorisedOnly == 0 || it.categoryId == null }
+
     override suspend fun upsert(transaction: TransactionEntity) {
         backing.value = backing.value + (transaction.id to transaction)
     }

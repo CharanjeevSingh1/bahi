@@ -33,6 +33,18 @@ class FakeCategoryRuleDao : CategoryRuleDao {
         backing.value = backing.value + (rule.id to rule)
     }
 
+    override suspend fun updatePriority(id: String, priority: Int, updatedAt: Long) {
+        val existing = backing.value[id]?.takeIf { it.deletedAt == null } ?: return
+        backing.value = backing.value + (
+            id to existing.copy(
+                priority = priority,
+                updatedAt = updatedAt,
+                pendingOperation = "UPSERT",
+                localRevision = existing.localRevision + 1,
+            )
+        )
+    }
+
     override suspend fun softDelete(id: String, deletedAt: Long) {
         val existing = backing.value[id]?.takeIf { it.deletedAt == null } ?: return
         backing.value = backing.value + (

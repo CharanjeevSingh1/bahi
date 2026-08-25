@@ -327,6 +327,82 @@ class TransactionDaoTest {
     private suspend fun uncategorisedSpendInJanuary(): Long =
         dao.observeUncategorisedSpend(from = "2026-01-01", to = "2026-01-31").first()
 
+    // --- ruleCandidates: layer 1 of the lock guard (docs/budgets-design.md §1.4)
+
+    /**
+     * The property the whole feature rests on, asserted against the real
+     * query rather than against a caller that remembered to filter: a locked
+     * transaction is not in the candidate set, so there is no downstream
+     * mistake that can reach one.
+     */
+    @Test
+    fun ruleCandidates_neverIncludesALockedTransaction() = runTest {
+        seedCategories()
+        dao.upsert(transactionEntity(id = "unlocked", contentHash = "h1"))
+        dao.upsert(transactionEntity(id = "locked", contentHash = "h2", categoryId = "food", locked = true))
+
+        val candidates = dao.ruleCandidates(uncategorisedOnly = 0)
+
+        assertThat(candidates.map(TransactionEntity::id)).containsExactly("unlocked")
+    }
+
+    @Test
+    fun ruleCandidates_neverIncludesASoftDeletedTransaction() = runTest {
+        dao.upsert(transactionEntity(id = "gone", contentHash = "h1"))
+        dao.softDelete("gone", deletedAt = 1_000L)
+
+        assertThat(dao.ruleCandidates(uncategorisedOnly = 0)).isEmpty()
+    }
+
+    @Test
+    fun ruleCandidates_includesACategorisedRow_whenNotScopedToUncategorised() = runTest {
+        // Applying an edited rule has to be able to move a transaction that
+        // already has a category -- that is the point of editing it (§1.6).
+        seedCategories()
+        dao.upsert(transactionEntity(id = "filed", contentHash = "h1", categoryId = "food"))
+
+        val candidates = dao.ruleCandidates(uncategorisedOnly = 0)
+
+        assertThat(candidates.map(TransactionEntity::id)).containsExactly("filed")
+    }
+
+    @Test
+    fun ruleCandidates_scopedToUncategorised_excludesACategorisedRow() = runTest {
+        // "Recategorise uncategorised transactions" fills in blanks and must
+        // not rearrange categories the user already chose.
+        seedCategories()
+        dao.upsert(transactionEntity(id = "blank", contentHash = "h1"))
+        dao.upsert(transactionEntity(id = "filed", contentHash = "h2", categoryId = "food"))
+
+        val candidates = dao.ruleCandidates(uncategorisedOnly = 1)
+
+        assertThat(candidates.map(TransactionEntity::id)).containsExactly("blank")
+    }
+
+    @Test
+    fun lockedRuleMatchCandidates_returnsOnlyLockedRows_scopedTheSameWay() = runTest {
+        // The two queries partition the same population: what one returns the
+        // other must not, or the preview would count a row twice.
+        seedCategories()
+        dao.upsert(transactionEntity(id = "unlocked", contentHash = "h1"))
+        dao.upsert(transactionEntity(id = "locked", contentHash = "h2", categoryId = "food", locked = true))
+
+        val locked = dao.lockedRuleMatchCandidates(uncategorisedOnly = 0)
+
+        assertThat(locked.map(TransactionEntity::id)).containsExactly("locked")
+        assertThat(dao.ruleCandidates(uncategorisedOnly = 0).map(TransactionEntity::id))
+            .containsExactly("unlocked")
+    }
+
+    @Test
+    fun lockedRuleMatchCandidates_excludesASoftDeletedRow() = runTest {
+        seedCategories()
+        dao.upsert(transactionEntity(id = "locked", contentHash = "h1", categoryId = "food", locked = true))
+        dao.softDelete("locked", deletedAt = 1_000L)
+
+        assertThat(dao.lockedRuleMatchCandidates(uncategorisedOnly = 0)).isEmpty()
+    }
+
     /**
      * Room enables foreign key constraints by default, so a transaction can
      * only carry a category_id that exists. Only these tests need it -- the

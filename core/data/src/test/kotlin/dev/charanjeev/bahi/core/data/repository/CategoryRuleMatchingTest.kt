@@ -217,4 +217,82 @@ class CategoryRuleMatchingTest {
 
         assertThat(result).containsExactly("txn-1", "food")
     }
+
+    // --- countLockedMatches: the preview's "and these will be skipped" line ---
+
+    @Test
+    fun `counts a locked transaction the rule would otherwise have moved`() {
+        val count = countLockedMatches(
+            listOf(rule()),
+            listOf(transaction(categoryId = "shopping", locked = true)),
+        )
+
+        assertThat(count).isEqualTo(1)
+    }
+
+    @Test
+    fun `does not count an unlocked transaction`() {
+        // Handed the unlocked candidate set by mistake it counts nothing,
+        // rather than double-reporting rows applyRules has already claimed.
+        val count = countLockedMatches(
+            listOf(rule()),
+            listOf(transaction(categoryId = "shopping", locked = false)),
+        )
+
+        assertThat(count).isEqualTo(0)
+    }
+
+    @Test
+    fun `does not count a locked transaction the rule does not match`() {
+        val count = countLockedMatches(
+            listOf(rule()),
+            listOf(transaction(description = "RENT", categoryId = "housing", locked = true)),
+        )
+
+        assertThat(count).isEqualTo(0)
+    }
+
+    @Test
+    fun `does not count a locked transaction already in the rule's category`() {
+        // Nothing would have changed for this row even if it were unlocked,
+        // so warning about it would overstate what the lock is protecting.
+        val count = countLockedMatches(
+            listOf(rule(categoryId = "food")),
+            listOf(transaction(categoryId = "food", locked = true)),
+        )
+
+        assertThat(count).isEqualTo(0)
+    }
+
+    @Test
+    fun `a blank rule counts no locked matches either`() {
+        // The same unbounded-damage case as above, on the counting path:
+        // a blank rule reporting "would have moved all 900 of your locked
+        // transactions" is its own kind of alarming nonsense.
+        val count = countLockedMatches(
+            listOf(rule(merchantContains = "")),
+            listOf(transaction(categoryId = "shopping", locked = true)),
+        )
+
+        assertThat(count).isEqualTo(0)
+    }
+
+    @Test
+    fun `counting uses the same priority order as applying`() {
+        // Rule A wins for both functions, so the skipped count describes the
+        // move that would actually have happened -- not a different one.
+        val rules = listOf(
+            rule(id = "a", categoryId = "food", merchantContains = "SWIGGY", priority = 0),
+            rule(id = "b", categoryId = "groceries", merchantContains = "SWIGGY", priority = 1),
+        )
+
+        assertThat(applyRules(rules, listOf(transaction()))).containsExactly("txn-1", "food")
+        // Locked and already in "food" -- rule A would not have changed it,
+        // so it isn't reported as protected by the lock.
+        assertThat(countLockedMatches(rules, listOf(transaction(categoryId = "food", locked = true))))
+            .isEqualTo(0)
+        // Locked and in "groceries" -- rule A *would* have moved it to food.
+        assertThat(countLockedMatches(rules, listOf(transaction(categoryId = "groceries", locked = true))))
+            .isEqualTo(1)
+    }
 }
