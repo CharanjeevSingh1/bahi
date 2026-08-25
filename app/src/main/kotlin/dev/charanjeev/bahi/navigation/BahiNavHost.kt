@@ -6,6 +6,8 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.NavHostController
 import dev.charanjeev.bahi.feature.csvimport.navigation.ImportRoute
 import dev.charanjeev.bahi.feature.csvimport.navigation.importScreen
+import dev.charanjeev.bahi.feature.budgets.navigation.BudgetsRoute
+import dev.charanjeev.bahi.feature.budgets.navigation.budgetsScreen
 import dev.charanjeev.bahi.feature.transactions.navigation.TransactionsRoute
 import dev.charanjeev.bahi.feature.transactions.navigation.transactionsScreen
 
@@ -22,9 +24,13 @@ fun BahiNavHost(
         navController = navController,
         startDestination = TransactionsRoute,
     ) {
-        transactionsScreen(navController, onImportClick = { navController.navigate(ImportRoute) })
+        transactionsScreen(
+            navController,
+            onImportClick = { navController.navigate(ImportRoute) },
+            onBudgetsClick = { navController.navigate(BudgetsRoute) },
+        )
         importScreen(navController)
-        // budgetsScreen()
+        budgetsScreen(navController)
         // insightsScreen()
         // settingsScreen()
     }

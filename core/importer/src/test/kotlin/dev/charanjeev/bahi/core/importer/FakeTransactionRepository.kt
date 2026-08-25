@@ -14,6 +14,12 @@ import kotlinx.coroutines.flow.flowOf
  * relationship to the batch's actual content, which is exactly what proves
  * duplicatesSkipped comes from the repository's answer and not from the
  * importer re-deriving one of its own.
+ *
+ * Batch membership, by contrast, *is* modelled honestly ([batchOf] below):
+ * whether a rule-categorised row stays undoable is behaviour this fake has
+ * to reproduce rather than script, or the end-to-end test asserting it would
+ * only be testing itself. The rule it mirrors is the real DAO's: `update`
+ * evicts a row from its batch, `applyRuleCategories` does not.
  */
 class FakeTransactionRepository : TransactionRepository {
 
@@ -23,22 +29,69 @@ class FakeTransactionRepository : TransactionRepository {
         private set
     val undoneBatchIds = mutableListOf<String>()
 
+    /** transaction id -> the import batch it still belongs to. */
+    private val batchOf = mutableMapOf<String, String>()
+
+    /** Rows this fake believes exist, so a locked one can be refused like the real write does. */
+    private val rows = mutableMapOf<String, Transaction>()
+
     override fun observeTransactions(filter: TransactionFilter): Flow<List<Transaction>> = flowOf(emptyList())
     override fun observeTransaction(id: String): Flow<Transaction?> = flowOf(null)
     override suspend fun upsert(transaction: Transaction) = Unit
-    override suspend fun update(transaction: Transaction) = Unit
     override suspend fun delete(id: String) = Unit
     override suspend fun undoDelete(id: String) = Unit
 
-    override suspend fun importAll(transactions: List<Transaction>): ImportBatchResult {
-        lastImportedBatch = transactions
-        return ImportBatchResult(importAllBatchId, importAllReturnValue)
+    /** Mirrors TransactionDao.update: a hand-edit takes the row out of its batch. */
+    override suspend fun update(transaction: Transaction) {
+        rows[transaction.id] = transaction
+        batchOf.remove(transaction.id)
     }
 
-    var undoImportReturnValue: Int = 0
+    /**
+     * Which rows are "inserted" is the first [importAllReturnValue] of them.
+     * Which specific ones is arbitrary and deliberately so -- the count stays
+     * scripted rather than derived, per the class doc; naming ids just lets a
+     * caller act on exactly the inserted set.
+     */
+    override suspend fun importAll(transactions: List<Transaction>): ImportBatchResult {
+        lastImportedBatch = transactions
+        val inserted = transactions.take(importAllReturnValue)
+        inserted.forEach { transaction ->
+            rows[transaction.id] = transaction
+            batchOf[transaction.id] = importAllBatchId
+        }
+        return ImportBatchResult(importAllBatchId, inserted.map { it.id })
+    }
+
+    var undoImportReturnValue: Int? = null
 
     override suspend fun undoImport(batchId: String): Int {
         undoneBatchIds += batchId
-        return undoImportReturnValue
+        undoImportReturnValue?.let { return it }
+        val removed = batchOf.filterValues { it == batchId }.keys
+        removed.forEach { batchOf.remove(it); rows.remove(it) }
+        return removed.size
     }
+
+    val appliedRuleCategories = mutableListOf<Map<String, String>>()
+
+    /**
+     * Mirrors TransactionDao.applyRuleCategory on the two points that matter
+     * here: a locked row is refused (and so not counted), and a categorised
+     * row keeps its batch membership.
+     */
+    override suspend fun applyRuleCategories(assignments: Map<String, String>): Int {
+        appliedRuleCategories += assignments
+        return assignments.count { (id, categoryId) ->
+            val existing = rows[id]
+            if (existing == null || existing.categoryLockedByUser) {
+                false
+            } else {
+                rows[id] = existing.copy(categoryId = categoryId)
+                true
+            }
+        }
+    }
+
+    fun categoryOf(id: String): String? = rows[id]?.categoryId
 }

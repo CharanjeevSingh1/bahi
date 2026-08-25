@@ -2,6 +2,7 @@ package dev.charanjeev.bahi.core.importer
 
 import dev.charanjeev.bahi.core.common.BahiDispatcher
 import dev.charanjeev.bahi.core.common.Dispatcher
+import dev.charanjeev.bahi.core.data.repository.AutoCategoriser
 import dev.charanjeev.bahi.core.data.repository.TransactionRepository
 import dev.charanjeev.bahi.core.model.Money
 import dev.charanjeev.bahi.core.model.Transaction
@@ -29,6 +30,7 @@ private const val DEFAULT_CURRENCY_CODE = "INR"
  */
 class DefaultCsvImporter @Inject constructor(
     private val transactionRepository: TransactionRepository,
+    private val autoCategoriser: AutoCategoriser,
     private val clock: Clock,
     @param:Dispatcher(BahiDispatcher.IO) private val ioDispatcher: CoroutineDispatcher,
 ) : CsvImporter {
@@ -133,18 +135,30 @@ class DefaultCsvImporter @Inject constructor(
             }
 
             // The DAO's de-duplication is count-aware (docs/csv-import-design.md
-            // §4): it returns how many of `mapped` it actually inserted, which
+            // §4): it returns which of `mapped` it actually inserted, which
             // is the only trustworthy source for duplicatesSkipped. Re-deriving
             // "is this a duplicate" here -- e.g. by checking existing hashes
             // independently -- would reintroduce presence-based counting at a
             // second layer, exactly the bug §4 fixed at the DAO layer.
             val batchResult = transactionRepository.importAll(mapped)
 
+            // Order matters: rules run after de-duplication, over the rows
+            // that were actually written, never over everything parsed. A row
+            // de-duplicated away has no database row of its own -- the copy
+            // already in the table is a different row with a different id --
+            // so categorising `mapped` wholesale would report recategorising
+            // transactions this import never created. The existing copy is
+            // deliberately left alone too: it may carry a category the user
+            // chose, and a re-import is not a reason to revisit that.
+            val insertedIds = batchResult.insertedIds.toSet()
+            val autoCategorised = autoCategoriser.categorise(mapped.filter { it.id in insertedIds })
+
             ImportResult(
                 imported = mapped,
                 duplicatesSkipped = mapped.size - batchResult.insertedCount,
                 failedRows = failed,
                 batchId = batchResult.batchId,
+                autoCategorisedCount = autoCategorised,
             )
         }
 

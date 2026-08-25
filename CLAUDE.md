@@ -6,7 +6,7 @@ Project context for Claude Code. Read this before making changes.
 
 Bahi — an offline-first personal finance tracker for Android. It is a **portfolio project**: the code is read by hiring managers, so clarity and correctness matter more than feature count. A reviewer should be able to open any file and understand why it is written the way it is.
 
-Current state: **M0 complete** (scaffolding). See the Roadmap in README.md.
+Current state: **M3 complete**. M0 scaffolding, M1 transactions, M2 CSV import, M3 budgets and rule-based auto-categorisation. See the Roadmap in README.md.
 
 ## Stack
 
@@ -19,7 +19,7 @@ Kotlin, Jetpack Compose, Room, Hilt, WorkManager, Coroutines/Flow. Single-activi
 3. **Room entities never leave `:core:data`.** Features consume domain models from `:core:model` via repository interfaces. Mapping lives in `TransactionMappers.kt`.
 4. **Features talk to repositories, never to DAOs.** `:core:database` is not on a feature's dependency list and must not be added to one.
 5. **Money is `Money` (value class over `Long` minor units). Never `Double`, never `Float`, never `BigDecimal` in the domain model.** Floating point in currency is a correctness bug.
-6. **No `fallbackToDestructiveMigration()`.** Ever. A schema change requires: the migration in `Migrations.ALL`, a test in `MigrationTest`, and the exported schema JSON committed — all in the same commit.
+6. **No `fallbackToDestructiveMigration()`.** Ever. A schema change requires: the migration in `Migrations.ALL`, a test in `MigrationTest`, and the exported schema JSON committed — all in the same commit. When a `MigrationTest` fails, read the report under `core/database/build/reports/androidTests/` rather than the console, which prints only `Migration didn't properly handle: <table>`. Note that Room 2.7.2's `TableInfo.toString()` renders every nested column list as `columns = {kotlin.Unit` in both Expected and Found, so table, index and foreign-key *names* are diffable but a mismatch in index column *ordering* is not — check that case against the exported schema JSON directly.
 7. **Soft deletes only.** Set `deleted_at` and a pending `DELETE` operation. Sync needs the tombstone.
 8. **Dispatchers are injected**, never referenced directly. Use `@Dispatcher(BahiDispatcher.IO)`.
 
@@ -36,6 +36,7 @@ Kotlin, Jetpack Compose, Room, Hilt, WorkManager, Coroutines/Flow. Single-activi
 - **Fakes, not mocks.** No MockK, no Mockito. Hand-write a fake implementing the repository interface. A mock verifies a call happened; a fake lets you assert on behaviour.
 - ViewModel tests use `MainDispatcherRule` + Turbine.
 - Assertions use Truth (`assertThat`).
+- **Prefer `containsExactly` over `isEqualTo` for collections.** `assertThat(Any)` resolves to the generic `Subject` overload, which happily accepts a collection compared against a scalar -- so a return type widening from `Int` to `List<String>` still compiles and only fails at runtime, if a test happens to cover it. `containsExactly` won't type-check against a non-collection, and it asserts contents rather than identity, so it's both stronger and harder to hold wrong.
 - Every new public behaviour in `:core:model` or `:core:data` gets a unit test in the same commit.
 - Test names: JVM unit tests under `test/` use backticked names with spaces, e.g. `` `emits empty when repository has no transactions` ``. Instrumented tests under `androidTest/` use `lowerCamelCase_withUnderscores` -- DEX rejects method names containing spaces below API 30, and `minSdk` is 26.
 

@@ -25,12 +25,17 @@ fun editTransactionRoute(transactionId: String) = "$EditTransactionRoute/$transa
  * M1 upgrade: swap the string routes for @Serializable type-safe routes once
  * the serialization plugin is on the feature convention.
  */
-fun NavGraphBuilder.transactionsScreen(navController: NavHostController, onImportClick: () -> Unit = {}) {
+fun NavGraphBuilder.transactionsScreen(
+    navController: NavHostController,
+    onImportClick: () -> Unit = {},
+    onBudgetsClick: () -> Unit = {},
+) {
     composable(route = TransactionsRoute) {
         TransactionsScreen(
             onAddTransaction = { navController.navigate(NewTransactionRoute) },
             onTransactionClick = { id -> navController.navigate(editTransactionRoute(id)) },
             onImportClick = onImportClick,
+            onBudgetsClick = onBudgetsClick,
         )
     }
     composable(route = NewTransactionRoute) {

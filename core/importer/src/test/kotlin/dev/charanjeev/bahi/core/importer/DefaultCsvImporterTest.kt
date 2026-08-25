@@ -1,6 +1,8 @@
 package dev.charanjeev.bahi.core.importer
 
 import com.google.common.truth.Truth.assertThat
+import dev.charanjeev.bahi.core.data.repository.AutoCategoriser
+import dev.charanjeev.bahi.core.model.CategoryRule
 import dev.charanjeev.bahi.core.model.Money
 import dev.charanjeev.bahi.core.testing.FixedClock
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -22,14 +24,20 @@ import org.junit.Test
 class DefaultCsvImporterTest {
 
     private lateinit var repository: FakeTransactionRepository
+    private lateinit var ruleRepository: FakeCategoryRuleRepository
     private lateinit var importer: DefaultCsvImporter
 
     @OptIn(ExperimentalCoroutinesApi::class)
     @Before
     fun setUp() {
         repository = FakeTransactionRepository()
+        ruleRepository = FakeCategoryRuleRepository()
         importer = DefaultCsvImporter(
             transactionRepository = repository,
+            // The real AutoCategoriser, not a fake of it: what these tests
+            // need to check is which candidates reach it and what it does
+            // with them, which a stub would answer by construction.
+            autoCategoriser = AutoCategoriser(ruleRepository, repository),
             clock = FixedClock(Instant.fromEpochMilliseconds(0)),
             ioDispatcher = UnconfinedTestDispatcher(),
         )
@@ -361,6 +369,89 @@ class DefaultCsvImporterTest {
         assertThat(preview.sampleRows).hasSize(3)
         assertThat(preview.sampleRows.all { it.date == null && it.description == null && it.amount == null }).isTrue()
         assertThat(preview.sampleRows[0].rawCells).containsExactly("This is not a bank statement.")
+    }
+
+    // --- Auto-categorisation at import time (docs/budgets-design.md §1.3) ---
+
+    @Test
+    fun `rules run only over rows de-duplication actually inserted, not everything parsed`() = runTest {
+        // Both rows match the rule. Only the first is inserted -- the second
+        // is a duplicate of a row already in the table, which is a different
+        // row with a different id and no business being recategorised by
+        // this import. Running rules over everything parsed would report 2
+        // here, which looks entirely plausible and is wrong.
+        val csv = """
+            Date,Description,Amount
+            2026-01-05,SWIGGY ORDER,-450.00
+            2026-01-06,SWIGGY INSTAMART,-300.00
+        """.trimIndent()
+        ruleRepository.upsert(CategoryRule("rule-1", categoryId = "food", merchantContains = "SWIGGY", priority = 0))
+        repository.importAllReturnValue = 1
+
+        val result = importer.import(csv, singleAmountMapping(), accountId = "acct-1")
+
+        assertThat(result.autoCategorisedCount).isEqualTo(1)
+        val insertedId = repository.lastImportedBatch.first().id
+        val skippedId = repository.lastImportedBatch.last().id
+        // The assignment map itself, not just the count: the de-duplicated
+        // row must never have been offered to the write at all.
+        assertThat(repository.appliedRuleCategories.single().keys).containsExactly(insertedId)
+        assertThat(repository.categoryOf(insertedId)).isEqualTo("food")
+        assertThat(repository.categoryOf(skippedId)).isNull()
+    }
+
+    @Test
+    fun `a rule-categorised row stays in its import batch, so undo still reaches it`() = runTest {
+        // End-to-end through the importer, not just the DAO: the risk this
+        // catches is the importer wiring categorisation to update() -- which
+        // evicts a row from its batch -- rather than to applyRuleCategories.
+        val csv = """
+            Date,Description,Amount
+            2026-01-05,SWIGGY ORDER,-450.00
+            2026-01-06,Electricity Bill,-1200.00
+        """.trimIndent()
+        ruleRepository.upsert(CategoryRule("rule-1", categoryId = "food", merchantContains = "SWIGGY", priority = 0))
+        repository.importAllReturnValue = 2
+        repository.importAllBatchId = "batch-7"
+
+        val result = importer.import(csv, singleAmountMapping(), accountId = "acct-1")
+        assertThat(result.autoCategorisedCount).isEqualTo(1)
+
+        // Both rows come back, including the one a rule categorised.
+        assertThat(repository.undoImport(result.batchId)).isEqualTo(2)
+    }
+
+    @Test
+    fun `an import with no rules configured categorises nothing and still succeeds`() = runTest {
+        val csv = """
+            Date,Description,Amount
+            2026-01-05,SWIGGY ORDER,-450.00
+        """.trimIndent()
+        repository.importAllReturnValue = 1
+
+        val result = importer.import(csv, singleAmountMapping(), accountId = "acct-1")
+
+        assertThat(result.autoCategorisedCount).isEqualTo(0)
+        assertThat(result.imported).hasSize(1)
+    }
+
+    @Test
+    fun `autoCategorisedCount counts what the write changed, not what matched`() = runTest {
+        // Two matching rows, but nothing was inserted -- an entirely
+        // duplicate re-import. Nothing to categorise, and the count says so.
+        val csv = """
+            Date,Description,Amount
+            2026-01-05,SWIGGY ORDER,-450.00
+            2026-01-06,SWIGGY INSTAMART,-300.00
+        """.trimIndent()
+        ruleRepository.upsert(CategoryRule("rule-1", categoryId = "food", merchantContains = "SWIGGY", priority = 0))
+        repository.importAllReturnValue = 0
+
+        val result = importer.import(csv, singleAmountMapping(), accountId = "acct-1")
+
+        assertThat(result.autoCategorisedCount).isEqualTo(0)
+        assertThat(result.duplicatesSkipped).isEqualTo(2)
+        assertThat(repository.appliedRuleCategories).isEmpty()
     }
 
     private fun singleAmountMapping() = ColumnMapping(

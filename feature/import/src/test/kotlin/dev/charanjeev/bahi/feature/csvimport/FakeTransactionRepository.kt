@@ -26,10 +26,18 @@ class FakeTransactionRepository : TransactionRepository {
     override suspend fun delete(id: String) = Unit
     override suspend fun undoDelete(id: String) = Unit
     override suspend fun importAll(transactions: List<Transaction>): ImportBatchResult =
-        ImportBatchResult(batchId = "unused", insertedCount = transactions.size)
+        ImportBatchResult(batchId = "unused", insertedIds = transactions.map { it.id })
 
     override suspend fun undoImport(batchId: String): Int {
         undoneBatchIds += batchId
         return undoImportReturnValue ?: 0
+    }
+
+    /** Recorded, not applied -- the import screen never calls this itself. */
+    val appliedRuleCategories = mutableListOf<Map<String, String>>()
+
+    override suspend fun applyRuleCategories(assignments: Map<String, String>): Int {
+        appliedRuleCategories += assignments
+        return assignments.size
     }
 }

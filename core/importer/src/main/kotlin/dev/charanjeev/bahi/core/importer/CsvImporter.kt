@@ -160,22 +160,27 @@ data class PreviewRow(
  * these may have been recognised as duplicates and skipped by
  * [dev.charanjeev.bahi.core.data.repository.TransactionRepository.importAll],
  * which is what [duplicatesSkipped] counts. `imported.size - duplicatesSkipped`
- * is the number actually new. This is a real limitation, not a choice:
- * `importAll` returns how many rows it inserted, not which specific ones,
- * so there's no way to know which [Transaction]s in [imported] correspond to
- * real rows in the database and which don't -- their `id`s should not be
- * relied on for anything without that distinction being resolved first.
+ * is the number actually new.
  *
- * [batchId], unlike those `id`s, IS reliable for exactly one thing: undoing
- * this import. Every row `importAll` actually wrote carries it, regardless
- * of which rows they were, so "undo batch [batchId]" is well-defined even
- * though "which of [imported] are real rows" isn't.
+ * Which specific rows those are *is* now knowable --
+ * [dev.charanjeev.bahi.core.data.repository.ImportBatchResult.insertedIds]
+ * names them, and auto-categorisation depends on that, since running rules
+ * over a de-duplicated row would report work against a row this import never
+ * created. [ImportResult] still doesn't surface the distinction because
+ * nothing displaying it needs to: the screen shows counts and offers undo.
+ *
+ * [batchId] is what makes undo well-defined: every row `importAll` actually
+ * wrote carries it. [autoCategorisedCount] is how many of those rules then
+ * gave a category to -- always counted from what the write actually changed,
+ * never from how many rules matched, since a locked row is refused by
+ * `applyRuleCategory` regardless of what matched it.
  */
 data class ImportResult(
     val imported: List<Transaction>,
     val duplicatesSkipped: Int,
     val failedRows: List<FailedRow>,
     val batchId: String,
+    val autoCategorisedCount: Int = 0,
 )
 
 data class FailedRow(val lineNumber: Int, val raw: String, val reason: String)

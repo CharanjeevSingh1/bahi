@@ -30,7 +30,14 @@ fun MoneyText(
     )
 }
 
-internal fun formatMoney(
+/**
+ * [MoneyText]'s formatter, exposed because some callers need the string
+ * rather than a composable -- a budget row interpolates two amounts into one
+ * sentence ("₹4,300 of ₹8,000"), which two MoneyTexts can't express. Public
+ * so those callers use this instead of growing a second formatter that
+ * rounds or groups differently.
+ */
+fun formatMoney(
     money: Money,
     currencyCode: String,
     locale: Locale = Locale.getDefault(),

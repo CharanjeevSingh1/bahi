@@ -22,6 +22,7 @@ Two problems here are genuinely hard and get the most attention:
 <p align="center">
   <img src="docs/screenshots/transactions.png" width="320" alt="Transaction list grouped by date">
   <img src="docs/screenshots/import-preview-clean.png" width="320" alt="CSV import preview with inferred column mappings">
+  <img src="docs/screenshots/budgets-typical.png" width="320" alt="Budgets for a month, one over its limit">
   <img src="docs/screenshots/filtered-empty.png" width="320" alt="Filtered-empty state showing a zero total for the filtered range">
 </p>
 ---
@@ -140,7 +141,7 @@ cd bahi
 - [x] **M0** — Module structure, convention plugins, CI, Room schema + migration test harness
 - [x] **M1** — Transaction CRUD, categories, list and detail screens
 - [x] **M2** — CSV import: column-mapping inference, preview, de-duplication
-- [ ] **M3** — Budgets and rule-based auto-categorisation
+- [x] **M3** — Budgets and rule-based auto-categorisation
 - [ ] **M4** — Row-level sync with per-field conflict resolution
 - [ ] **M5** — Insights, baseline profile, Macrobenchmark startup numbers
 

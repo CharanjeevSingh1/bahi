@@ -4,6 +4,7 @@ import dev.charanjeev.bahi.core.database.dao.TransactionDao
 import dev.charanjeev.bahi.core.database.entity.TransactionEntity
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 
 /**
@@ -17,6 +18,14 @@ class FakeTransactionDao : TransactionDao {
     private val backing = MutableStateFlow<Map<String, TransactionEntity>>(emptyMap())
 
     fun entity(id: String): TransactionEntity? = backing.value[id]
+
+    /**
+     * FakeBudgetDao joins against these. A Flow rather than a snapshot,
+     * because the behaviour being faked is Room re-running the join when
+     * `transactions` changes -- a snapshot would make the fake pass a test
+     * that the real query only passes because of that invalidation.
+     */
+    val rows: StateFlow<Map<String, TransactionEntity>> get() = backing
 
     override fun observeById(id: String): Flow<TransactionEntity?> =
         backing.map { it[id]?.takeIf { entity -> entity.deletedAt == null } }
@@ -36,12 +45,42 @@ class FakeTransactionDao : TransactionDao {
                 .sortedWith(compareByDescending<TransactionEntity> { it.date }.thenByDescending { it.createdAt })
         }
 
+    /**
+     * The real query's four conditions, written out by hand -- `amount_minor
+     * < 0` in particular, since dropping it here would make income cancel
+     * spending out and the fake would disagree with SQLite about the sign.
+     */
+    override fun observeUncategorisedSpend(from: String, to: String): Flow<Long> =
+        backing.map { entities ->
+            entities.values
+                .filter { it.categoryId == null && it.amountMinor < 0 && it.deletedAt == null }
+                .filter { it.date >= from && it.date <= to }
+                .sumOf { -it.amountMinor }
+        }
+
     override suspend fun countExistingHashes(hashes: List<String>): Map<String, Int> =
         backing.value.values
             .map { it.contentHash }
             .filter { it in hashes }
             .groupingBy { it }
             .eachCount()
+
+    /**
+     * The real query's lock condition is `category_locked_by_user = 0` in the
+     * WHERE clause -- mirrored here rather than left implicit, because a fake
+     * that returned a locked row would make a repository test pass while the
+     * real candidate set can't produce one.
+     */
+    override suspend fun ruleCandidates(uncategorisedOnly: Int): List<TransactionEntity> =
+        backing.value.values
+            .filter { it.deletedAt == null && !it.categoryLockedByUser }
+            .filter { uncategorisedOnly == 0 || it.categoryId == null }
+            .sortedWith(compareByDescending<TransactionEntity> { it.date }.thenByDescending { it.createdAt })
+
+    override suspend fun lockedRuleMatchCandidates(uncategorisedOnly: Int): List<TransactionEntity> =
+        backing.value.values
+            .filter { it.deletedAt == null && it.categoryLockedByUser }
+            .filter { uncategorisedOnly == 0 || it.categoryId == null }
 
     override suspend fun upsert(transaction: TransactionEntity) {
         backing.value = backing.value + (transaction.id to transaction)
@@ -121,6 +160,26 @@ class FakeTransactionDao : TransactionDao {
             }
         }
         return affected
+    }
+
+    /**
+     * The real query's guard is three conditions in a WHERE clause; here it
+     * has to be written out by hand. Getting it wrong would make the fake
+     * more permissive than SQLite and let a repository test pass while the
+     * real write is blocked -- or worse, the reverse.
+     */
+    override suspend fun applyRuleCategory(id: String, categoryId: String, updatedAt: Long): Int {
+        val existing = backing.value[id] ?: return 0
+        if (existing.categoryLockedByUser || existing.deletedAt != null) return 0
+        backing.value = backing.value + (
+            id to existing.copy(
+                categoryId = categoryId,
+                updatedAt = updatedAt,
+                pendingOperation = "UPSERT",
+                localRevision = existing.localRevision + 1,
+            )
+        )
+        return 1
     }
 
     override suspend fun pendingChanges(limit: Int): List<TransactionEntity> =

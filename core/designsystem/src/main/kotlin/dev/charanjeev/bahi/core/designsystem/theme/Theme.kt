@@ -8,6 +8,9 @@ import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 
 private val LightColors = lightColorScheme(
@@ -21,6 +24,22 @@ private val DarkColors = darkColorScheme(
     secondary = Sand80,
     error = Red80,
 )
+
+/**
+ * Colours with a fixed meaning, which therefore cannot come from the dynamic
+ * colour scheme. [warning] is the only one so far: see Amber40's comment for
+ * why a wallpaper-derived slot can't carry it.
+ *
+ * A CompositionLocal rather than a plain object so it follows the same
+ * light/dark decision [BahiTheme] already made, instead of asking
+ * isSystemInDarkTheme() a second time and disagreeing when a caller forces a
+ * theme (a @Preview, or a screenshot test).
+ */
+data class SemanticColors(val warning: Color)
+
+val LocalSemanticColors = staticCompositionLocalOf {
+    SemanticColors(warning = Amber40)
+}
 
 @Composable
 fun BahiTheme(
@@ -37,8 +56,12 @@ fun BahiTheme(
         else -> LightColors
     }
 
-    MaterialTheme(
-        colorScheme = colorScheme,
-        content = content,
-    )
+    val semanticColors = SemanticColors(warning = if (darkTheme) Amber80 else Amber40)
+
+    CompositionLocalProvider(LocalSemanticColors provides semanticColors) {
+        MaterialTheme(
+            colorScheme = colorScheme,
+            content = content,
+        )
+    }
 }

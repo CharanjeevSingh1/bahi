@@ -56,6 +56,88 @@ interface TransactionDao {
         hashes: List<String>,
     ): Map<@MapColumn(columnName = "content_hash") String, @MapColumn(columnName = "existing_count") Int>
 
+    /**
+     * Expense spending in a date window that is filed under no category at
+     * all, as a positive total -- the "Uncategorised: ₹X this month, not
+     * counted toward any budget" line (docs/budgets-design.md §2.2).
+     *
+     * `category_id IS NULL`, never `category_id = 'uncategorised'`: nothing
+     * in the app writes the system category's id onto a transaction (CSV
+     * import leaves the column null), so that sentinel row exists for the
+     * category picker, not for the data. Matching on it would report ₹0
+     * forever.
+     *
+     * Lives here rather than on BudgetDao even though only the budgets screen
+     * asks for it, because the table it reads is the one this DAO owns.
+     * `observeBudgetsWithSpend` joins `transactions` but *selects* budget
+     * rows, which is why it belongs the other way round.
+     *
+     * COALESCE for the same reason as there: no uncategorised spending has to
+     * arrive as 0, not as a null the caller has to remember to handle.
+     */
+    @Query(
+        """
+        SELECT COALESCE(SUM(-amount_minor), 0) FROM transactions
+        WHERE category_id IS NULL
+          AND amount_minor < 0
+          AND deleted_at IS NULL
+          AND date BETWEEN :from AND :to
+        """,
+    )
+    fun observeUncategorisedSpend(from: String, to: String): Flow<Long>
+
+    /**
+     * Layer 1 of the lock guard (docs/budgets-design.md §1.4): the candidate
+     * set for a rule run, with `category_locked_by_user = 0` as a *query
+     * condition* rather than a filter the caller applies afterwards. A
+     * transaction the user categorised by hand never becomes a candidate in
+     * the first place, so forgetting to filter downstream isn't a way to
+     * reach one.
+     *
+     * There is deliberately no parameter that can switch the lock condition
+     * off. [lockedRuleMatchCandidates] returns those rows instead, and it
+     * can't feed a write.
+     *
+     * [uncategorisedOnly] selects between the two triggers §1.3 allows:
+     * 1 for "recategorise uncategorised transactions", which only ever fills
+     * in a blank, and 0 for applying one rule to existing transactions,
+     * which has to be able to move an already-categorised row -- that is the
+     * entire point of editing a rule (§1.6). Written as a flag rather than
+     * two queries for the same reason [observeFiltered] does it: one query
+     * whose conditions are visible together, not two that can drift apart.
+     */
+    @Query(
+        """
+        SELECT * FROM transactions
+        WHERE deleted_at IS NULL
+          AND category_locked_by_user = 0
+          AND (:uncategorisedOnly = 0 OR category_id IS NULL)
+        ORDER BY date DESC, created_at DESC
+        """,
+    )
+    suspend fun ruleCandidates(uncategorisedOnly: Int): List<TransactionEntity>
+
+    /**
+     * The rows a rule run must refuse to touch, scoped exactly like
+     * [ruleCandidates] so the two partition the same population.
+     *
+     * **Only ever counted, never written.** countLockedMatches turns these
+     * into an integer for the preview's "3 locked transactions will be
+     * skipped" line and returns no assignments, so there is no route from
+     * this query to applyRuleCategory. Telling the user why a number is
+     * smaller than they expected is worth a query; it is not worth a second
+     * write path.
+     */
+    @Query(
+        """
+        SELECT * FROM transactions
+        WHERE deleted_at IS NULL
+          AND category_locked_by_user = 1
+          AND (:uncategorisedOnly = 0 OR category_id IS NULL)
+        """,
+    )
+    suspend fun lockedRuleMatchCandidates(uncategorisedOnly: Int): List<TransactionEntity>
+
     @Upsert
     suspend fun upsert(transaction: TransactionEntity)
 
@@ -151,6 +233,52 @@ interface TransactionDao {
     )
     suspend fun softDeleteBatch(batchId: String, deletedAt: Long): Int
 
+    /**
+     * The only write path allowed to set a category without the user having
+     * chosen it -- the auto-categoriser today, and anything that behaves like
+     * one later. Never [update] or [upsert] for that: those are user intent.
+     *
+     * `category_locked_by_user = 0` lives in the WHERE clause rather than in
+     * the caller because that is what makes the guarantee independent of the
+     * caller being correct. A caller is *also* expected to have selected
+     * candidates with the same condition (docs/budgets-design.md §1.4, layer
+     * 1), and applyRules filters it again -- but if both of those regress,
+     * this UPDATE still matches zero rows and the user's own categorisation
+     * survives. A rule silently reverting a category the user set by hand is
+     * the failure this whole feature is built around not doing.
+     *
+     * Deliberately does not clear import_batch_id, unlike [update]: a rule
+     * categorising a row is not the user hand-editing it, so the row stays
+     * part of its import batch and batch undo still reaches it. It also
+     * leaves content_hash alone, which is correct because the hash already
+     * excludes category by design (see contentHashOf).
+     *
+     * Returns rows actually updated -- 0 when the row is locked, already
+     * deleted, or absent. Callers report that number, not how many they
+     * asked for, the same way [softDeleteBatch] does.
+     */
+    @Query(
+        """
+        UPDATE transactions
+        SET category_id = :categoryId, updated_at = :updatedAt,
+            pending_operation = 'UPSERT', local_revision = local_revision + 1
+        WHERE id = :id AND category_locked_by_user = 0 AND deleted_at IS NULL
+        """,
+    )
+    suspend fun applyRuleCategory(id: String, categoryId: String, updatedAt: Long): Int
+
+    /**
+     * One transaction for the whole pass, matching [importBatch]'s reasoning:
+     * a recategorisation over hundreds of rows that half-applied on process
+     * death would leave the user's ledger in a state no screen explains.
+     *
+     * The returned count can be lower than `assignments.size` -- every skip
+     * in [applyRuleCategory] is a row that was locked, deleted or gone.
+     */
+    @Transaction
+    suspend fun applyRuleCategories(assignments: Map<String, String>, updatedAt: Long): Int =
+        assignments.entries.sumOf { (id, categoryId) -> applyRuleCategory(id, categoryId, updatedAt) }
+
     @Query("SELECT * FROM transactions WHERE pending_operation IS NOT NULL LIMIT :limit")
     suspend fun pendingChanges(limit: Int = 200): List<TransactionEntity>
 
@@ -176,7 +304,7 @@ interface TransactionDao {
      * would still look right, which is what would make it easy to miss.
      */
     @Transaction
-    suspend fun importBatch(transactions: List<TransactionEntity>): Int {
+    suspend fun importBatch(transactions: List<TransactionEntity>): List<String> {
         val remainingExisting = countExistingHashes(transactions.map { it.contentHash }).toMutableMap()
         val fresh = transactions.filter { transaction ->
             val remaining = remainingExisting.getOrDefault(transaction.contentHash, 0)
@@ -187,7 +315,16 @@ interface TransactionDao {
                 true
             }
         }
-        insertAllIgnoringConflicts(fresh)
-        return fresh.size
+        // Which rows were written, not merely how many. Auto-categorisation
+        // has to run against exactly these -- running it over everything
+        // parsed would count rows that de-duplication threw away.
+        //
+        // Filtered on the insert's own answer rather than assuming `fresh`
+        // all landed: onConflict = IGNORE returns -1 for a row it skipped.
+        // That can't happen today (ids are freshly generated UUIDs), which
+        // is precisely why assuming it would be the kind of thing nobody
+        // notices when it stops being true.
+        val rowIds = insertAllIgnoringConflicts(fresh)
+        return fresh.filterIndexed { index, _ -> rowIds[index] != -1L }.map { it.id }
     }
 }

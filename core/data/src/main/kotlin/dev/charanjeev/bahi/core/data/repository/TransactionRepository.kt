@@ -52,7 +52,31 @@ interface TransactionRepository {
      * it did.
      */
     suspend fun undoImport(batchId: String): Int
+
+    /**
+     * Applies auto-categorisation results: [assignments] maps transaction id
+     * to the category a rule matched, as produced by `applyRules`.
+     *
+     * Separate from [update] on purpose -- this is the app deciding a
+     * category, not the user, and the two must never share a write path. A
+     * transaction whose category the user set by hand is never touched here,
+     * enforced in SQL rather than by this caller
+     * (TransactionDao.applyRuleCategory, docs/budgets-design.md §1.4).
+     *
+     * Returns how many rows actually changed, which can be fewer than
+     * [assignments] has entries -- a locked or since-deleted row is skipped.
+     * That number is what the user is shown, not the size of the request.
+     */
+    suspend fun applyRuleCategories(assignments: Map<String, String>): Int
 }
 
-/** [insertedCount] excludes rows the DAO's de-duplication recognised as duplicates and didn't write. */
-data class ImportBatchResult(val batchId: String, val insertedCount: Int)
+/**
+ * [insertedIds] are the transactions de-duplication actually wrote -- not
+ * everything handed to `importAll`. Identifying them, rather than only
+ * counting them, is what lets a caller act on exactly the new rows: running
+ * auto-categorisation over the whole parsed file instead would report work
+ * against rows that were never inserted.
+ */
+data class ImportBatchResult(val batchId: String, val insertedIds: List<String>) {
+    val insertedCount: Int get() = insertedIds.size
+}
