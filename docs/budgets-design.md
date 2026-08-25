@@ -342,6 +342,31 @@ month, not counted toward any budget" — computed by its own query
 BETWEEN ...`). Visible, not buried, same instinct as the CSV design's
 "unmapped/failed rows shown as a count, not buried in the results."
 
+**The uncategorised total travels with the budgets, in one value
+(`MonthlyBudgets`), rather than as a second flow the screen fetches
+separately.** This is a correction to the slice-6 plan, not a restatement of
+it, and the reason is a state the original framing missed. A month with no
+transactions at all and a month whose spending is *entirely* uncategorised
+leave every budget reading ₹0 spent — correctly, in both cases, since
+uncategorised money isn't attributable to any category. Those are different
+months, though: one is empty, the other has real money in it that no budget
+can see. The whole difference is carried by the uncategorised figure, so a
+screen handed only the budget list has no way to tell them apart and would
+render them identically. Bundling them means the figure that distinguishes
+the two states can't be the one a caller forgot to ask for, and both numbers
+arrive in the same emission rather than from two flows that can disagree
+about which write they reflect.
+
+The repository still runs two queries — uncategorised spending has no
+category to join a budget on, so it can't be a column of the totals query —
+and `combine`s them. That has one transient worth naming: both flows are
+invalidated by the same write to `transactions` but re-query independently,
+so combine can briefly pair one's new value with the other's old one, and
+categorising a transaction can emit a single intermediate frame counting it
+in both its new budget and the uncategorised line. It self-corrects on the
+next emission and can only ever overstate, never lose money. Removing it
+entirely would mean one query, which the paragraph above rules out.
+
 ### 2.3 Period boundaries, `LocalDate`, and the timezone question
 
 The task's framing — "a transaction dated the 31st when the user is in a
@@ -668,8 +693,10 @@ unhandled:
 
 ### 4.4 Module placement
 
-- `:core:model` — `CategoryRule`, `Budget`, `BudgetProgress` (domain models,
-  pure Kotlin, same tier as `Category`/`TransactionFilter`).
+- `:core:model` — `CategoryRule`, `Budget`, `BudgetProgress`, `MonthlyBudgets`
+  (domain models, pure Kotlin, same tier as `Category`/`TransactionFilter`).
+  `MonthlyBudgets` wasn't in the original list; §2.2 gained the paragraph
+  below that explains why it exists.
 - `:core:database` — `CategoryRuleEntity`, `BudgetEntity`, `CategoryRuleDao`,
   `BudgetDao`, `Migrations.MIGRATION_2_3`, schema JSON, `MigrationTest`
   additions.
@@ -743,8 +770,8 @@ depend only on earlier data slices, not on each other.
 5. **Apply-at-import-time**: `DefaultCsvImporter.import()` calls slices 3+4
    after `importAll`. Existing importer fixtures gain assertions.
 6. **Budget totals**: `observeBudgetsWithSpend`, the uncategorised-spend
-   query, `BudgetProgress`, and their tests (§4.2, §2.2, §2.3's month-boundary
-   cases).
+   query, `BudgetProgress`/`MonthlyBudgets`, and their tests (§4.2, §2.2,
+   §2.3's month-boundary cases).
 7. **Rules UI**: list/create/edit/delete/reorder screens in `:feature:budgets`
    (stateful/stateless pair, sealed `RulesUiState`, test tags), plus the
    "apply to existing transactions" preview-and-confirm flow from §1.6 and

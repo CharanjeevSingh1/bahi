@@ -1,7 +1,9 @@
 package dev.charanjeev.bahi.core.data.repository
 
+import dev.charanjeev.bahi.core.database.dao.BudgetWithSpend
 import dev.charanjeev.bahi.core.database.entity.BudgetEntity
 import dev.charanjeev.bahi.core.model.Budget
+import dev.charanjeev.bahi.core.model.BudgetProgress
 import dev.charanjeev.bahi.core.model.Money
 import dev.charanjeev.bahi.core.model.YearMonth
 
@@ -15,6 +17,17 @@ internal fun toDomain(entity: BudgetEntity): Budget = Budget(
     month = YearMonth.parse(entity.yearMonth),
     limit = Money(entity.limitMinor),
     currencyCode = entity.currencyCode,
+)
+
+/**
+ * The spend figure comes off the row as SQLite computed it -- this maps a
+ * result, it does not calculate one. Anything that looked like arithmetic
+ * over transactions here would mean the query had stopped being the source
+ * of truth (docs/budgets-design.md §4.2).
+ */
+internal fun toDomain(row: BudgetWithSpend): BudgetProgress = BudgetProgress(
+    budget = toDomain(row.budget),
+    spent = Money(row.spentMinor),
 )
 
 /**

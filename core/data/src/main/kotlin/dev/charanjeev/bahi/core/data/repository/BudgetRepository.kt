@@ -1,6 +1,7 @@
 package dev.charanjeev.bahi.core.data.repository
 
 import dev.charanjeev.bahi.core.model.Budget
+import dev.charanjeev.bahi.core.model.MonthlyBudgets
 import dev.charanjeev.bahi.core.model.YearMonth
 import kotlinx.coroutines.flow.Flow
 
@@ -11,6 +12,25 @@ import kotlinx.coroutines.flow.Flow
 interface BudgetRepository {
 
     fun observeBudgets(month: YearMonth): Flow<List<Budget>>
+
+    /**
+     * [month]'s budgets with their spend, plus that month's uncategorised
+     * spending -- everything the budgets screen renders, in one value.
+     *
+     * Spend is aggregated by the query, not by this layer folding over
+     * transactions (docs/budgets-design.md §4.2). That is what makes the
+     * result live: a rule, an import or a hand edit changing a transaction's
+     * category re-emits here on its own, with nothing to invalidate and no
+     * recompute step at any of the call sites that can change a
+     * `category_id` (§3).
+     *
+     * The uncategorised figure travels with the budgets rather than beside
+     * them because it is the only thing separating two months that otherwise
+     * render identically: one with no transactions at all, and one whose
+     * spending is entirely uncategorised. Both leave every budget at ₹0 spent
+     * -- see [MonthlyBudgets].
+     */
+    fun observeMonthlyBudgets(month: YearMonth): Flow<MonthlyBudgets>
 
     /**
      * Creates or replaces the budget for [budget]'s category and month --

@@ -4,6 +4,7 @@ import dev.charanjeev.bahi.core.database.dao.TransactionDao
 import dev.charanjeev.bahi.core.database.entity.TransactionEntity
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 
 /**
@@ -17,6 +18,14 @@ class FakeTransactionDao : TransactionDao {
     private val backing = MutableStateFlow<Map<String, TransactionEntity>>(emptyMap())
 
     fun entity(id: String): TransactionEntity? = backing.value[id]
+
+    /**
+     * FakeBudgetDao joins against these. A Flow rather than a snapshot,
+     * because the behaviour being faked is Room re-running the join when
+     * `transactions` changes -- a snapshot would make the fake pass a test
+     * that the real query only passes because of that invalidation.
+     */
+    val rows: StateFlow<Map<String, TransactionEntity>> get() = backing
 
     override fun observeById(id: String): Flow<TransactionEntity?> =
         backing.map { it[id]?.takeIf { entity -> entity.deletedAt == null } }
@@ -34,6 +43,19 @@ class FakeTransactionDao : TransactionDao {
                 .filter { categoryCount == 0 || it.categoryId in categoryIds }
                 .filter { hasDateWindow == 0 || (it.date >= from && it.date <= to) }
                 .sortedWith(compareByDescending<TransactionEntity> { it.date }.thenByDescending { it.createdAt })
+        }
+
+    /**
+     * The real query's four conditions, written out by hand -- `amount_minor
+     * < 0` in particular, since dropping it here would make income cancel
+     * spending out and the fake would disagree with SQLite about the sign.
+     */
+    override fun observeUncategorisedSpend(from: String, to: String): Flow<Long> =
+        backing.map { entities ->
+            entities.values
+                .filter { it.categoryId == null && it.amountMinor < 0 && it.deletedAt == null }
+                .filter { it.date >= from && it.date <= to }
+                .sumOf { -it.amountMinor }
         }
 
     override suspend fun countExistingHashes(hashes: List<String>): Map<String, Int> =

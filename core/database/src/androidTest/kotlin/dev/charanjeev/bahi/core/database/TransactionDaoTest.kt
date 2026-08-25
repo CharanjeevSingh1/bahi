@@ -253,6 +253,80 @@ class TransactionDaoTest {
         assertThat(byId.getValue("locked").categoryId).isEqualTo("food")
     }
 
+    // --- observeUncategorisedSpend: the line that keeps an empty month and an
+    // --- uncategorised month from looking the same (docs/budgets-design.md §2.2)
+
+    @Test
+    fun observeUncategorisedSpend_isZeroWhenThereIsNothingToCount_notNull() = runTest {
+        // SUM over no rows is NULL in SQLite. Without COALESCE this comes back
+        // as a null the Kotlin signature says can't happen, which is a crash
+        // on the emptiest possible month rather than on an unusual one.
+        assertThat(uncategorisedSpendInJanuary()).isEqualTo(0L)
+    }
+
+    @Test
+    fun observeUncategorisedSpend_sumsExpensesFiledUnderNoCategory() = runTest {
+        dao.upsert(transactionEntity(id = "t1", contentHash = "h1", amountMinor = -45_000))
+        dao.upsert(transactionEntity(id = "t2", contentHash = "h2", amountMinor = -575_000))
+
+        assertThat(uncategorisedSpendInJanuary()).isEqualTo(620_000L)
+    }
+
+    @Test
+    fun observeUncategorisedSpend_ignoresATransactionThatHasACategory() = runTest {
+        seedCategories()
+        dao.upsert(transactionEntity(id = "t1", contentHash = "h1", categoryId = "food"))
+
+        // Once a transaction has a category it is a budget's business, not
+        // this line's -- counting it in both would double-report the money.
+        assertThat(uncategorisedSpendInJanuary()).isEqualTo(0L)
+    }
+
+    @Test
+    fun observeUncategorisedSpend_ignoresUncategorisedIncome() = runTest {
+        dao.upsert(transactionEntity(id = "spend", contentHash = "h1", amountMinor = -45_000))
+        dao.upsert(transactionEntity(id = "credit", contentHash = "h2", amountMinor = 900_000))
+
+        assertThat(uncategorisedSpendInJanuary()).isEqualTo(45_000L)
+    }
+
+    @Test
+    fun observeUncategorisedSpend_ignoresASoftDeletedTransaction() = runTest {
+        dao.upsert(transactionEntity(id = "t1", contentHash = "h1", amountMinor = -45_000))
+        dao.softDelete("t1", deletedAt = 1_000L)
+
+        assertThat(uncategorisedSpendInJanuary()).isEqualTo(0L)
+    }
+
+    @Test
+    fun observeUncategorisedSpend_countsTheLastDayOfTheWindowAndNotTheDayAfter() = runTest {
+        dao.upsert(
+            transactionEntity(id = "last", contentHash = "h1", amountMinor = -45_000, date = "2026-01-31"),
+        )
+        dao.upsert(
+            transactionEntity(id = "next", contentHash = "h2", amountMinor = -999_000, date = "2026-02-01"),
+        )
+
+        assertThat(uncategorisedSpendInJanuary()).isEqualTo(45_000L)
+    }
+
+    @Test
+    fun observeUncategorisedSpend_dropsToZeroOnceTheTransactionIsCategorised() = runTest {
+        seedCategories()
+        dao.upsert(transactionEntity(id = "t1", contentHash = "h1", amountMinor = -45_000))
+        assertThat(uncategorisedSpendInJanuary()).isEqualTo(45_000L)
+
+        dao.applyRuleCategory(id = "t1", categoryId = "food", updatedAt = 2_000L)
+
+        // The money leaves this line the moment it becomes a budget's -- the
+        // two figures are computed from the same rows, so they cannot
+        // disagree about where a transaction lives.
+        assertThat(uncategorisedSpendInJanuary()).isEqualTo(0L)
+    }
+
+    private suspend fun uncategorisedSpendInJanuary(): Long =
+        dao.observeUncategorisedSpend(from = "2026-01-01", to = "2026-01-31").first()
+
     /**
      * Room enables foreign key constraints by default, so a transaction can
      * only carry a category_id that exists. Only these tests need it -- the
@@ -283,11 +357,13 @@ class TransactionDaoTest {
         importBatchId: String? = null,
         categoryId: String? = null,
         locked: Boolean = false,
+        amountMinor: Long = -45000,
+        date: String = "2026-01-05",
     ): TransactionEntity = TransactionEntity(
         id = id,
-        amountMinor = -45000,
+        amountMinor = amountMinor,
         currencyCode = "INR",
-        date = "2026-01-05",
+        date = date,
         description = "Coffee Shop",
         merchant = null,
         categoryId = categoryId,

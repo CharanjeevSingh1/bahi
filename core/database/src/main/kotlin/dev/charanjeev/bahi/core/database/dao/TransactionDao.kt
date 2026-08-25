@@ -56,6 +56,36 @@ interface TransactionDao {
         hashes: List<String>,
     ): Map<@MapColumn(columnName = "content_hash") String, @MapColumn(columnName = "existing_count") Int>
 
+    /**
+     * Expense spending in a date window that is filed under no category at
+     * all, as a positive total -- the "Uncategorised: ₹X this month, not
+     * counted toward any budget" line (docs/budgets-design.md §2.2).
+     *
+     * `category_id IS NULL`, never `category_id = 'uncategorised'`: nothing
+     * in the app writes the system category's id onto a transaction (CSV
+     * import leaves the column null), so that sentinel row exists for the
+     * category picker, not for the data. Matching on it would report ₹0
+     * forever.
+     *
+     * Lives here rather than on BudgetDao even though only the budgets screen
+     * asks for it, because the table it reads is the one this DAO owns.
+     * `observeBudgetsWithSpend` joins `transactions` but *selects* budget
+     * rows, which is why it belongs the other way round.
+     *
+     * COALESCE for the same reason as there: no uncategorised spending has to
+     * arrive as 0, not as a null the caller has to remember to handle.
+     */
+    @Query(
+        """
+        SELECT COALESCE(SUM(-amount_minor), 0) FROM transactions
+        WHERE category_id IS NULL
+          AND amount_minor < 0
+          AND deleted_at IS NULL
+          AND date BETWEEN :from AND :to
+        """,
+    )
+    fun observeUncategorisedSpend(from: String, to: String): Flow<Long>
+
     @Upsert
     suspend fun upsert(transaction: TransactionEntity)
 
