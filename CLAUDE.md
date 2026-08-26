@@ -63,6 +63,7 @@ Dependencies are declared **only** in `gradle/libs.versions.toml`. Never inline 
 - Comments explain *why*, not *what*. The existing comments are the house style — match them.
 - Do not add a comment restating what a line obviously does.
 - Small commits, conventional format: `feat(transactions): add category picker`.
+- **If a change alters user-visible copy or layout on a screen that has a committed screenshot, regenerate that screenshot in the same commit.** Nothing checks screenshots — no test fails, no CI job compares them — so a stale one drifts silently and is only caught when someone happens to look. The import result screenshot showed `0 new transaction(s)` for weeks after the string became a proper plural. Check `docs/screenshots/` for the affected screen before you consider the change finished, and regenerate the whole set for that screen together, so the only difference between the images is the one you meant to make.
 - When a task is ambiguous, say so and ask rather than guessing.
 
 ## Things that are intentionally not done yet
