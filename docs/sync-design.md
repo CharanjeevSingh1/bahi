@@ -18,7 +18,7 @@ natural-key invariant, and the `combine` transient), `docs/budgets-design.md`
 §2.2 and §1.4.
 
 The headline: **the interesting half of M4 needs no network at all**, and this
-document recommends building that half first and on its own. §13 is the
+document recommends building that half first and on its own. §14 is the
 decisions list; D3 is the one that decides the shape of everything else.
 
 ---
@@ -162,6 +162,12 @@ portfolio repo reads as an unfinished milestone. The mitigation is cheap and
 worth doing inside M4a: the convergence suite is the deliverable, so it gets
 named in the README's testing table alongside the migration tests, and the
 Settings screen gains a "Sync — not configured" row rather than nothing. See D3.
+
+**Decided: M4a only.** The plan of record is slices 1–8. M4b is deferred rather
+than scheduled — the README roadmap lists it after M5, with the reason — so
+slice 9 below is a sketch of what the transport will have to do, not a queued
+piece of work. Everything M4a builds is transport-agnostic by construction, so
+deferring it costs nothing but the ability to actually sync two phones.
 
 ---
 
@@ -992,6 +998,32 @@ Google Drive, and Google can read it.* Not a scandal — the same is true of the
 bank statement PDFs already in the user's Gmail — but it should be stated in the
 app rather than left for someone to work out.
 
+**The statement, written out, because a finance app owes one.** This holds
+whether or not app-layer encryption ships, and it belongs in Settings next to
+the sync toggle, in words a non-engineer reads once and understands:
+
+- **What the data is.** Every transaction — amount, date, description, merchant,
+  category, notes, account id — plus the tombstones of the deleted ones, the
+  budgets, and the categorisation rules. Together that is a more complete record
+  of where someone lives, what they are treated for, who they pay and when their
+  salary lands than any other file on the phone.
+- **Where it goes.** Into the `appDataFolder` of the user's *own* Google Drive.
+  Not a server I run: I hold no copy, and there is no account of mine to
+  compromise. That folder is hidden from the Drive UI and reachable only by an
+  app holding the `drive.appdata` scope for that user.
+- **Who can read it.** Without app-layer encryption: the user, any app they
+  authorise for `drive.appdata`, and Google — who encrypt at rest but hold the
+  keys, so they can decrypt, and will if compelled. With app-layer encryption:
+  only someone holding the passphrase, which never leaves the device.
+- **Whose job encryption is.** Under (b) it is the provider's, and the honest
+  form of that answer is *acceptable because it is the user's own account, not
+  mine* — which is a real answer, and defensible, but only when the app says it
+  rather than implying it by silence. Under (a) it is the app's.
+- **What is true today.** Nothing leaves the device, and nothing will until M4b
+  ships. M4a builds the merge engine against a fake transport (§10.1): no
+  network code, no account, no upload. Everything above is a commitment about
+  the milestone after this one, not a description of the current build.
+
 Adding it is cheaper than it sounds and needs **no new dependency**: AES-256-GCM
 with a key derived from a user passphrase via PBKDF2, both from `javax.crypto`.
 The payload envelope carries version, salt and nonce; ciphertext is the op batch.
@@ -1245,7 +1277,56 @@ sections were the ones that did this.
 
 ---
 
-## 12. Proposed slices
+## 12. Two M0 claims that were false from the start
+
+Recorded for the same reason budgets-design §2.2 records the slice-8
+measurement correction: the interesting part is not that a claim was wrong, it
+is how long it stood without anything testing it.
+
+Both were written in M0, as scaffolding, with no implementation in front of
+them. Neither is a measurement that later drifted. Both were wrong at the moment
+they were typed, and both survived three milestones — one in a KDoc that is the
+first thing any reader of `:core:sync` sees, one in the README's second headline
+feature — because nothing in the project ever had cause to execute them.
+
+**"amount, date, description → remote wins (they came from the bank)."**
+`ConflictResolver.kt`'s KDoc. No bank has ever talked to this app and none is
+planned; there is no bank-side anything to be authoritative. Every field it
+names is produced by a *device* — typed by the user, or interpreted out of a CSV
+by that device's importer — and csv-import-design §2 exists precisely because
+two devices can interpret one file into two different real dates. The rule would
+have let whichever device synced second silently overwrite a date the other
+device's user had confirmed on screen. This is not a heuristic that needed
+tuning. It is a justification naming a party that does not exist. §5.1, §5.2.
+
+**"deletion → deletion always wins over an edit."** Same KDoc. This one
+contradicted behaviour that had *already shipped* by the time it was read:
+`TransactionDao.update` clears `import_batch_id`, which is the deliberate
+decision that a hand-edited row leaves its import batch and therefore survives
+that batch's undo. Delete-wins honours that rule on one device and inverts it
+across two — the row the local rule protects is exactly the row the sync rule
+would delete. The contradiction was checkable against a file in this repo at any
+point after M2. §5.3.
+
+**What it cost, and the practice it argues for.** Nothing yet, because M4 is the
+first milestone to read these lines and it read them before implementing. The
+cost is in the near miss: slice 4 could have implemented the KDoc as written,
+the field policies would have *looked* deliberate because they were written
+down, and the first symptom would have been a user losing a date they had
+confirmed — a class of bug that leaves no trace, because the overwritten value
+is simply gone.
+
+Stated as a rule rather than a story: **an interface with no implementation has
+never been tested, and its comments carry a confidence its code has not
+earned.** A design pass over inherited scaffolding owes each claim the question
+of what evidence it ever had. Three corrections now sit alongside each other in
+this repo — a transient measured from too small a sample, and two claims
+measured from nothing at all. The M0 sketch's *shape* was right and is kept
+(§5.1's closing paragraph); its stated reasons were not.
+
+---
+
+## 13. Proposed slices
 
 M4a — slices 1–8. Each compiles and passes `checkModuleBoundaries` on its own.
 
@@ -1281,7 +1362,9 @@ M4a — slices 1–8. Each compiles and passes `checkModuleBoundaries` on its ow
    CLAUDE.md's screenshot rule: this is a new screen, so it needs its set
    generated in the same commit.
 
-M4b — slice 9, and it is a milestone's worth of work on its own.
+M4b — slice 9. **Deferred, not next** (§2, D3): it is a milestone's worth of
+work on its own, none of the hard part lives in it, and M4a is complete and
+provable without it. Sketched here so M4a's interfaces are shaped for it.
 
 9. **The Drive transport** (§8). Authorization for `drive.appdata`, the
    `appDataFolder` op log, compaction, the encryption envelope, DI gating on an
@@ -1291,10 +1374,18 @@ M4b — slice 9, and it is a milestone's worth of work on its own.
 
 ---
 
-## 13. Decisions
+## 14. Decisions
 
 Question / options / recommendation / what happens if we pick wrong. D3 is the
 one that changes everything else.
+
+**Answered 2026-08-27.** D1, D2, D5, D6, D7, D8, D10 and D11 as recommended.
+D4 as recommended, with the `h1:` version prefix explicitly retained as the
+thing that keeps a description-derived id from being a one-way door. D3: split,
+and **plan for M4a only** — build the convergence engine and stop before the
+transport; M4b is recorded in the README roadmap as deferred, with the reason,
+rather than as next. D9 is the only one left open, and it does not block M4a;
+see its entry.
 
 ### D1 — What syncs?
 
@@ -1419,6 +1510,13 @@ one that changes everything else.
   costs sync, not data — and that has to be the literal wording in the UI. If
   that trade is unacceptable, (b) is defensible **only** if the app states
   plainly where the data goes and who can read it.
+- **Status: open, and deliberately not forced.** Both (a) and (b) are
+  defensible, the choice belongs to M4b, and M4b is deferred — M4a moves no
+  data off the device, so nothing waits on this. What is **not** deferred is the
+  statement itself: §8.4 now writes out what the data is, where it goes, who can
+  read it and whose job encryption is, under either answer, and that paragraph
+  ships whichever way this lands. A finance app that stores transaction history
+  off-device owes its user that in words, not by implication.
 
 ### D10 — Rule priority under concurrent reordering
 
