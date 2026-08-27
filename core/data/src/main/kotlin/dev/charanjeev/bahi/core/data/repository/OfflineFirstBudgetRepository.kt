@@ -8,6 +8,7 @@ import dev.charanjeev.bahi.core.model.Budget
 import dev.charanjeev.bahi.core.model.MonthlyBudgets
 import dev.charanjeev.bahi.core.model.Money
 import dev.charanjeev.bahi.core.model.YearMonth
+import dev.charanjeev.bahi.core.model.budgetIdFor
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
@@ -90,17 +91,24 @@ class OfflineFirstBudgetRepository @Inject constructor(
         val now = clock.now().toEpochMilliseconds()
         // The one-per-category-per-month invariant, enforced here because a
         // UNIQUE index can't express it over soft deletes (BudgetRepository's
-        // doc). Reusing the existing row's id -- rather than inserting the
-        // caller's -- is what keeps this an update instead of a second row.
+        // doc). The id *is* that key now (docs/sync-design.md §3.2): deriving
+        // it rather than reusing whatever the caller minted is what keeps this
+        // an update instead of a second row, and -- unlike the lookup below,
+        // which only ever sees writes that come through here -- it also holds
+        // for a row arriving from another device, which is the case the
+        // lookup alone could never fix.
+        val keyed = budget.copy(id = budgetIdFor(budget.categoryId, budget.month))
+        // Still a lookup, because createdAt and the revision bookkeeping have
+        // to come off the stored row; the id no longer depends on it.
         val existing = budgetDao.findActive(budget.categoryId, budget.month.toString())
         val entity = if (existing != null) {
-            toEntity(budget.copy(id = existing.id), createdAt = existing.createdAt, updatedAt = now).copy(
+            toEntity(keyed, createdAt = existing.createdAt, updatedAt = now).copy(
                 pendingOperation = "UPSERT",
                 localRevision = existing.localRevision + 1,
                 remoteRevision = existing.remoteRevision,
             )
         } else {
-            toEntity(budget, createdAt = now, updatedAt = now).copy(pendingOperation = "UPSERT")
+            toEntity(keyed, createdAt = now, updatedAt = now).copy(pendingOperation = "UPSERT")
         }
         budgetDao.upsert(entity)
     }

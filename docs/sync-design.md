@@ -400,6 +400,17 @@ if it somehow has, the migration leaves the loser alone rather than deleting it.
 A migration that silently discards a row the user can see is a worse failure
 than two rows the user can see.
 
+**One behaviour change falls out of this and is worth naming.** Deleting an
+August Food budget and creating another one used to leave a tombstone and
+insert a second row. Now both are the same id, so the second `upsert` revives
+the tombstoned row. Visually identical; better under sync, because the user's
+last word on (food, August) is one budget rather than a delete and an unrelated
+insert that another device has to order correctly. It also makes the
+resurrection case in §4.3 reachable in production for the first time —
+`findActive` filters tombstones, so the revived row's `local_revision` resets
+to 1. Inert until slice 5 reads those columns, and slice 3 fixes it before
+anything does.
+
 `category_rules` gets no equivalent treatment, deliberately: it has no natural
 key, and budgets-design §4.1 already records why giving it one would be a
 mistake (two rules may legitimately share a merchant string pointing at
@@ -1457,11 +1468,12 @@ M4a — slices 1–8. Each compiles and passes `checkModuleBoundaries` on its ow
    transaction whose category was deleted. No sync code. Independently correct
    — it closes a rule-7 violation that exists today, and the cascade and the
    uncategorised query are behaviour that would otherwise have regressed.
-2. **Stable identity** (§3). Budget ids derived from the natural key;
-   `contentHashOf` moves to SHA-256; `CSV_IMPORT` transaction ids become
-   `h1:<hash>#<n>`. Data migrations with tests that assert on values, not just
-   structure. The riskiest slice — it rewrites primary keys — and contained,
-   because no foreign key targets either table.
+2. **Stable identity** (§3). **Done.** Budget ids derived from the natural key;
+   `contentHashOf` moves to SHA-256 and lives in `:core:model` so the migration
+   and the repository cannot drift; `CSV_IMPORT` transaction ids become
+   `h1:<hash>#<n>`. `MIGRATION_4_5` changes no schema at all and rewrites data,
+   so every test asserts on values. The riskiest slice — it rewrites primary
+   keys — and contained, because no foreign key targets either table.
 3. **The op model and the shadow** (§4, §9). `SyncOp`/`OpBatch` and their
    serialisation, `sync_shadow` and `sync_conflicts` tables and DAOs, the guarded
    `markSynced`. No resolution logic, no transport.

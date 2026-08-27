@@ -3,8 +3,12 @@ package dev.charanjeev.bahi.core.data.repository
 import dev.charanjeev.bahi.core.common.Dispatcher
 import dev.charanjeev.bahi.core.common.BahiDispatcher
 import dev.charanjeev.bahi.core.database.dao.TransactionDao
+import dev.charanjeev.bahi.core.database.entity.TransactionEntity
+import dev.charanjeev.bahi.core.model.ContentIdScheme
 import dev.charanjeev.bahi.core.model.Transaction
 import dev.charanjeev.bahi.core.model.TransactionFilter
+import dev.charanjeev.bahi.core.model.TransactionSource
+import dev.charanjeev.bahi.core.model.contentDerivedId
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -77,9 +81,55 @@ class OfflineFirstTransactionRepository @Inject constructor(
     override suspend fun importAll(transactions: List<Transaction>): ImportBatchResult =
         withContext(ioDispatcher) {
             val batchId = UUID.randomUUID().toString()
-            val insertedIds = transactionDao.importBatch(transactions.map { toEntity(it, importBatchId = batchId) })
+            val entities = withContentDerivedIds(
+                transactions.map { toEntity(it, importBatchId = batchId) },
+            )
+            val insertedIds = transactionDao.importBatch(entities)
             ImportBatchResult(batchId, insertedIds)
         }
+
+    /**
+     * Replaces the importer's placeholder UUIDs with ids derived from what the
+     * rows actually contain (docs/sync-design.md §3.1), so that two devices
+     * importing the same statement produce byte-identical ids and the
+     * duplicate never exists to be cleaned up.
+     *
+     * Here rather than in the importer because this is where a parsed row
+     * becomes a row: `contentHash` is computed one line above by `toEntity`,
+     * and deriving the id anywhere else would mean a second implementation of
+     * the same tuple. The importer's UUID is a placeholder for the preview
+     * stage and nothing reads it before this point.
+     *
+     * The occurrence counter runs over the incoming list in file order, which
+     * is the same order `importBatch`'s count-aware quota consumes it in -- so
+     * a re-import of an overlapping statement numbers its rows the same way
+     * the first import did, the quota drops exactly the leading duplicates,
+     * and the survivors carry the ids the first import would have given them.
+     * That agreement is not a coincidence but it is also not enforced: both
+     * rest on same-tuple rows keeping a stable relative order across
+     * re-exports, which `importBatch`'s own doc records as an assumption. What
+     * is new is that a violation now surfaces as an id collision the insert
+     * reports, rather than as a silently dropped row.
+     *
+     * A row whose id is already content-derived is left alone, including under
+     * a scheme version this build does not know -- re-keying an `h2:` row to
+     * `h1:` would be a downgrade that splits it from every other device.
+     */
+    private fun withContentDerivedIds(entities: List<TransactionEntity>): List<TransactionEntity> {
+        val occurrences = mutableMapOf<String, Int>()
+        return entities.map { entity ->
+            if (entity.source != TransactionSource.CSV_IMPORT.name ||
+                ContentIdScheme.isContentDerived(entity.id)
+            ) {
+                return@map entity
+            }
+            val occurrence = occurrences.getOrDefault(entity.contentHash, 0)
+            occurrences[entity.contentHash] = occurrence + 1
+            entity.copy(
+                id = contentDerivedId(ContentIdScheme.CURRENT, entity.contentHash, occurrence),
+            )
+        }
+    }
 
     override suspend fun undoImport(batchId: String): Int = withContext(ioDispatcher) {
         transactionDao.softDeleteBatch(batchId, clock.now().toEpochMilliseconds())

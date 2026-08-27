@@ -45,6 +45,11 @@ data class TransactionEntity(
      * Stable hash of (date, amount, description, account). Re-importing the same
      * statement must not create duplicates, and bank CSVs rarely carry a usable
      * transaction id of their own.
+     *
+     * Redundant with [id] for an imported row since v5, which derives its id
+     * from this same hash, and kept anyway: de-duplication is an indexed
+     * exact-match on this column, and rewriting it as a `LIKE 'h1:<hash>#%'`
+     * prefix scan to save a column would be a worse query for no benefit.
      */
     @ColumnInfo(name = "content_hash") val contentHash: String,
     /**

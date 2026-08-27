@@ -6,6 +6,7 @@ import dev.charanjeev.bahi.core.database.entity.TransactionEntity
 import dev.charanjeev.bahi.core.model.Budget
 import dev.charanjeev.bahi.core.model.Money
 import dev.charanjeev.bahi.core.model.YearMonth
+import dev.charanjeev.bahi.core.model.budgetIdFor
 import dev.charanjeev.bahi.core.testing.FixedClock
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
@@ -22,12 +23,19 @@ class OfflineFirstBudgetRepositoryTest {
 
     private val august = YearMonth.of(2026, 8)
 
+    /**
+     * `id` defaults to what the repository will derive anyway, so a test can
+     * round-trip a fixture through `upsert` and compare. Passing one
+     * explicitly is now a way of proving it gets ignored, not of choosing it.
+     */
     private fun budget(
-        id: String = "budget-1",
         categoryId: String = "food",
         month: YearMonth = august,
         limit: Money = Money(800_000),
+        id: String = budgetIdFor(categoryId, month),
     ) = Budget(id = id, categoryId = categoryId, month = month, limit = limit, currencyCode = "INR")
+
+    private val augustFood = budgetIdFor("food", august)
 
     @Test
     fun `budget is observable in the month it covers`() = runTest {
@@ -61,9 +69,10 @@ class OfflineFirstBudgetRepositoryTest {
             val budgets = awaitItem()
             assertThat(budgets).hasSize(1)
             assertThat(budgets.single().limit).isEqualTo(Money(950_000))
-            // The surviving row keeps the id it was created with -- the second
-            // caller's id is discarded, not the row.
-            assertThat(budgets.single().id).isEqualTo("budget-1")
+            // Both callers' ids are discarded: the row is keyed by category
+            // and month, so "a different id for the same natural key" is no
+            // longer something a caller can even express.
+            assertThat(budgets.single().id).isEqualTo(augustFood)
         }
     }
 
@@ -83,7 +92,7 @@ class OfflineFirstBudgetRepositoryTest {
         repository.upsert(budget(id = "budget-sep", month = YearMonth.of(2026, 9)))
 
         repository.observeBudgets(august).test {
-            assertThat(awaitItem().map { it.id }).containsExactly("budget-aug")
+            assertThat(awaitItem().map { it.id }).containsExactly(augustFood)
         }
     }
 
@@ -91,7 +100,7 @@ class OfflineFirstBudgetRepositoryTest {
     fun `deleting a budget tombstones it rather than removing the row`() = runTest {
         repository.upsert(budget())
 
-        repository.delete("budget-1")
+        repository.delete(augustFood)
 
         repository.observeBudgets(august).test {
             assertThat(awaitItem()).isEmpty()
@@ -102,20 +111,41 @@ class OfflineFirstBudgetRepositoryTest {
     }
 
     @Test
-    fun `a deleted budget does not block creating a new one for the same category and month`() = runTest {
+    fun `recreating a deleted budget for the same category and month revives the same row`() = runTest {
         // The reason the invariant is enforced in the repository and not as a
         // UNIQUE index: the tombstone still occupies (category, month), so a
         // constraint would reject this insert with no cause the user can see.
-        repository.upsert(budget(id = "budget-1"))
-        repository.delete("budget-1")
+        //
+        // What changed with natural-key ids is which row comes back. This used
+        // to leave the tombstone and insert a second row; now the id is the
+        // key, so the tombstone is the row, and recreating the budget revives
+        // it. That is the more honest of the two: the user's last word on
+        // (food, August) is one budget of ₹5,000, and the other device should
+        // hear that rather than a delete followed by an unrelated insert.
+        repository.upsert(budget())
+        repository.delete(augustFood)
 
-        repository.upsert(budget(id = "budget-2", limit = Money(500_000)))
+        repository.upsert(budget(limit = Money(500_000)))
 
         repository.observeBudgets(august).test {
             val budgets = awaitItem()
-            assertThat(budgets.map { it.id }).containsExactly("budget-2")
+            assertThat(budgets.map { it.id }).containsExactly(augustFood)
             assertThat(budgets.single().limit).isEqualTo(Money(500_000))
         }
+        val rows = dao.allRows()
+        assertThat(rows.map { it.id }).containsExactly(augustFood)
+        assertThat(rows.single().deletedAt).isNull()
+    }
+
+    @Test
+    fun `the caller's id is discarded and the row is keyed by category and month`() = runTest {
+        // Sync does not go through this repository, so a lookup-then-reuse
+        // rule could never fix a duplicate arriving from another device
+        // (docs/sync-design.md §3.2). Deriving the id is what makes two
+        // devices' August Food budgets the same row rather than two rows.
+        repository.upsert(budget(id = "a-uuid-from-the-editor"))
+
+        assertThat(dao.allRows().map { it.id }).containsExactly(augustFood)
     }
 
     @Test
@@ -171,7 +201,7 @@ class OfflineFirstBudgetRepositoryTest {
             // Present-with-zero, not missing. A budget dropping off the screen
             // because nothing has been spent against it yet is the failure the
             // LEFT JOIN exists to prevent.
-            assertThat(monthly.budgets.map { it.budget.id }).containsExactly("budget-1")
+            assertThat(monthly.budgets.map { it.budget.id }).containsExactly(augustFood)
             assertThat(monthly.budgets.single().spent).isEqualTo(Money.ZERO)
         }
     }
@@ -260,7 +290,7 @@ class OfflineFirstBudgetRepositoryTest {
     @Test
     fun `a soft-deleted budget is not reported at all`() = runTest {
         repository.upsert(budget())
-        repository.delete("budget-1")
+        repository.delete(augustFood)
 
         repository.observeMonthlyBudgets(august).test {
             assertThat(awaitItem().budgets).isEmpty()

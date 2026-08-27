@@ -2,6 +2,9 @@ package dev.charanjeev.bahi.core.database
 
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
+import dev.charanjeev.bahi.core.model.ContentIdScheme
+import dev.charanjeev.bahi.core.model.contentDerivedId
+import dev.charanjeev.bahi.core.model.contentHashOf
 
 /**
  * Every migration here has a matching test in MigrationTest. When you bump the
@@ -110,9 +113,149 @@ object Migrations {
         }
     }
 
+    /**
+     * No schema change at all -- this one rewrites data (docs/sync-design.md
+     * §3). Two devices have to be able to derive the same id for the same row
+     * independently, and every row created before now has a UUID, which by
+     * construction they cannot.
+     *
+     * It runs in Kotlin rather than SQL because SHA-256 is not a SQLite
+     * function and the occurrence index is not expressible as one either. Both
+     * halves read every row of their table into memory first and write after
+     * the cursor is closed: the alternative is updating a primary key while
+     * iterating the table it indexes. A row's worth of state here is a few
+     * dozen bytes, so this is bounded by row count -- tens of thousands is
+     * megabytes -- and it happens once, inside the transaction Room already
+     * wraps a migration in, so it either fully applies or not at all.
+     */
+    val MIGRATION_4_5 = object : Migration(4, 5) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            rewriteTransactionIdentity(db)
+            rewriteBudgetIds(db)
+        }
+    }
+
+    /**
+     * **Every row gets a new `content_hash`, not just the imported ones**, and
+     * that is the half of this migration with a present-day consequence.
+     * `contentHashOf` moved off `String.hashCode()` (32 bits is survivable for
+     * de-duplication and not for a primary key), so every stored hash is now
+     * computed by a function nothing uses. Skip this and
+     * `countExistingHashes` matches nothing on the next import, and a user
+     * re-importing an overlapping statement gets the overlap inserted a second
+     * time -- a data bug on one device with no sync anywhere near it.
+     *
+     * `CSV_IMPORT` rows additionally get a content-derived id. The occurrence
+     * index is assigned per hash in insertion order, which is the numbering a
+     * single clean import of the same rows would have produced, so two devices
+     * holding the same imported history arrive at the same ids. `MANUAL` rows
+     * keep their UUIDs by design, and are counted out of the occurrence index
+     * entirely -- a hand-typed row that happens to share a tuple with an
+     * imported one must not shift the imported one's number.
+     *
+     * A row whose id is already content-derived is left alone, under any
+     * scheme version. That is what makes this migration idempotent and what
+     * would keep a future `h2:` rewrite from downgrading rows it does not own.
+     */
+    private fun rewriteTransactionIdentity(db: SupportSQLiteDatabase) {
+        data class Row(val id: String, val newHash: String, val source: String)
+
+        val rows = mutableListOf<Row>()
+        db.query(
+            "SELECT id, account_id, date, amount_minor, description, source FROM transactions ORDER BY rowid",
+        ).use { cursor ->
+            while (cursor.moveToNext()) {
+                rows += Row(
+                    id = cursor.getString(0),
+                    newHash = contentHashOf(
+                        scheme = ContentIdScheme.CURRENT,
+                        accountId = cursor.getString(1),
+                        date = cursor.getString(2),
+                        amountMinor = cursor.getLong(3),
+                        description = cursor.getString(4),
+                    ),
+                    source = cursor.getString(5),
+                )
+            }
+        }
+
+        val occurrences = mutableMapOf<String, Int>()
+        db.compileStatement("UPDATE transactions SET id = ?, content_hash = ? WHERE id = ?").use { update ->
+            for (row in rows) {
+                val newId = if (row.source == CSV_IMPORT && !ContentIdScheme.isContentDerived(row.id)) {
+                    val occurrence = occurrences.getOrDefault(row.newHash, 0)
+                    occurrences[row.newHash] = occurrence + 1
+                    contentDerivedId(ContentIdScheme.CURRENT, row.newHash, occurrence)
+                } else {
+                    row.id
+                }
+                update.bindString(1, newId)
+                update.bindString(2, row.newHash)
+                update.bindString(3, row.id)
+                update.executeUpdateDelete()
+            }
+        }
+    }
+
+    /**
+     * A budget's id becomes its natural key, `budget:<categoryId>:<yearMonth>`,
+     * so that two devices creating the same August Food budget offline produce
+     * one row with a conflict on `limit_minor` rather than two rows nothing can
+     * reconcile (docs/sync-design.md §3.2).
+     *
+     * **Not a blanket UPDATE, because the key is not unique in the table
+     * today.** `BudgetDao.findActive` filters `deleted_at IS NULL` precisely so
+     * that deleting an August Food budget and creating another leaves a
+     * tombstone and a live row sharing the key -- documented behaviour, not
+     * corruption (docs/budgets-design.md §4.1). Mapping both onto one primary
+     * key would fail the migration on exactly the devices whose users have
+     * used budgets most.
+     *
+     * So one claimant per key: the live row if there is one, newest first,
+     * ties broken by id so two devices with the same rows choose the same
+     * winner. Everything else keeps its UUID, including a losing *live* row,
+     * which the repository cannot produce but which this has no business
+     * deleting if it somehow exists -- a migration that silently discards a row
+     * the user can see is a worse failure than two rows the user can see.
+     */
+    private fun rewriteBudgetIds(db: SupportSQLiteDatabase) {
+        data class Row(val id: String, val key: String, val deletedAt: Long?, val updatedAt: Long)
+
+        val rows = mutableListOf<Row>()
+        db.query("SELECT id, category_id, year_month, deleted_at, updated_at FROM budgets").use { cursor ->
+            while (cursor.moveToNext()) {
+                rows += Row(
+                    id = cursor.getString(0),
+                    key = "budget:${cursor.getString(1)}:${cursor.getString(2)}",
+                    deletedAt = if (cursor.isNull(3)) null else cursor.getLong(3),
+                    updatedAt = cursor.getLong(4),
+                )
+            }
+        }
+
+        val claimants = rows.groupBy(Row::key).values.mapNotNull { group ->
+            group.sortedWith(
+                compareBy<Row> { it.deletedAt != null }
+                    .thenByDescending { it.deletedAt ?: it.updatedAt }
+                    .thenBy { it.id },
+            ).first().takeIf { it.id != it.key }
+        }
+
+        db.compileStatement("UPDATE budgets SET id = ? WHERE id = ?").use { update ->
+            for (row in claimants) {
+                update.bindString(1, row.key)
+                update.bindString(2, row.id)
+                update.executeUpdateDelete()
+            }
+        }
+    }
+
+    private const val CSV_IMPORT = "CSV_IMPORT"
+
     val ALL: Array<Migration> = arrayOf(
         MIGRATION_1_2,
         MIGRATION_2_3,
         MIGRATION_3_4,
+        MIGRATION_4_5,
     )
 }

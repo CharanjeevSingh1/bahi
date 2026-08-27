@@ -335,9 +335,13 @@ interface TransactionDao {
         //
         // Filtered on the insert's own answer rather than assuming `fresh`
         // all landed: onConflict = IGNORE returns -1 for a row it skipped.
-        // That can't happen today (ids are freshly generated UUIDs), which
-        // is precisely why assuming it would be the kind of thing nobody
-        // notices when it stops being true.
+        // It stopped being hypothetical in M4a slice 2. Imported rows carry
+        // ids derived from their own content, so a row the quota above let
+        // through can still collide with one already stored -- which happens
+        // exactly when the stable-order assumption in this doc is violated,
+        // and is the only place a violation is visible at all. The quota
+        // stays the de-duplication mechanism; this is the net under it, not
+        // a second one.
         val rowIds = insertAllIgnoringConflicts(fresh)
         return fresh.filterIndexed { index, _ -> rowIds[index] != -1L }.map { it.id }
     }

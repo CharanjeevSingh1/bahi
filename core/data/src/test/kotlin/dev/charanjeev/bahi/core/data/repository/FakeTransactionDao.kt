@@ -121,10 +121,26 @@ class FakeTransactionDao : TransactionDao {
         )
     }
 
+    /**
+     * One entry per input row, -1 for a row the conflict strategy skipped --
+     * which is what Room returns and what `importBatch` indexes its result
+     * against. Returning only the inserted rows would have shifted that index
+     * silently, and it stopped being unreachable in M4a slice 2: imported ids
+     * are derived from content now, so an insert really can collide.
+     */
     override suspend fun insertAllIgnoringConflicts(transactions: List<TransactionEntity>): List<Long> {
-        val fresh = transactions.filterNot { it.id in backing.value }
-        backing.value = backing.value + fresh.associateBy(TransactionEntity::id)
-        return fresh.map { 1L }
+        val stored = backing.value.toMutableMap()
+        val rowIds = transactions.map { transaction ->
+            if (stored.containsKey(transaction.id)) {
+                // IGNORE, not REPLACE: the stored row stands.
+                -1L
+            } else {
+                stored[transaction.id] = transaction
+                1L
+            }
+        }
+        backing.value = stored
+        return rowIds
     }
 
     override suspend fun softDelete(id: String, deletedAt: Long) {
