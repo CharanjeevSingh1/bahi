@@ -131,6 +131,79 @@ class MigrationTest {
         assertThat(countOf(migrated, "budgets")).isEqualTo(0)
     }
 
+    /**
+     * MIGRATION_3_4 gives `categories` the sync columns (docs/sync-design.md
+     * §1.2). Additive, so the question is not whether data survived but what
+     * a row that predates the columns is now *saying*: alive, never synced,
+     * nothing pending. `local_revision` is the only one with a DEFAULT --
+     * SQLite refuses a NOT NULL column without one -- so it is the only one
+     * that could have come out wrong.
+     */
+    @Test
+    fun migrate3To4_addsSyncColumnsToCategories_leavingPreExistingRowsAliveAndUnsynced() {
+        helper.createDatabase(TEST_DB, 3).apply {
+            execSQL(
+                """
+                INSERT INTO categories (id, name, parent_id, color_argb, icon_key, is_system_defined)
+                VALUES ('user-hobbies', 'Hobbies', NULL, 0, 'palette', 0)
+                """.trimIndent(),
+            )
+            close()
+        }
+
+        val migrated = helper.runMigrationsAndValidate(TEST_DB, 4, true, Migrations.MIGRATION_3_4)
+
+        migrated.query(
+            """
+            SELECT local_revision, remote_revision, pending_operation, deleted_at
+            FROM categories WHERE id = 'user-hobbies'
+            """.trimIndent(),
+        ).use { cursor ->
+            assertThat(cursor.moveToFirst()).isTrue()
+            assertThat(cursor.getLong(0)).isEqualTo(1)
+            assertThat(cursor.isNull(1)).isTrue()
+            assertThat(cursor.isNull(2)).isTrue()
+            assertThat(cursor.isNull(3)).isTrue()
+        }
+    }
+
+    /**
+     * The cascade that migrate2To3 asserts is still declared at v4, and this
+     * is the test that would catch it being lost. It is worth having twice
+     * because the foreign key is now the *dormant* half of the rule: the app
+     * soft-deletes categories, so nothing in production fires this any more
+     * (CategoryDao.softDeleteUserCategory does the cascade itself), and a
+     * dormant constraint is exactly the kind that gets dropped by a later
+     * table rebuild without anyone noticing.
+     */
+    @Test
+    fun migrate3To4_keepsTheForeignKeyCascadeFromCategories() {
+        helper.createDatabase(TEST_DB, 3).apply {
+            execSQL(
+                """
+                INSERT INTO categories (id, name, parent_id, color_argb, icon_key, is_system_defined)
+                VALUES ('food', 'Food', NULL, 0, 'restaurant', 0)
+                """.trimIndent(),
+            )
+            execSQL(
+                """
+                INSERT INTO budgets (
+                    id, category_id, year_month, limit_minor, currency_code,
+                    created_at, updated_at, local_revision, remote_revision, pending_operation, deleted_at
+                ) VALUES ('budget-1', 'food', '2026-08', 800000, 'INR', 0, 0, 1, NULL, NULL, NULL)
+                """.trimIndent(),
+            )
+            close()
+        }
+
+        val migrated = helper.runMigrationsAndValidate(TEST_DB, 4, true, Migrations.MIGRATION_3_4)
+        migrated.setForeignKeyConstraintsEnabled(true)
+
+        migrated.execSQL("DELETE FROM categories WHERE id = 'food'")
+
+        assertThat(countOf(migrated, "budgets")).isEqualTo(0)
+    }
+
     private fun countOf(db: SupportSQLiteDatabase, table: String): Int =
         db.query("SELECT COUNT(*) FROM $table").use { cursor ->
             cursor.moveToFirst()
@@ -139,6 +212,6 @@ class MigrationTest {
 
     private companion object {
         const val TEST_DB = "migration-test.db"
-        const val LATEST_VERSION = 3
+        const val LATEST_VERSION = 4
     }
 }

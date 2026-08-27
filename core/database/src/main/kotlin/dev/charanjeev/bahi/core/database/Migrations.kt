@@ -81,8 +81,38 @@ object Migrations {
         }
     }
 
+    /**
+     * Gives `categories` the four sync columns every other table has carried
+     * since it was created, so that it can be soft-deleted and therefore
+     * synced (docs/sync-design.md §1.2). Purely additive -- four ADD COLUMNs,
+     * no table rebuild -- which is why this is three lines rather than the
+     * twelve-step dance SQLite needs to change a column below 3.35.
+     *
+     * `local_revision` needs a DEFAULT because SQLite will not add a NOT NULL
+     * column without one. 1 is the same value [dev.charanjeev.bahi.core.database.entity.CategoryEntity] gives a new
+     * row, so a pre-v4 category is indistinguishable from one created after
+     * the migration -- which is right: they are all equally unsynced, and
+     * revision 1 means "never pushed" rather than "version 1 of a synced row".
+     * The entity declares no `defaultValue`, so Room compares only type and
+     * nullability here and a DEFAULT in the database alone does not diverge
+     * from the schema.
+     *
+     * Existing rows get `deleted_at = NULL`, i.e. every category that exists
+     * today is alive. There is no data to migrate: nothing was ever
+     * soft-deleted, because until now the delete was a DELETE.
+     */
+    val MIGRATION_3_4 = object : Migration(3, 4) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE categories ADD COLUMN local_revision INTEGER NOT NULL DEFAULT 1")
+            db.execSQL("ALTER TABLE categories ADD COLUMN remote_revision INTEGER DEFAULT NULL")
+            db.execSQL("ALTER TABLE categories ADD COLUMN pending_operation TEXT DEFAULT NULL")
+            db.execSQL("ALTER TABLE categories ADD COLUMN deleted_at INTEGER DEFAULT NULL")
+        }
+    }
+
     val ALL: Array<Migration> = arrayOf(
         MIGRATION_1_2,
         MIGRATION_2_3,
+        MIGRATION_3_4,
     )
 }

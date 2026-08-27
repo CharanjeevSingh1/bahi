@@ -74,11 +74,25 @@ interface TransactionDao {
      *
      * COALESCE for the same reason as there: no uncategorised spending has to
      * arrive as 0, not as a null the caller has to remember to handle.
+     *
+     * **A transaction whose category was deleted counts here too, and the
+     * second condition is not optional.** Since v4 a deleted category is a
+     * tombstone rather than a missing row, so `ON DELETE SET_NULL` no longer
+     * fires and the transaction keeps pointing at it
+     * (`CategoryDao.softDeleteUserCategory`). Its budget was tombstoned by the
+     * same cascade, so without this the spend would be in no budget *and* not
+     * uncategorised -- money that is on the ledger and on no line of the
+     * budgets screen. Reading `categories` also puts that table in the flow's
+     * invalidation set, which is what makes the uncategorised line update the
+     * moment a category is deleted rather than on the next unrelated write.
      */
     @Query(
         """
         SELECT COALESCE(SUM(-amount_minor), 0) FROM transactions
-        WHERE category_id IS NULL
+        WHERE (
+                category_id IS NULL
+                OR category_id NOT IN (SELECT id FROM categories WHERE deleted_at IS NULL)
+              )
           AND amount_minor < 0
           AND deleted_at IS NULL
           AND date BETWEEN :from AND :to

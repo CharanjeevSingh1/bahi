@@ -13,7 +13,16 @@ interface CategoryRepository {
 
     suspend fun upsert(category: Category)
 
-    /** No-op for a system category: `CategoryDao.deleteUserCategory` guards on it. */
+    /**
+     * Soft delete, and it takes the category's budgets and rules with it --
+     * the cascade the foreign keys used to perform, which a soft delete no
+     * longer fires. Transactions keep their `categoryId` and read as
+     * uncategorised until the category comes back; see
+     * `CategoryDao.softDeleteUserCategory`.
+     *
+     * No-op for a system category, cascade included: the guard is on the
+     * category row itself.
+     */
     suspend fun delete(id: String)
 
     /**

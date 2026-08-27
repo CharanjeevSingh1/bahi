@@ -118,8 +118,38 @@ Two details that fall out and are easy to get wrong:
   categorisation is retained, so undeleting the category restores it, and no
   fan-out write is needed (which would otherwise turn one delete into hundreds
   of transaction updates, each of them its own sync operation). The cost is
-  that the UI must treat "category_id points at a tombstoned category" as
-  uncategorised for display, in one place — the mapping layer, not each screen.
+  that "category_id points at a tombstoned category" has to read as
+  uncategorised.
+
+**Two corrections from building slice 1**, both to that last point.
+
+*"In one place — the mapping layer" was wrong.* Display takes care of itself:
+every screen resolves a category by looking its id up in the list from
+`observeCategories()`, which now filters tombstones, so the lookup misses and
+the row already renders as uncategorised. What does **not** take care of itself
+is a query. `TransactionDao.observeUncategorisedSpend` matches `category_id IS
+NULL`, and an orphaned transaction's `category_id` is not null — while its
+budget *was* tombstoned by the cascade below. So that spend would have been in
+no budget and not in the uncategorised line either: money on the ledger and on
+no line of the budgets screen. That query now also excludes ids with no live
+category, which has the side benefit of putting `categories` in its
+invalidation set, so the uncategorised total updates the moment a category is
+deleted rather than on the next unrelated write.
+
+*The cascade has to be driven by hand, and it is not the repository's job.*
+`budgets` and `category_rules` declare `ON DELETE CASCADE` on `category_id`,
+and a soft delete fires no foreign key — so without something replacing it, a
+deleted category leaves live budgets and rules behind, and under sync leaves
+them with no tombstones of their own for the other device to apply. Replacing
+it in the repository would mean three DAO calls in three separate transactions,
+and the property that made the foreign key trustworthy is that it could not
+half-happen. So it is one `@Transaction` method on `CategoryDao` that writes
+all three tables, which departs from the rule
+`TransactionDao.observeUncategorisedSpend`'s own comment states — a DAO
+queries the table it owns, and composing across tables is the repository's job.
+The exception is narrow, and the KDoc says why: this is not composition, it is
+a database constraint being re-implemented in application code, and atomicity
+is the whole of what it is for.
 
 ---
 
@@ -451,6 +481,20 @@ enqueueing is the engine's job driven off `local_revision` versus the shadow's
 `remote_revision`, with `pending_operation` kept as the tombstone marker it is
 genuinely needed for. Deriving "dirty" from data the writes already maintain
 beats adding a fifth write path that has to remember a flag.
+
+**A third one, found while building slice 1.** Every repository's `upsert`
+reads the existing row with a `getById` that filters `deleted_at IS NULL`, then
+derives the new `local_revision` from it. Upserting an id that is tombstoned
+therefore finds nothing, resets the revision to 1 and drops `remote_revision`
+— a resurrected row that claims to be brand new. `categories` and
+`category_rules` both have this shape; only `BudgetDao.findActive` sidesteps
+it, deliberately, because a new budget for the same category and month gets a
+new id rather than reoccupying the old one. It is unreachable today, since
+nothing re-creates a deleted row under its old id, and it stops being
+unreachable the moment sync can hand a repository an id it has seen before. The
+fix belongs with the other two, in slice 3: revision bookkeeping reads the row
+regardless of its tombstone, because a revision is a fact about the row, not
+about whether it is currently visible.
 
 ---
 
@@ -1330,11 +1374,13 @@ measured from nothing at all. The M0 sketch's *shape* was right and is kept
 
 M4a — slices 1–8. Each compiles and passes `checkModuleBoundaries` on its own.
 
-1. **Categories become syncable** (§1.2). `MIGRATION_3_4` part one: the four
-   columns on `categories`, `deleteUserCategory` becomes a guarded soft delete,
-   every category query gains `deleted_at IS NULL`, and the mapping layer treats
-   a tombstoned category as uncategorised for display. No sync code. Independently
-   correct — it closes a rule-7 violation that exists today.
+1. **Categories become syncable** (§1.2). **Done.** `MIGRATION_3_4`: the four
+   columns on `categories`, `deleteUserCategory` becomes a guarded soft delete
+   that cascades to budgets and rules in one transaction, every category query
+   gains `deleted_at IS NULL`, and `observeUncategorisedSpend` counts a
+   transaction whose category was deleted. No sync code. Independently correct
+   — it closes a rule-7 violation that exists today, and the cascade and the
+   uncategorised query are behaviour that would otherwise have regressed.
 2. **Stable identity** (§3). Budget ids derived from the natural key;
    `contentHashOf` moves to SHA-256; `CSV_IMPORT` transaction ids become
    `h1:<hash>#<n>`. Data migrations with tests that assert on values, not just
