@@ -538,6 +538,51 @@ that work should be scoped as part of it rather than discovered during it.**
 A half-millisecond wrong number on screen is not a bug. The same number
 triggering a push notification is.
 
+**The rule underneath both of these, which is worth stating on its own,
+because it has now been broken in two unrelated ways.** The budgets screen
+partitions this month's expense spending into budget lines plus one
+uncategorised line. That partition has to be **exhaustive** — every rupee
+of expense spending in the window belongs to exactly one of those lines —
+and nothing in the schema, the queries, or any test enforces it. Both queries
+can be individually correct and the partition still leak.
+
+It has leaked twice:
+
+- **Transiently**, above: `combine` pairs a fresh value from one query with a
+  stale one from the other, so for one frame a transaction is on both lines or
+  on neither. Measured at up to 2.66 ms over 22 instrumented runs, invisible,
+  tolerable — but tolerable only because nothing acts on it.
+- **Permanently**, in M4a slice 1. `observeUncategorisedSpend` matched
+  `category_id IS NULL`. When soft-deleting a category stopped nulling its
+  transactions' `category_id` (docs/sync-design.md §1.2), a transaction whose
+  category had been deleted was in no budget — its budget was tombstoned by
+  the same cascade — and not uncategorised either. The money was on the
+  ledger and on no line of the screen, with no frame to wait for.
+
+Same shape, different duration, and the second one is the one worth writing a
+rule about, because it is the one a reader can reason their way into:
+
+> **`category_id IS NULL` is not the complement of "has a live category."**
+> The complement is "no live category row matches this `category_id`", which
+> `IS NULL` is only a special case of. Any query that claims to hold the
+> remainder of a partition has to be written against the *absence of a
+> match*, not against the absence of a value.
+
+The general form, for whatever comes after budgets: **when two queries divide
+the same set of rows, one of them is the remainder, and the remainder's
+condition must be the literal negation of every other partition's condition.**
+`NOT IN (SELECT ...)` or `NOT EXISTS` says that; a null check on the join
+column merely resembles it. The cost of getting it wrong is invisible in
+exactly the way that matters — nothing errors, no row is missing from any
+list, and the only symptom is a total that does not add up, on a screen where
+nobody knows what it should have added up to.
+
+The place to catch this is a test rather than a comment, and it does not exist
+yet: *sum of every budget line plus the uncategorised line equals the sum of
+all expense spending in the window*, asserted directly against SQLite over a
+fixture that includes an orphaned category. Worth adding whenever the next
+partition is introduced.
+
 ### 2.3 Period boundaries, `LocalDate`, and the timezone question
 
 The task's framing — "a transaction dated the 31st when the user is in a

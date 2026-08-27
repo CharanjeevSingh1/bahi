@@ -134,7 +134,11 @@ no budget and not in the uncategorised line either: money on the ledger and on
 no line of the budgets screen. That query now also excludes ids with no live
 category, which has the side benefit of putting `categories` in its
 invalidation set, so the uncategorised total updates the moment a category is
-deleted rather than on the next unrelated write.
+deleted rather than on the next unrelated write. The general rule this is an
+instance of — that the remainder of a partition must be written against the
+absence of a *match*, not the absence of a *value* — is recorded in
+budgets-design §2.2, next to the queries it governs, rather than here: the
+next person to divide that total is reading that file, not this one.
 
 *The cascade has to be driven by hand, and it is not the repository's job.*
 `budgets` and `category_rules` declare `ON DELETE CASCADE` on `category_id`,
@@ -295,6 +299,54 @@ as a `LIKE 'h1:<hash>#%'` prefix scan to save one column would be a worse query
 for no benefit. The redundancy is deliberate and worth one comment at the
 column.
 
+#### The rows that are already there
+
+Every transaction in the database today has a UUID id, imported ones included.
+Three ways to go, and this is a one-way door, so the argument is here rather
+than in a commit message.
+
+**Leaving them is worse than it first looks.** The tempting reading is that
+only a straggler device is affected, and that stragglers are rare. That is not
+the scenario. Both devices migrate; what is old is the *data*, not the build.
+A user who has been running Bahi on a phone and a tablet offline for months and
+then turns sync on has their entire history on both sides, under two disjoint
+sets of UUIDs. Leaving pre-existing rows alone means the very first sync —
+the one this whole milestone exists for, and the one carrying the most rows it
+will ever carry — doubles everything, and §3.1 has already said that 800
+duplicate rows is not something a user fixes by hand. The divergence would not
+be a rare corner. It would be the common case, once.
+
+**Rewriting them is contained, and I checked rather than assumed.** No foreign
+key targets `transactions` or `budgets`; `categories` is the only parent table
+in the schema. `UserPreferencesDataSource` holds one key, `last_sync_cursor`,
+and no row ids. The only things outside the table that hold a transaction or
+budget id are navigation arguments in `SavedStateHandle`, which are
+process-local, do not survive the app update that triggers the migration, and
+whose worst case is a detail screen that reports the row as missing. Nothing
+has to be carried along with the rewrite, which is the thing that usually makes
+a primary-key migration go quietly wrong.
+
+**And the decisive argument is that the migration is happening anyway.**
+Moving `contentHashOf` off `String.hashCode()` changes `content_hash` for
+*every* row, imported or manual, synced or not. If the migration does not
+recompute that column, the next import computes SHA-256 hashes that match
+nothing stored, `countExistingHashes` returns zero for every hash, and the user
+re-importing an overlapping statement gets their whole overlap inserted a
+second time. That is a local, single-device, present-day data bug with no sync
+anywhere near it. So a Kotlin-side pass over every transaction row is required
+regardless of what is decided about ids. Rewriting the id of the `CSV_IMPORT`
+subset while that loop is already open is close to free, and choosing *not* to
+would mean deliberately writing a migration that fixes one field and declines
+to fix the other while holding both in its hand.
+
+**Decision: rewrite.** `CSV_IMPORT` rows get `h1:` ids derived from their own
+stored columns; `MANUAL` rows keep their UUIDs, per the rule above. Budget ids
+become their natural key (§3.2). What this does *not* fix is stated in §3.1
+already and does not change: two devices whose bank exports render the same
+transaction differently still produce different hashes and still duplicate.
+Rewriting makes identical histories converge; it cannot make different renderings
+identical.
+
 ### 3.2 Two devices creating the same budget
 
 `budgets` has a real natural key — one budget per category per month — that the
@@ -323,6 +375,30 @@ Rewriting existing budget ids is a data migration, but a contained one: nothing
 has a foreign key pointing at `budgets`, and `Budget.id` is not shown to the
 user or stored anywhere outside the table. Same for the transaction ids in
 §3.1 — no foreign key targets `transactions` either.
+
+**One thing that paragraph got wrong: the rewrite cannot be a blanket
+`UPDATE`.** `budget:<categoryId>:<yearMonth>` is unique per key, but the rows
+holding that key today are not. `BudgetDao.findActive` filters
+`deleted_at IS NULL` precisely so that deleting an August Food budget and
+creating another one leaves a tombstone and a live row sharing the key — that
+is not a corruption, it is the documented behaviour (budgets-design §4.1). A
+blanket update maps both onto the same primary key and the migration fails on a
+constraint violation, on the devices of exactly the users who have used the
+feature most.
+
+So the rewrite picks one claimant per key: the live row if there is one
+(newest `updated_at`, ties broken by id so it is deterministic across devices),
+otherwise the newest tombstone. Everything else keeps its UUID. The
+consequence, stated rather than discovered later: a tombstone that did not win
+the key is a delete that will not propagate — the other device's live row has
+the natural-key id and never sees the tombstone's. Re-deleting costs one tap,
+which is the same trade §5.3 makes deliberately, and it is bounded to budgets
+deleted before this migration ran.
+
+A live row losing to another live row cannot happen through the repository, and
+if it somehow has, the migration leaves the loser alone rather than deleting it.
+A migration that silently discards a row the user can see is a worse failure
+than two rows the user can see.
 
 `category_rules` gets no equivalent treatment, deliberately: it has no natural
 key, and budgets-design §4.1 already records why giving it one would be a
