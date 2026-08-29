@@ -49,7 +49,24 @@ class OfflineFirstTransactionRepository @Inject constructor(
         transactionDao.observeById(id).map { it?.let(::toDomain) }
 
     override suspend fun upsert(transaction: Transaction) = withContext(ioDispatcher) {
-        transactionDao.upsert(toEntity(transaction))
+        // Transactions were the odd one out: every other repository's upsert
+        // marks the row pending and bumps its revision, and this one wrote
+        // `toEntity`'s defaults -- pending_operation null, local_revision 1 --
+        // so a newly created transaction was invisible to `pendingChanges`
+        // and would never have been pushed at all (docs/sync-design.md §4.3).
+        //
+        // Reading the revision through `revisionOf` rather than a `getById`
+        // is the other half: upserting an id that is tombstoned would
+        // otherwise restart the count at 1 and drop the remote's
+        // acknowledgement. See RowRevision.
+        val revision = transactionDao.revisionOf(transaction.id)
+        transactionDao.upsert(
+            toEntity(transaction).copy(
+                pendingOperation = "UPSERT",
+                localRevision = (revision?.localRevision ?: 0) + 1,
+                remoteRevision = revision?.remoteRevision,
+            ),
+        )
     }
 
     override suspend fun update(transaction: Transaction) = withContext(ioDispatcher) {

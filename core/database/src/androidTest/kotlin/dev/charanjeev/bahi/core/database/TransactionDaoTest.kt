@@ -403,6 +403,98 @@ class TransactionDaoTest {
         assertThat(dao.lockedRuleMatchCandidates(uncategorisedOnly = 0)).isEmpty()
     }
 
+    // --- markSynced: the guard on the push (docs/sync-design.md §4.3) ---
+
+    /**
+     * The race, played out in the order it actually happens. Nothing in the
+     * app calls either of these yet, so this test is the only thing standing
+     * between the bug and the first sync that would reach it.
+     *
+     * A pusher reads the row, ships it, and comes back to clear the flag. In
+     * between, the user edits the same row -- which correctly bumps the
+     * revision and re-marks it pending. Clearing unconditionally then leaves
+     * the row dirty and unflagged: the edit survives locally, so nothing looks
+     * wrong here, and is lost from every other device permanently.
+     */
+    @Test
+    fun markSynced_refusesToClearTheFlag_whenTheRowChangedUnderThePush() = runTest {
+        seedCategories()
+        dao.upsert(transactionEntity(id = "t1", contentHash = "h1"))
+        dao.update(
+            id = "t1", amountMinor = -45_000, currencyCode = "INR", date = "2026-01-05",
+            description = "Coffee Shop", merchant = null, categoryId = null, accountId = "acct-1",
+            notes = null, categoryLockedByUser = false, contentHash = "h1", updatedAt = 1_000L,
+        )
+        val pushed = dao.pendingChanges().single()
+
+        // The user edits the row while it is in flight.
+        dao.update(
+            id = "t1", amountMinor = -99_000, currencyCode = "INR", date = "2026-01-05",
+            description = "Coffee Shop", merchant = null, categoryId = null, accountId = "acct-1",
+            notes = null, categoryLockedByUser = false, contentHash = "h1", updatedAt = 2_000L,
+        )
+
+        val cleared = dao.markSynced(
+            id = "t1",
+            remoteRevision = 7,
+            expectedLocalRevision = pushed.localRevision,
+        )
+
+        // 0, not 1: the UPDATE matched nothing, which is what lets the pusher
+        // leave the row queued rather than assume it succeeded.
+        assertThat(cleared).isEqualTo(0)
+        val row = allTransactions().single()
+        assertThat(row.pendingOperation).isEqualTo("UPSERT")
+        assertThat(row.remoteRevision).isNull()
+        assertThat(row.amountMinor).isEqualTo(-99_000)
+        // Still queued, so the next round picks it up.
+        assertThat(dao.pendingChanges().map { it.id }).containsExactly("t1")
+    }
+
+    @Test
+    fun markSynced_clearsTheFlagWhenTheRowIsUnchanged() = runTest {
+        seedCategories()
+        dao.upsert(transactionEntity(id = "t1", contentHash = "h1"))
+        dao.softDelete(id = "t1", deletedAt = 1_000L)
+        val pushed = dao.pendingChanges().single()
+
+        val cleared = dao.markSynced(
+            id = "t1",
+            remoteRevision = 7,
+            expectedLocalRevision = pushed.localRevision,
+        )
+
+        assertThat(cleared).isEqualTo(1)
+        val row = allTransactions(includeDeleted = true).single()
+        assertThat(row.pendingOperation).isNull()
+        assertThat(row.remoteRevision).isEqualTo(7)
+        assertThat(dao.pendingChanges()).isEmpty()
+    }
+
+    // --- revisionOf: bookkeeping reads through the tombstone (§4.3) ---
+
+    @Test
+    fun revisionOf_seesATombstonedRow_whichGetByIdCannot() = runTest {
+        seedCategories()
+        dao.upsert(transactionEntity(id = "t1", contentHash = "h1"))
+        dao.softDelete(id = "t1", deletedAt = 1_000L)
+        dao.markSynced(id = "t1", remoteRevision = 7, expectedLocalRevision = 2)
+
+        val revision = dao.revisionOf("t1")
+
+        // Without this the repository restarts a revived row at 1 and drops
+        // the 7, so the row claims to be brand new to a remote that has
+        // already acknowledged version 7 of it.
+        assertThat(revision?.localRevision).isEqualTo(2)
+        assertThat(revision?.remoteRevision).isEqualTo(7)
+        assertThat(dao.observeById("t1").first()).isNull()
+    }
+
+    @Test
+    fun revisionOf_isNullForARowThatNeverExisted() = runTest {
+        assertThat(dao.revisionOf("nope")).isNull()
+    }
+
     /**
      * Room enables foreign key constraints by default, so a transaction can
      * only carry a category_id that exists. Only these tests need it -- the
@@ -423,9 +515,45 @@ class TransactionDaoTest {
         isSystemDefined = true,
     )
 
-    private suspend fun allTransactions(): List<TransactionEntity> =
-        dao.observeFiltered(categoryIds = emptyList(), categoryCount = 0, hasDateWindow = 0, from = "", to = "")
-            .first()
+    private suspend fun allTransactions(includeDeleted: Boolean = false): List<TransactionEntity> =
+        if (includeDeleted) {
+            // observeFiltered hides tombstones, which is right for a list on
+            // screen and useless for asserting on one.
+            database.query("SELECT * FROM transactions", null).use { cursor ->
+                buildList {
+                    while (cursor.moveToNext()) {
+                        add(
+                            TransactionEntity(
+                                id = cursor.getString(cursor.getColumnIndexOrThrow("id")),
+                                amountMinor = cursor.getLong(cursor.getColumnIndexOrThrow("amount_minor")),
+                                currencyCode = cursor.getString(cursor.getColumnIndexOrThrow("currency_code")),
+                                date = cursor.getString(cursor.getColumnIndexOrThrow("date")),
+                                description = cursor.getString(cursor.getColumnIndexOrThrow("description")),
+                                merchant = null,
+                                categoryId = null,
+                                accountId = cursor.getString(cursor.getColumnIndexOrThrow("account_id")),
+                                source = cursor.getString(cursor.getColumnIndexOrThrow("source")),
+                                notes = null,
+                                categoryLockedByUser = false,
+                                contentHash = cursor.getString(cursor.getColumnIndexOrThrow("content_hash")),
+                                createdAt = 0L,
+                                updatedAt = 0L,
+                                localRevision = cursor.getLong(cursor.getColumnIndexOrThrow("local_revision")),
+                                remoteRevision = cursor.getColumnIndexOrThrow("remote_revision").let {
+                                    if (cursor.isNull(it)) null else cursor.getLong(it)
+                                },
+                                pendingOperation = cursor.getString(
+                                    cursor.getColumnIndexOrThrow("pending_operation"),
+                                ),
+                            ),
+                        )
+                    }
+                }
+            }
+        } else {
+            dao.observeFiltered(categoryIds = emptyList(), categoryCount = 0, hasDateWindow = 0, from = "", to = "")
+                .first()
+        }
 
     private fun transactionEntity(
         id: String,

@@ -42,6 +42,10 @@ interface CategoryRuleDao {
     @Upsert
     suspend fun upsert(rule: CategoryRuleEntity)
 
+    /** See [RowRevision]: no `deleted_at` condition, deliberately. */
+    @Query("SELECT local_revision, remote_revision FROM category_rules WHERE id = :id")
+    suspend fun revisionOf(id: String): RowRevision?
+
     /**
      * Priority is what decides which rule wins a conflict (§1.5), so
      * reordering is a real edit: it bumps the revision and marks the row

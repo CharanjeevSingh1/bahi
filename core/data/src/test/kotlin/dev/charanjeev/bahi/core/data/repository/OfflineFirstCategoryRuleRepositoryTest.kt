@@ -31,6 +31,24 @@ class OfflineFirstCategoryRuleRepositoryTest {
     )
 
     @Test
+    fun `reviving a deleted rule continues its revision rather than restarting`() = runTest {
+        // Same shape as the category and budget cases: the revision read has
+        // to see through the tombstone (docs/sync-design.md §4.3), or the
+        // revived row claims to be brand new to a remote that has already
+        // acknowledged version 7 of it.
+        repository.upsert(rule())
+        dao.upsert(dao.allRows().single().copy(remoteRevision = 7))
+        repository.delete("rule-1")
+
+        repository.upsert(rule(merchantContains = "ZOMATO"))
+
+        val row = dao.allRows().single()
+        assertThat(row.localRevision).isEqualTo(3)
+        assertThat(row.remoteRevision).isEqualTo(7)
+        assertThat(row.deletedAt).isNull()
+    }
+
+    @Test
     fun `rules are observed in evaluation order`() = runTest {
         repository.upsert(rule(id = "rule-late", priority = 10))
         repository.upsert(rule(id = "rule-early", priority = 1))

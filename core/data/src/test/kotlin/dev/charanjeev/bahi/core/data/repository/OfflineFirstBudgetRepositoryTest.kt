@@ -138,6 +138,24 @@ class OfflineFirstBudgetRepositoryTest {
     }
 
     @Test
+    fun `reviving a deleted budget continues its revision rather than restarting`() = runTest {
+        // The one of the three that slice 2 made reachable in production:
+        // natural-key ids mean recreating a deleted budget revives that very
+        // row, and findActive cannot see it, so the revision came back as
+        // "new" for a row with a history (docs/sync-design.md §4.3).
+        repository.upsert(budget())
+        dao.upsert(dao.allRows().single().copy(remoteRevision = 7))
+        repository.delete(augustFood)
+
+        repository.upsert(budget(limit = Money(500_000)))
+
+        val row = dao.allRows().single()
+        assertThat(row.localRevision).isEqualTo(3)
+        assertThat(row.remoteRevision).isEqualTo(7)
+        assertThat(row.deletedAt).isNull()
+    }
+
+    @Test
     fun `the caller's id is discarded and the row is keyed by category and month`() = runTest {
         // Sync does not go through this repository, so a lookup-then-reuse
         // rule could never fix a duplicate arriving from another device

@@ -558,16 +558,28 @@ There is a second, quieter gap in the same area. `OfflineFirstTransactionReposit
 `toEntity` leaves `pendingOperation` at its default of `null`. So **a
 newly-created transaction is invisible to `pendingChanges()` and would never be
 pushed at all.** `update`, `softDelete`, `undoSoftDelete` and `softDeleteBatch`
-all set it; `upsert` doesn't, because it is also the path CSV import and
-seeding use, where setting it per row would be wrong for a different reason
-(an import of 400 rows should enqueue one batch, not 400 individually-flagged
-rows that happen to be pushed together). Both the budget and rule repositories
-set `pendingOperation = "UPSERT"` explicitly in their own `upsert`; transactions
-are the odd one out. Resolving it is part of slice 5, and the resolution is that
-enqueueing is the engine's job driven off `local_revision` versus the shadow's
-`remote_revision`, with `pending_operation` kept as the tombstone marker it is
-genuinely needed for. Deriving "dirty" from data the writes already maintain
-beats adding a fifth write path that has to remember a flag.
+all set it; the budget, rule and category repositories all set it in their own
+`upsert`; transactions are the odd one out.
+
+*Corrected while fixing it in slice 3.* This paragraph used to justify the
+omission by saying `upsert` "is also the path CSV import and seeding use,
+where setting it per row would be wrong — an import of 400 rows should
+enqueue one batch, not 400 individually-flagged rows." That is not true and
+was checkable: `TransactionDao.upsert` has exactly one caller,
+`OfflineFirstTransactionRepository.upsert`, which in turn has two,
+`TransactionFormViewModel`'s create branch and `DebugSeeder`. CSV import goes
+through `importBatch` — a different DAO method, a different insert
+strategy — and category seeding is a different DAO entirely. There was no
+tension to resolve, only a path that had been missed, and an invented reason
+kept it missed for a milestone.
+
+The concern the invented reason was reaching for is still real and still
+belongs to slice 5: enqueueing should ultimately be derived from
+`local_revision` versus the shadow's `remote_revision`, with
+`pending_operation` kept as the tombstone marker it is genuinely needed for,
+because deriving "dirty" from data the writes already maintain beats a fifth
+write path that has to remember a flag. Until that exists, four write paths
+that agree beat three that agree and one that is silently different.
 
 **A third one, found while building slice 1.** Every repository's `upsert`
 reads the existing row with a `getById` that filters `deleted_at IS NULL`, then
@@ -582,6 +594,26 @@ unreachable the moment sync can hand a repository an id it has seen before. The
 fix belongs with the other two, in slice 3: revision bookkeeping reads the row
 regardless of its tombstone, because a revision is a fact about the row, not
 about whether it is currently visible.
+
+*Reachable as of slice 2, and fixed in slice 3.* Natural-key budget ids mean
+recreating a deleted budget revives that very row (§3.2), so this stopped being
+theoretical one slice before it was fixed. The fix is a narrow projection,
+`RowRevision`, read by a `revisionOf(id)` query with no `deleted_at` condition
+on any of the four DAOs — deliberately not a general "get including deleted",
+which could be mistaken for something to display. `created_at` stays on the
+tombstone-filtering read on purpose: recreating a budget is the user creating a
+budget, whatever the row underneath has been through.
+
+**All three fixes are in code nothing calls yet, so the tests are the whole of
+what stands between them and the first sync that reaches them.** Each was
+written test-first and then watched to fail with the fix removed. The
+`markSynced` one is worth recording: Room's own processor rejects dropping the
+guard while the parameter is still declared — `[ksp] Unused parameter:
+expectedLocalRevision` — so the guard has an accidental second layer under
+it. Neutering the condition instead (`AND (:expectedLocalRevision >= 0)`) is
+what a real regression would look like, and that is what the test catches:
+`expected: 0, but was: 1` on the return value, meaning the UPDATE matched the
+row it should have refused.
 
 ---
 
@@ -1474,9 +1506,12 @@ M4a — slices 1–8. Each compiles and passes `checkModuleBoundaries` on its ow
    `h1:<hash>#<n>`. `MIGRATION_4_5` changes no schema at all and rewrites data,
    so every test asserts on values. The riskiest slice — it rewrites primary
    keys — and contained, because no foreign key targets either table.
-3. **The op model and the shadow** (§4, §9). `SyncOp`/`OpBatch` and their
-   serialisation, `sync_shadow` and `sync_conflicts` tables and DAOs, the guarded
-   `markSynced`. No resolution logic, no transport.
+3. **The op model and the shadow** (§4, §9). Split, because the three
+   bookkeeping bugs in §4.3 are independent of the op format and were fixed
+   first: **3a is done** — the guarded `markSynced`, `RowRevision` and
+   `revisionOf` on all four DAOs, and `upsert` marking transactions pending.
+   3b is `SyncOp`/`OpBatch` and their serialisation, `sync_shadow` and
+   `sync_conflicts` tables and DAOs. No resolution logic, no transport.
 4. **The resolver** (§5). `ConflictResolver` reshaped, per-entity field policies,
    the field-coverage test, and every pure unit test for the merge rules. The
    slice most worth independent review — the equivalent of column-role inference

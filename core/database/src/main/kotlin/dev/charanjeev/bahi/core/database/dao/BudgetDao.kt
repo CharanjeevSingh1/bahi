@@ -90,6 +90,10 @@ interface BudgetDao {
     @Upsert
     suspend fun upsert(budget: BudgetEntity)
 
+    /** See [RowRevision]: no `deleted_at` condition, deliberately. */
+    @Query("SELECT local_revision, remote_revision FROM budgets WHERE id = :id")
+    suspend fun revisionOf(id: String): RowRevision?
+
     /** Soft delete: sync needs the tombstone, same as every other table (rule 7). */
     @Query(
         """

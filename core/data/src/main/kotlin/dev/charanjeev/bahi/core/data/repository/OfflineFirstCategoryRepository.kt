@@ -26,14 +26,18 @@ class OfflineFirstCategoryRepository @Inject constructor(
         // .copy(isSystemDefined = false))` followed by `delete("food")` would launder
         // a system category into a deletable one. The existing row's flag always wins.
         val existing = categoryDao.getById(category.id)
+        // Two different questions, and they need two different reads. Whether
+        // this is a system category is about the row the *user* can see, so it
+        // comes off `getById` and a tombstoned row correctly answers "no row".
+        // The revision is bookkeeping about the row itself and has to be read
+        // through the tombstone, or reviving a deleted category restarts its
+        // count at 1 and drops the remote's acknowledgement. See RowRevision.
+        val revision = categoryDao.revisionOf(category.id)
         val entity = toEntity(category).copy(
             isSystemDefined = existing?.isSystemDefined ?: category.isSystemDefined,
-            // Same bookkeeping every other repository's upsert does: this row
-            // now differs from whatever the remote last saw, and the revision
-            // it was last synced at is the one thing an edit must not restate.
             pendingOperation = "UPSERT",
-            localRevision = (existing?.localRevision ?: 0) + 1,
-            remoteRevision = existing?.remoteRevision,
+            localRevision = (revision?.localRevision ?: 0) + 1,
+            remoteRevision = revision?.remoteRevision,
         )
         categoryDao.upsertAll(listOf(entity))
     }

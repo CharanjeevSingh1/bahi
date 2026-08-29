@@ -21,6 +21,10 @@ interface CategoryDao {
     @Upsert
     suspend fun upsertAll(categories: List<CategoryEntity>)
 
+    /** See [RowRevision]: no `deleted_at` condition, deliberately. */
+    @Query("SELECT local_revision, remote_revision FROM categories WHERE id = :id")
+    suspend fun revisionOf(id: String): RowRevision?
+
     /**
      * Soft delete: sync needs the tombstone, same as every other table (rule
      * 7). `categories` was the last table still hard-deleting, which nothing

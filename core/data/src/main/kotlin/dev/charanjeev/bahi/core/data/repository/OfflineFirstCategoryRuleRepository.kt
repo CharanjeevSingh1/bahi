@@ -41,10 +41,15 @@ class OfflineFirstCategoryRuleRepository @Inject constructor(
         // Editing a rule must not restate when it was created, so an existing
         // row's createdAt is carried over rather than overwritten with now.
         val existing = categoryRuleDao.getById(rule.id)
+        // Read through the tombstone for the revision only: see RowRevision.
+        // createdAt stays on the live-row read on purpose -- a rule the user
+        // deleted and recreated was created when they recreated it, and that
+        // is a fact about the rule rather than about the row.
+        val revision = categoryRuleDao.revisionOf(rule.id)
         val entity = toEntity(rule, createdAt = existing?.createdAt ?: now, updatedAt = now).copy(
             pendingOperation = "UPSERT",
-            localRevision = (existing?.localRevision ?: 0) + 1,
-            remoteRevision = existing?.remoteRevision,
+            localRevision = (revision?.localRevision ?: 0) + 1,
+            remoteRevision = revision?.remoteRevision,
         )
         categoryRuleDao.upsert(entity)
     }

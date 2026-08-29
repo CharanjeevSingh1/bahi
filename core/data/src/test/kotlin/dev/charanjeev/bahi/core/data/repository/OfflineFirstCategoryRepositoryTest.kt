@@ -109,6 +109,25 @@ class OfflineFirstCategoryRepositoryTest {
     }
 
     @Test
+    fun `reviving a deleted category continues its revision rather than restarting`() = runTest {
+        // Nothing calls this today -- no id is reused after a delete -- and it
+        // stops being unreachable the moment sync can hand a repository an id
+        // it has seen before (docs/sync-design.md §4.3). The revision read has
+        // to see through the tombstone, or the revived row claims to be brand
+        // new to a remote that has already acknowledged version 7 of it.
+        repository.upsert(hobbies)
+        dao.upsertAll(listOf(dao.rowsIncludingDeleted().single().copy(remoteRevision = 7)))
+        repository.delete("user-hobbies")
+
+        repository.upsert(hobbies.copy(name = "Hobbies again"))
+
+        val row = dao.rowsIncludingDeleted().single { it.id == "user-hobbies" }
+        assertThat(row.localRevision).isEqualTo(3)
+        assertThat(row.remoteRevision).isEqualTo(7)
+        assertThat(row.deletedAt).isNull()
+    }
+
+    @Test
     fun `upsert marks the row pending and bumps its revision`() = runTest {
         repository.upsert(hobbies)
         repository.upsert(hobbies.copy(name = "Hobbies and crafts"))

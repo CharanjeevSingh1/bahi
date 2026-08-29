@@ -1,5 +1,6 @@
 package dev.charanjeev.bahi.core.data.repository
 
+import dev.charanjeev.bahi.core.database.dao.RowRevision
 import dev.charanjeev.bahi.core.database.dao.TransactionDao
 import dev.charanjeev.bahi.core.database.entity.TransactionEntity
 import kotlinx.coroutines.flow.Flow
@@ -198,13 +199,28 @@ class FakeTransactionDao : TransactionDao {
         return 1
     }
 
+    /**
+     * Reads through the tombstone, exactly as the real query does -- a fake
+     * that filtered `deletedAt == null` here would hide the resurrection bug
+     * this exists to fix and agree with whatever it was written to agree with.
+     */
+    override suspend fun revisionOf(id: String): RowRevision? =
+        backing.value[id]?.let { RowRevision(it.localRevision, it.remoteRevision) }
+
     override suspend fun pendingChanges(limit: Int): List<TransactionEntity> =
         backing.value.values.filter { it.pendingOperation != null }.take(limit)
 
-    override suspend fun markSynced(id: String, remoteRevision: Long) {
-        val existing = backing.value[id] ?: return
+    /**
+     * The revision guard is mirrored rather than left implicit, for the same
+     * reason the lock condition on `ruleCandidates` is: a fake that cleared
+     * the flag unconditionally would pass a test the real query fails.
+     */
+    override suspend fun markSynced(id: String, remoteRevision: Long, expectedLocalRevision: Long): Int {
+        val existing = backing.value[id] ?: return 0
+        if (existing.localRevision != expectedLocalRevision) return 0
         backing.value = backing.value + (
             id to existing.copy(pendingOperation = null, remoteRevision = remoteRevision)
         )
+        return 1
     }
 }

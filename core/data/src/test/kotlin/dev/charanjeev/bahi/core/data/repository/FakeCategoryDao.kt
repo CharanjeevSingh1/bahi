@@ -1,6 +1,7 @@
 package dev.charanjeev.bahi.core.data.repository
 
 import dev.charanjeev.bahi.core.database.dao.CategoryDao
+import dev.charanjeev.bahi.core.database.dao.RowRevision
 import dev.charanjeev.bahi.core.database.entity.CategoryEntity
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -44,6 +45,14 @@ class FakeCategoryDao : CategoryDao {
     override suspend fun upsertAll(categories: List<CategoryEntity>) {
         backing.value = backing.value + categories.associateBy(CategoryEntity::id)
     }
+
+    /**
+     * Reads through the tombstone, exactly as the real query does -- a fake
+     * that filtered `deletedAt == null` here would hide the resurrection bug
+     * this exists to fix and agree with whatever it was written to agree with.
+     */
+    override suspend fun revisionOf(id: String): RowRevision? =
+        backing.value[id]?.let { RowRevision(it.localRevision, it.remoteRevision) }
 
     override suspend fun tombstoneUserCategory(id: String, deletedAt: Long): Int {
         val existing = backing.value[id] ?: return 0

@@ -101,15 +101,22 @@ class OfflineFirstBudgetRepository @Inject constructor(
         // Still a lookup, because createdAt and the revision bookkeeping have
         // to come off the stored row; the id no longer depends on it.
         val existing = budgetDao.findActive(budget.categoryId, budget.month.toString())
-        val entity = if (existing != null) {
-            toEntity(keyed, createdAt = existing.createdAt, updatedAt = now).copy(
-                pendingOperation = "UPSERT",
-                localRevision = existing.localRevision + 1,
-                remoteRevision = existing.remoteRevision,
-            )
-        } else {
-            toEntity(keyed, createdAt = now, updatedAt = now).copy(pendingOperation = "UPSERT")
-        }
+        // Read through the tombstone for the revision only: see RowRevision.
+        // Natural-key ids made this reachable -- recreating a deleted budget
+        // now revives that very row (§3.2), and `findActive` cannot see it, so
+        // the revision came back as "new" for a row that has a history.
+        // createdAt stays on findActive: recreating a budget is the user
+        // creating a budget, whatever the row underneath has been through.
+        val revision = budgetDao.revisionOf(keyed.id)
+        val entity = toEntity(
+            keyed,
+            createdAt = existing?.createdAt ?: now,
+            updatedAt = now,
+        ).copy(
+            pendingOperation = "UPSERT",
+            localRevision = (revision?.localRevision ?: 0) + 1,
+            remoteRevision = revision?.remoteRevision,
+        )
         budgetDao.upsert(entity)
     }
 

@@ -293,11 +293,40 @@ interface TransactionDao {
     suspend fun applyRuleCategories(assignments: Map<String, String>, updatedAt: Long): Int =
         assignments.entries.sumOf { (id, categoryId) -> applyRuleCategory(id, categoryId, updatedAt) }
 
+    /** See [RowRevision]: no `deleted_at` condition, deliberately. */
+    @Query("SELECT local_revision, remote_revision FROM transactions WHERE id = :id")
+    suspend fun revisionOf(id: String): RowRevision?
+
     @Query("SELECT * FROM transactions WHERE pending_operation IS NOT NULL LIMIT :limit")
     suspend fun pendingChanges(limit: Int = 200): List<TransactionEntity>
 
-    @Query("UPDATE transactions SET pending_operation = NULL, remote_revision = :remoteRevision WHERE id = :id")
-    suspend fun markSynced(id: String, remoteRevision: Long)
+    /**
+     * Clears the pending flag for a row the remote has acknowledged --
+     * **only if the row has not changed since it was read.**
+     *
+     * [expectedLocalRevision] is the revision the pusher saw when
+     * [pendingChanges] handed it the row. Without it, a user edit landing
+     * between the read and this call is lost from every *other* device
+     * permanently: the edit correctly bumps `local_revision` and re-sets
+     * `pending_operation`, and then this clears the flag regardless, so the
+     * row is dirty, unflagged, and never pushed again. It is not lost
+     * locally, which is exactly what would make it hard to notice.
+     *
+     * The condition is in the WHERE clause rather than in the caller for the
+     * same reason [applyRuleCategory]'s lock guard is: a guarantee that
+     * depends on the caller checking first is a guarantee that ends the day
+     * someone adds a second caller. Zero rows updated means the row moved
+     * under the push and stays pending for the next round -- the same
+     * "report the honest count" return value [softDeleteBatch] uses.
+     */
+    @Query(
+        """
+        UPDATE transactions
+        SET pending_operation = NULL, remote_revision = :remoteRevision
+        WHERE id = :id AND local_revision = :expectedLocalRevision
+        """,
+    )
+    suspend fun markSynced(id: String, remoteRevision: Long, expectedLocalRevision: Long): Int
 
     /**
      * Runs de-duplication and insert inside one transaction so a large import

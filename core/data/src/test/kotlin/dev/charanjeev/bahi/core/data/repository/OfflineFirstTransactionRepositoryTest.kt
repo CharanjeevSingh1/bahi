@@ -105,6 +105,44 @@ class OfflineFirstTransactionRepositoryTest {
         assertThat(dao.rows.value.keys).containsExactly("h2:deadbeef#0")
     }
 
+    // --- revision bookkeeping (docs/sync-design.md §4.3) ---
+
+    @Test
+    fun `a newly created transaction is queued for the next push`() = runTest {
+        // Transactions were the odd one out: update, softDelete,
+        // undoSoftDelete and softDeleteBatch all mark the row, and upsert --
+        // the create path -- wrote toEntity's defaults. A transaction the user
+        // typed would have been invisible to pendingChanges and never pushed
+        // at all, which is a row that exists on one device forever.
+        repository.upsert(TestData.transaction(id = "a"))
+
+        assertThat(dao.pendingChanges().map { it.id }).containsExactly("a")
+        assertThat(dao.entity("a")?.pendingOperation).isEqualTo("UPSERT")
+    }
+
+    @Test
+    fun `editing through upsert bumps the revision rather than resetting it`() = runTest {
+        repository.upsert(TestData.transaction(id = "a"))
+
+        repository.upsert(TestData.transaction(id = "a", description = "OTHER"))
+
+        assertThat(dao.entity("a")?.localRevision).isEqualTo(2)
+    }
+
+    @Test
+    fun `reviving a deleted transaction continues its revision rather than restarting`() = runTest {
+        repository.upsert(TestData.transaction(id = "a"))
+        dao.markSynced(id = "a", remoteRevision = 7, expectedLocalRevision = 1)
+        repository.delete("a")
+
+        repository.upsert(TestData.transaction(id = "a", description = "OTHER"))
+
+        val entity = dao.entity("a")
+        assertThat(entity?.localRevision).isEqualTo(3)
+        assertThat(entity?.remoteRevision).isEqualTo(7)
+        assertThat(entity?.deletedAt).isNull()
+    }
+
     @Test
     fun `delete sets a pending DELETE and a tombstone`() = runTest {
         repository.upsert(TestData.transaction(id = "a"))

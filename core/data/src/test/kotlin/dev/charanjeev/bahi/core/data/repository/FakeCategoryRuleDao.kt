@@ -1,6 +1,7 @@
 package dev.charanjeev.bahi.core.data.repository
 
 import dev.charanjeev.bahi.core.database.dao.CategoryRuleDao
+import dev.charanjeev.bahi.core.database.dao.RowRevision
 import dev.charanjeev.bahi.core.database.entity.CategoryRuleEntity
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -28,6 +29,14 @@ class FakeCategoryRuleDao : CategoryRuleDao {
 
     override suspend fun getById(id: String): CategoryRuleEntity? =
         backing.value[id]?.takeIf { it.deletedAt == null }
+
+    /**
+     * Reads through the tombstone, exactly as the real query does -- a fake
+     * that filtered `deletedAt == null` here would hide the resurrection bug
+     * this exists to fix and agree with whatever it was written to agree with.
+     */
+    override suspend fun revisionOf(id: String): RowRevision? =
+        backing.value[id]?.let { RowRevision(it.localRevision, it.remoteRevision) }
 
     override suspend fun upsert(rule: CategoryRuleEntity) {
         backing.value = backing.value + (rule.id to rule)
