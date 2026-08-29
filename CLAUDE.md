@@ -55,6 +55,8 @@ CI compiles with `-PwarningsAsErrors=true`. Before pushing, run `./gradlew clean
 
 Dependencies are declared **only** in `gradle/libs.versions.toml`. Never inline a version in a module build file. Shared build config goes in a convention plugin in `build-logic/`, never copy-pasted across modules.
 
+Run Gradle quietly and read only what failed: ./gradlew <tasks> --quiet 2>&1 | tail -60. On failure, read the report file rather than scrolling the console output.
+
 ## Working style
 
 - **Ask before adding any new third-party dependency.** The dependency list is deliberately small.
