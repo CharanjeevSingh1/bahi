@@ -330,6 +330,65 @@ class MigrationTest {
         }
     }
 
+    /**
+     * The whole of MIGRATION_5_6's data behaviour: it invents nothing.
+     *
+     * An empty `sync_shadow` is the truthful state for a device that has never
+     * synced, and it is not the same as a useless one -- docs/sync-design.md
+     * §4.1's first-sync cases are written for exactly this. The failure this
+     * guards against is the tempting one: seeding a base from the current row,
+     * which would claim "this device has changed nothing since the remote last
+     * saw it" for rows the remote has never seen at all, and hand every
+     * differing field to the other device without recording that it did.
+     */
+    @Test
+    fun migrate5To6_addsTheSyncTablesEmpty_inventingNoBaseForRowsThatPredateThem() {
+        helper.createDatabase(TEST_DB, 5).apply {
+            insertCategoryAtV4(this, id = "food")
+            insertTransactionAtV4(this, id = "h1:abc#0", source = "CSV_IMPORT")
+            close()
+        }
+
+        val migrated = helper.runMigrationsAndValidate(TEST_DB, 6, true, Migrations.MIGRATION_5_6)
+
+        assertThat(countOf(migrated, "transactions")).isEqualTo(1)
+        assertThat(countOf(migrated, "sync_shadow")).isEqualTo(0)
+        assertThat(countOf(migrated, "sync_conflicts")).isEqualTo(0)
+    }
+
+    /**
+     * `runMigrationsAndValidate` covers the tables' shape. This covers that
+     * the columns are usable in the order declared, and the one nullability
+     * that carries meaning: a shadow row whose payload is NULL is a base that
+     * says "deleted at this revision", which is a different fact from having
+     * no base at all. A NOT NULL payload -- which §9 originally specified --
+     * would make the two indistinguishable.
+     */
+    @Test
+    fun migrate5To6_acceptsAShadowWhosePayloadIsNull_meaningDeletedAtThatRevision() {
+        helper.createDatabase(TEST_DB, 5).close()
+
+        val migrated = helper.runMigrationsAndValidate(TEST_DB, 6, true, Migrations.MIGRATION_5_6)
+        migrated.execSQL(
+            "INSERT INTO sync_shadow (table_name, row_id, remote_revision, payload) " +
+                "VALUES ('transactions', 'h1:abc#0', 4, NULL)",
+        )
+        migrated.execSQL(
+            """
+            INSERT INTO sync_conflicts (
+                id, table_name, row_id, field, resolved_at,
+                chosen_value, discarded_value, reason, acknowledged_at
+            ) VALUES ('c1', 'transactions', 'h1:abc#0', 'notes', 900, '"a"', '"b"', 'newest', NULL)
+            """.trimIndent(),
+        )
+
+        migrated.query("SELECT payload FROM sync_shadow WHERE row_id = 'h1:abc#0'").use { cursor ->
+            assertThat(cursor.moveToFirst()).isTrue()
+            assertThat(cursor.isNull(0)).isTrue()
+        }
+        assertThat(countOf(migrated, "sync_conflicts")).isEqualTo(1)
+    }
+
     private fun insertTransactionAtV4(
         db: SupportSQLiteDatabase,
         id: String,
@@ -375,6 +434,6 @@ class MigrationTest {
 
     private companion object {
         const val TEST_DB = "migration-test.db"
-        const val LATEST_VERSION = 5
+        const val LATEST_VERSION = 6
     }
 }

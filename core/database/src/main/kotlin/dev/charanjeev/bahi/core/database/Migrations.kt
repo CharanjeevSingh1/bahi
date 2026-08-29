@@ -136,6 +136,58 @@ object Migrations {
     }
 
     /**
+     * The merge base and the conflict log (docs/sync-design.md §4.1, §5.6).
+     * Purely additive, like MIGRATION_2_3, and for the same reason there is no
+     * data to migrate: no row has ever been synced, so there is no agreed base
+     * for any of them and an empty `sync_shadow` is the truthful starting
+     * state rather than a gap.
+     *
+     * That is not the same as the table being unused on first sync. An empty
+     * shadow is exactly what §4.1's first-sync cases are written for -- a row
+     * the remote has never seen is a creation, and a row both devices hold
+     * with no base is only a conflict on the fields that actually differ. What
+     * this migration must not do is invent a base, which would silently claim
+     * "this device changed nothing" for every row it touched.
+     *
+     * Neither table gets the four sync columns. They are local records about
+     * sync; syncing them would be circular. Their entities say so, because in
+     * a schema where every other table has them their absence would otherwise
+     * read as an oversight.
+     */
+    val MIGRATION_5_6 = object : Migration(5, 6) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `sync_shadow` (
+                    `table_name` TEXT NOT NULL, `row_id` TEXT NOT NULL,
+                    `remote_revision` INTEGER NOT NULL, `payload` TEXT,
+                    PRIMARY KEY(`table_name`, `row_id`)
+                )
+                """.trimIndent(),
+            )
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `sync_conflicts` (
+                    `id` TEXT NOT NULL, `table_name` TEXT NOT NULL, `row_id` TEXT NOT NULL,
+                    `field` TEXT NOT NULL, `resolved_at` INTEGER NOT NULL,
+                    `chosen_value` TEXT NOT NULL, `discarded_value` TEXT NOT NULL,
+                    `reason` TEXT NOT NULL, `acknowledged_at` INTEGER,
+                    PRIMARY KEY(`id`)
+                )
+                """.trimIndent(),
+            )
+            db.execSQL(
+                "CREATE INDEX IF NOT EXISTS `index_sync_conflicts_table_name_row_id_field` " +
+                    "ON `sync_conflicts` (`table_name`, `row_id`, `field`)",
+            )
+            db.execSQL(
+                "CREATE INDEX IF NOT EXISTS `index_sync_conflicts_acknowledged_at` " +
+                    "ON `sync_conflicts` (`acknowledged_at`)",
+            )
+        }
+    }
+
+    /**
      * **Every row gets a new `content_hash`, not just the imported ones**, and
      * that is the half of this migration with a present-day consequence.
      * `contentHashOf` moved off `String.hashCode()` (32 bits is survivable for
@@ -257,5 +309,6 @@ object Migrations {
         MIGRATION_2_3,
         MIGRATION_3_4,
         MIGRATION_4_5,
+        MIGRATION_5_6,
     )
 }

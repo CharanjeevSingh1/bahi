@@ -491,6 +491,93 @@ Two honest costs:
   is a limitation only in the sense that it can't attribute intent. Nothing in
   this design needs it to.
 
+#### When a shadow row is written
+
+Exactly two moments, and both of them mean the same thing: *this device and the
+remote now agree about this row.*
+
+1. **After a remote op is applied.** The state that was written locally becomes
+   the base, at that op's `remote_revision`.
+2. **After a push is acknowledged.** The state that was pushed becomes the base,
+   at the revision the remote assigned it.
+
+Both happen inside the engine's per-batch `@Transaction`, alongside the write to
+the data row itself. The shadow and the row's `remote_revision` move together or
+neither moves {d} which is what lets a shadow be *stale* (a device that has not
+synced in a month holds a month-old base, correctly) without ever being *wrong*.
+
+Nothing else writes it. No user write path, no repository, no migration. That is
+the property option (iii) was bought with, and it is the kind that erodes without
+anything failing: the day some other code writes a shadow to keep it fresh, the
+base stops meaning "what the remote last saw" and every merge that consults it is
+quietly answering a different question.
+
+Room cannot enforce that a shadow's `remote_revision` matches its row's, because
+`sync_shadow` names its parent table in a *column* and SQLite has no polymorphic
+foreign key. So the revision is an explicit parameter of every write rather than
+something inferred, and the DAO offers no way to write a shadow without stating
+one.
+
+#### The first sync, when there is no shadow for anything
+
+Not an edge case. On the first sync every row on both devices has no base, so
+whatever this design does here is what it does to the user's entire history,
+once. **A missing shadow is information, and the failure mode is discarding it.**
+
+The tempting shortcut is to synthesise a base from one of the two sides. Neither
+side works. Using the local row asserts "I have changed nothing since we last
+agreed", which hands every differing field to the remote; using the remote row
+asserts the mirror image. Either one converts an honest *I don't know which of us
+changed this* into a confident answer, silently, with nothing recorded, on every
+row of the first sync. That is option (i) with extra steps.
+
+What happens instead, by case {d} decided by `remote_revision`, not by the shadow:
+
+**(a) `remote_revision IS NULL`: the remote has never seen this row.** Not a
+conflict, a creation. Push it; the shadow is written when it is acknowledged.
+There is nothing to merge against because there is nothing to merge. This is
+almost the whole of the first sync on whichever device goes first.
+
+**(b) Both sides have the row, no base, payloads equal.** Also not a conflict:
+there is nothing to resolve. Adopt the remote revision, write the shadow, done.
+This is the majority case on the *second* device, and slice 2 is what makes it
+so {d} two devices that imported the same statement derive the same `h1:` id from
+the same bytes, so those rows meet, and they meet identical.
+
+**(c) Both sides have the row, no base, something differs.** The only genuinely
+ambiguous case, and it has no correct answer: "who changed this" is not
+answerable without a base. It goes to the field policies, and every field that
+had to consult one is recorded in `sync_conflicts` (§5.6) {d} a decision made
+without evidence is exactly the kind that has to stay reversible.
+
+Case (b) is what keeps case (c) from being every row, and it holds for a specific
+and fragile reason: **the payload excludes per-device metadata.** `created_at` is
+the one that matters. Two devices importing the same statement a week apart
+produce byte-identical rows whose `created_at` differ by a week; put that column
+in the payload and every shared row lands in case (c), so the first sync of a
+two-year history writes a conflict record per row {d} the list-nobody-reads
+failure §5.6 exists to avoid, manufactured by the design that warned about it.
+It is excluded, along with `updated_at` (already a field of the op) and
+`content_hash` (derived from four columns the payload already carries).
+`created_at` is instead resolved at apply as `min(local, remote)`: the row was
+created when the first device created it, which converges whatever order the two
+sync in and has no losing value to record. The full list is in `SyncPayloads.kt`,
+each exclusion with its reason.
+
+Two bounds on how bad case (c) can get. Both are consequences of slice 2 rather
+than assumptions:
+
+- **Independent creation of the same id only happens for content-derived ids,
+  and for exactly those the identity fields cannot be what differs.** An `h1:`
+  id *is* the hash of (account, date, amount, description), so all four are equal
+  by construction; only `category_id`, `merchant`, `notes` and
+  `category_locked_by_user` are left to disagree about. A `budget:` id fixes the
+  category and the month, leaving `limit_minor` and `currency_code`.
+- **A UUID-keyed row cannot reach case (c) by independent creation at all**, since
+  two devices cannot arrive at the same UUID. For manual transactions, categories
+  and rules, case (c) means the shadow was lost {d} the restore scenario above,
+  not a first sync.
+
 ### 4.2 What an operation is
 
 Sync exchanges **row-level operations**, not table snapshots:
@@ -858,13 +945,65 @@ Three consequences worth stating:
   makes for `importBatchId` and budgets-design §4.1 makes for putting sync
   columns on tables before sync exists.
 - **It needs a bound.** An unacknowledged conflict list that only grows is a
-  second unbounded table next to the tombstones (§7). Acknowledged conflicts
-  older than the tombstone horizon are deleted with them.
+  second unbounded table next to the tombstones (§7). See below.
 
 Surfacing: a count on the Settings sync row ("3 conflicts resolved — review"),
 and a marker on the affected transaction row in the list. Not a notification —
 budgets-design §2.5 already declined to add notification infrastructure for the
 over-budget case, and nothing here is more urgent than that was.
+
+#### Who reads it, and what removes a row
+
+A table that is only written to is a table nobody looks at, so both halves have
+to be named.
+
+**Read by**, in the order the readers arrive:
+
+- The supersede check inside `SyncConflictDao.record`, and the horizon sweep.
+  Both exist from slice 3b.
+- The count on the Settings sync row, and the conflict list — slice 8.
+- **The restore path** — slice 8, and the one that makes `discarded_value` a
+  column rather than decoration. A discarded value nothing can put back is a log
+  entry, not a reversal, and this section's entire argument is that the merge
+  rules need not be *right* if they are reversible.
+
+So until slice 8 there is no user-facing reader, which is the same shape of risk
+as the `h1:` prefix in slice 2: a marker that is written but never branched on is
+not load-bearing. What makes it acceptable here is that the asymmetry runs the
+other way — a discarded value cannot be reconstructed after the fact, while a
+screen can be built at any time, so recording first and reading later is the only
+order that works at all. Same argument csv-import-design §11.1 makes for
+`import_batch_id` and budgets-design §4.1 for putting sync columns on tables
+before sync exists.
+
+**Three things delete a row. Nothing else does.**
+
+1. **Superseding.** At most one *unacknowledged* conflict per (table, row,
+   field): recording a new one drops the older. This is the bound. Without it,
+   two devices that keep disagreeing about one field leave a row per sync — a
+   table growing with sync volume rather than with anything the user did, which
+   is what §7 refuses for tombstones. The cost belongs in writing rather than in
+   a footnote: the superseded `discarded_value` was the only copy of that value
+   and it is gone. What is lost is a value from a merge that has since been
+   merged over again, so restoring it would put back something two edits stale.
+   That makes the trade acceptable, not free.
+2. **The horizon.** An acknowledged conflict is deleted 90 days after
+   `acknowledged_at`, on the same sweep as the tombstones (§7). An
+   **unacknowledged one never ages out.** Deleting one would discard a losing
+   value before anybody saw it, which is the single thing this table exists to
+   prevent, and its growth is already bounded by (1): a user who never opens the
+   screen accumulates one row per field they have genuinely edited on two devices
+   at once, not one per sync.
+3. **The row dying.** When a tombstone crosses the horizon and its row is
+   hard-deleted, its conflicts go with it. No foreign key does this —
+   `sync_conflicts` names its parent table in a column — so it is an explicit
+   call in the sweep. What it prevents is a list entry that can only render as
+   pointing at nothing.
+
+`acknowledge` is a compare-and-set (`... AND acknowledged_at IS NULL`) for the
+same reason `markSynced` is one: `acknowledged_at` is the clock rule 2 reads, so
+an unguarded UPDATE would push a conflict's expiry forward every time the screen
+was opened, and nothing acknowledged would ever expire.
 
 ---
 
@@ -1229,15 +1368,14 @@ Nothing secret is committed, and nothing secret needs to be.
 
 ## 9. Data layer changes
 
-New tables (`MIGRATION_3_4`, all `CREATE TABLE`; plus `ALTER TABLE ADD COLUMN` on
-`categories`):
+New tables, `MIGRATION_5_6`, all `CREATE TABLE` and purely additive:
 
 ```
 sync_shadow
   table_name       TEXT NOT NULL
   row_id           TEXT NOT NULL
   remote_revision  INTEGER NOT NULL
-  payload          TEXT NOT NULL
+  payload          TEXT             -- NULL = deleted as of remote_revision
   PRIMARY KEY(table_name, row_id)
 
 sync_conflicts
@@ -1250,13 +1388,31 @@ sync_conflicts
   discarded_value  TEXT NOT NULL
   reason           TEXT NOT NULL
   acknowledged_at  INTEGER
-  INDEX(row_id)
+  INDEX(table_name, row_id, field)
   INDEX(acknowledged_at)
 ```
 
-`categories` gains `local_revision INTEGER NOT NULL DEFAULT 1`,
+`categories` gained `local_revision INTEGER NOT NULL DEFAULT 1`,
 `remote_revision INTEGER`, `pending_operation TEXT`, `deleted_at INTEGER` — the
-same four every other table already has.
+same four every other table already has — in `MIGRATION_3_4`, in slice 1.
+
+**Three corrections to the sketch above, from building it.**
+
+`sync_shadow.payload` is **nullable**, not `NOT NULL`. A null payload is a base
+that says the row was deleted at that revision, which is a different fact from
+having no base at all, and the absence of a row is the only way to say the
+second. With a `NOT NULL` payload a device that pulled a deletion and then
+revived the row locally could not tell its revival from a row the remote never
+deleted (§4.1).
+
+`sync_conflicts` gets `INDEX(table_name, row_id, field)` rather than
+`INDEX(row_id)`. Both the supersede check and the per-row read start from
+(table_name, row_id), so one composite index serves both; a lone index on
+`row_id` would serve neither, since `row_id` is not a prefix of the composite and
+no query asks for a row id without knowing which table it belongs to.
+
+The tables land in `MIGRATION_5_6`, not `MIGRATION_3_4`. Slices 1 and 2 spent
+those numbers on the category columns and the identity rewrite.
 
 Neither new table carries sync bookkeeping of its own: they are local records
 *about* sync, and syncing them would be circular. That is the one place this
@@ -1268,15 +1424,22 @@ uniform enough that their absence reads as an oversight.
 `:core:common`, `:core:data` and `:core:datastore`, and already has WorkManager,
 Hilt-Work and kotlinx-serialization wired up. No new module and no new edge:
 
-- `:core:model` — `SyncOp`, `OpBatch`, `SyncConflict`, and a reshaped
-  `FieldResolution`. `SyncMetadata` gains nothing; it is already right.
-- `:core:database` — the two entities, their DAOs, `MIGRATION_3_4`, the schema
+- `:core:model` — `SyncOp`, `OpBatch`, `SyncTable`, and a reshaped
+  `FieldResolution`. `SyncMetadata` gains nothing; it is already right. The
+  serialization plugin has been on this module since M0 with nothing using it;
+  this is what it was wired for. `kotlinx-serialization-json` becomes `api`
+  rather than `implementation`, because `JsonObject` is in `SyncOp`'s signature.
+- `:core:database` — the two entities, their DAOs, `MIGRATION_5_6`, the schema
   JSON, `MigrationTest` cases, the guarded `markSynced`, and the category
   soft-delete changes.
 - `:core:data` — shadow read/write, the reconciliation queries, and the mapping
-  between entities and field maps. **The resolver's field policies live here or
-  in `:core:sync`, not in a feature** — nothing in `:feature:*` may see an
-  entity (rule 3).
+  between entities and field maps (`SyncPayloads.kt`, `internal` because it
+  takes entities). Only entity —> field map lives there: the resolver reads
+  base *values* out of a payload and never needs an entity back, so one
+  direction is the whole answer for the shadow. Field map —> entity is what
+  *apply* does, it has to cope with a partial map, and it belongs to the engine.
+  **The resolver's field policies live here or in `:core:sync`, not in a
+  feature** — nothing in `:feature:*` may see an entity (rule 3).
 - `:core:sync` — `ConflictResolver` and its policies, `SyncEngine`,
   `SyncTransport` plus the fake, the `CoroutineWorker`, and (M4b) the Drive
   transport.
@@ -1510,8 +1673,12 @@ M4a — slices 1–8. Each compiles and passes `checkModuleBoundaries` on its ow
    bookkeeping bugs in §4.3 are independent of the op format and were fixed
    first: **3a is done** — the guarded `markSynced`, `RowRevision` and
    `revisionOf` on all four DAOs, and `upsert` marking transactions pending.
-   3b is `SyncOp`/`OpBatch` and their serialisation, `sync_shadow` and
-   `sync_conflicts` tables and DAOs. No resolution logic, no transport.
+   **3b is done** — `SyncOp`/`OpBatch`/`SyncTable` and their serialisation,
+   `MIGRATION_5_6` with the `sync_shadow` and `sync_conflicts` tables and DAOs,
+   and the entity —> field map mapping in `:core:data`. Settled while
+   building it: when a shadow row is written and what the first sync does with
+   a row that has no base (§4.1), and who reads `sync_conflicts` and what
+   removes a row from it (§5.6). No resolution logic, no transport.
 4. **The resolver** (§5). `ConflictResolver` reshaped, per-entity field policies,
    the field-coverage test, and every pure unit test for the merge rules. The
    slice most worth independent review — the equivalent of column-role inference
