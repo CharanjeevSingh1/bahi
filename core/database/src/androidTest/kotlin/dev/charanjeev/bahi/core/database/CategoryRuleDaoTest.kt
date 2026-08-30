@@ -7,6 +7,7 @@ import com.google.common.truth.Truth.assertThat
 import dev.charanjeev.bahi.core.database.dao.CategoryRuleDao
 import dev.charanjeev.bahi.core.database.entity.CategoryEntity
 import dev.charanjeev.bahi.core.database.entity.CategoryRuleEntity
+import dev.charanjeev.bahi.core.database.entity.SyncShadowEntity
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Before
@@ -105,6 +106,47 @@ class CategoryRuleDaoTest {
         // as a pending UPSERT, which would push the rule back on next sync.
         assertThat(dao.getAll()).isEmpty()
     }
+
+    // --- dirtyRows: the shadow join (TransactionDaoTest covers it fully; §4.3) ---
+
+    @Test
+    fun dirtyRows_includesARowWithNoShadow() = runTest {
+        seedCategories()
+        dao.upsert(ruleEntity(id = "a", priority = 0))
+
+        assertThat(dao.dirtyRows().map { it.id }).containsExactly("a")
+    }
+
+    @Test
+    fun dirtyRows_excludesARowWhoseShadowMatchesItsLocalRevision() = runTest {
+        seedCategories()
+        dao.upsert(ruleEntity(id = "a", priority = 0))
+        database.syncShadowDao().record(shadow(table = "category_rules", rowId = "a", remoteRevision = 1))
+
+        assertThat(dao.dirtyRows()).isEmpty()
+    }
+
+    /**
+     * Each of the four dirtyRows queries hardcodes its own table name into the
+     * join condition, copy-pasted from TransactionDao's. A shadow recorded
+     * under a different table with the same row id would wrongly clear this
+     * row if that literal were ever wrong.
+     */
+    @Test
+    fun dirtyRows_isNotFooledByAShadowRecordedForAnotherTableWithTheSameRowId() = runTest {
+        seedCategories()
+        dao.upsert(ruleEntity(id = "a", priority = 0))
+        database.syncShadowDao().record(shadow(table = "categories", rowId = "a", remoteRevision = 1))
+
+        assertThat(dao.dirtyRows().map { it.id }).containsExactly("a")
+    }
+
+    private fun shadow(table: String, rowId: String, remoteRevision: Long) = SyncShadowEntity(
+        tableName = table,
+        rowId = rowId,
+        remoteRevision = remoteRevision,
+        payload = """{"notes":"a"}""",
+    )
 
     private suspend fun seedCategories() {
         database.categoryDao().insertAllIgnoringConflicts(

@@ -6,6 +6,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import com.google.common.truth.Truth.assertThat
 import dev.charanjeev.bahi.core.database.dao.TransactionDao
 import dev.charanjeev.bahi.core.database.entity.CategoryEntity
+import dev.charanjeev.bahi.core.database.entity.SyncShadowEntity
 import dev.charanjeev.bahi.core.database.entity.TransactionEntity
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
@@ -470,6 +471,77 @@ class TransactionDaoTest {
         assertThat(row.remoteRevision).isEqualTo(7)
         assertThat(dao.pendingChanges()).isEmpty()
     }
+
+    // --- dirtyRows: the shadow join, not the pending flag (§4.3) ---
+
+    /**
+     * Nothing calls this yet either, and it is a LEFT JOIN plus COALESCE --
+     * the exact shape markSynced above was tested against real SQLite for,
+     * because KSP checks that a query compiles against the schema, not that
+     * it returns the right rows.
+     */
+    @Test
+    fun dirtyRows_includesARowWithNoShadowRow_becauseCoalesceTreatsAbsenceAsZero() = runTest {
+        seedCategories()
+        dao.upsert(transactionEntity(id = "t1", contentHash = "h1"))
+
+        assertThat(dao.dirtyRows().map { it.id }).containsExactly("t1")
+    }
+
+    @Test
+    fun dirtyRows_excludesARowWhoseShadowMatchesItsLocalRevision() = runTest {
+        seedCategories()
+        dao.upsert(transactionEntity(id = "t1", contentHash = "h1"))
+        database.syncShadowDao().record(shadow(rowId = "t1", remoteRevision = 1))
+
+        assertThat(dao.dirtyRows()).isEmpty()
+    }
+
+    @Test
+    fun dirtyRows_includesARowThatChangedAfterTheShadowWasRecorded() = runTest {
+        seedCategories()
+        dao.upsert(transactionEntity(id = "t1", contentHash = "h1"))
+        database.syncShadowDao().record(shadow(rowId = "t1", remoteRevision = 1))
+        dao.update(
+            id = "t1", amountMinor = -99_000, currencyCode = "INR", date = "2026-01-05",
+            description = "Coffee Shop", merchant = null, categoryId = null, accountId = "acct-1",
+            notes = null, categoryLockedByUser = false, contentHash = "h1", updatedAt = 2_000L,
+        )
+
+        assertThat(dao.dirtyRows().map { it.id }).containsExactly("t1")
+    }
+
+    /**
+     * No `deleted_at` condition, deliberately (see the KDoc on the query
+     * itself): a tombstone that has not been pushed is exactly as dirty as a
+     * live row, and it is `deleted_at` on the pulled row, not which query
+     * found it, that tells the engine the two apart.
+     */
+    @Test
+    fun dirtyRows_includesATombstonedRowThatHasNotBeenPushed() = runTest {
+        seedCategories()
+        dao.upsert(transactionEntity(id = "t1", contentHash = "h1"))
+        dao.softDelete(id = "t1", deletedAt = 1_000L)
+
+        assertThat(dao.dirtyRows().map { it.id }).containsExactly("t1")
+    }
+
+    @Test
+    fun dirtyRows_respectsTheLimit_orderedById() = runTest {
+        seedCategories()
+        dao.upsert(transactionEntity(id = "b", contentHash = "hb"))
+        dao.upsert(transactionEntity(id = "a", contentHash = "ha"))
+        dao.upsert(transactionEntity(id = "c", contentHash = "hc"))
+
+        assertThat(dao.dirtyRows(limit = 2).map { it.id }).containsExactly("a", "b").inOrder()
+    }
+
+    private fun shadow(table: String = "transactions", rowId: String, remoteRevision: Long) = SyncShadowEntity(
+        tableName = table,
+        rowId = rowId,
+        remoteRevision = remoteRevision,
+        payload = """{"notes":"a"}""",
+    )
 
     // --- revisionOf: bookkeeping reads through the tombstone (§4.3) ---
 

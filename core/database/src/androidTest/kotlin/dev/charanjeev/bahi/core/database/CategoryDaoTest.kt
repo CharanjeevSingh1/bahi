@@ -11,6 +11,7 @@ import dev.charanjeev.bahi.core.database.dao.TransactionDao
 import dev.charanjeev.bahi.core.database.entity.BudgetEntity
 import dev.charanjeev.bahi.core.database.entity.CategoryEntity
 import dev.charanjeev.bahi.core.database.entity.CategoryRuleEntity
+import dev.charanjeev.bahi.core.database.entity.SyncShadowEntity
 import dev.charanjeev.bahi.core.database.entity.TransactionEntity
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
@@ -165,6 +166,44 @@ class CategoryDaoTest {
 
         assertThat(dao.observeAll().first()).isEmpty()
     }
+
+    // --- dirtyRows: the shadow join (TransactionDaoTest covers it fully; §4.3) ---
+
+    @Test
+    fun dirtyRows_includesARowWithNoShadow() = runTest {
+        dao.upsertAll(listOf(category("food", systemDefined = false)))
+
+        assertThat(dao.dirtyRows().map { it.id }).containsExactly("food")
+    }
+
+    @Test
+    fun dirtyRows_excludesARowWhoseShadowMatchesItsLocalRevision() = runTest {
+        dao.upsertAll(listOf(category("food", systemDefined = false)))
+        database.syncShadowDao().record(shadow(table = "categories", rowId = "food", remoteRevision = 1))
+
+        assertThat(dao.dirtyRows()).isEmpty()
+    }
+
+    /**
+     * Each of the four dirtyRows queries hardcodes its own table name into the
+     * join condition, copy-pasted from TransactionDao's. A shadow recorded
+     * under a different table with the same row id would wrongly clear this
+     * row if that literal were ever wrong.
+     */
+    @Test
+    fun dirtyRows_isNotFooledByAShadowRecordedForAnotherTableWithTheSameRowId() = runTest {
+        dao.upsertAll(listOf(category("food", systemDefined = false)))
+        database.syncShadowDao().record(shadow(table = "budgets", rowId = "food", remoteRevision = 1))
+
+        assertThat(dao.dirtyRows().map { it.id }).containsExactly("food")
+    }
+
+    private fun shadow(table: String, rowId: String, remoteRevision: Long) = SyncShadowEntity(
+        tableName = table,
+        rowId = rowId,
+        remoteRevision = remoteRevision,
+        payload = """{"notes":"a"}""",
+    )
 
     private suspend fun rawCategory(id: String): CategoryEntity =
         database.query("SELECT * FROM categories WHERE id = ?", arrayOf(id)).use { cursor ->

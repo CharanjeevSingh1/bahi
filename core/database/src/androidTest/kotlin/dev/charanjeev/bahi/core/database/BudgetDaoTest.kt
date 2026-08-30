@@ -9,6 +9,7 @@ import dev.charanjeev.bahi.core.database.dao.BudgetWithSpend
 import dev.charanjeev.bahi.core.database.dao.TransactionDao
 import dev.charanjeev.bahi.core.database.entity.BudgetEntity
 import dev.charanjeev.bahi.core.database.entity.CategoryEntity
+import dev.charanjeev.bahi.core.database.entity.SyncShadowEntity
 import dev.charanjeev.bahi.core.database.entity.TransactionEntity
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
@@ -220,6 +221,47 @@ class BudgetDaoTest {
         assertThat(after.getValue("b-food").spentMinor).isEqualTo(0L)
         assertThat(after.getValue("b-groceries").spentMinor).isEqualTo(45_000L)
     }
+
+    // --- dirtyRows: the shadow join (TransactionDaoTest covers it fully; §4.3) ---
+
+    @Test
+    fun dirtyRows_includesARowWithNoShadow() = runTest {
+        seedCategories()
+        dao.upsert(budgetEntity(id = "b-food", categoryId = "food"))
+
+        assertThat(dao.dirtyRows().map { it.id }).containsExactly("b-food")
+    }
+
+    @Test
+    fun dirtyRows_excludesARowWhoseShadowMatchesItsLocalRevision() = runTest {
+        seedCategories()
+        dao.upsert(budgetEntity(id = "b-food", categoryId = "food"))
+        database.syncShadowDao().record(shadow(table = "budgets", rowId = "b-food", remoteRevision = 1))
+
+        assertThat(dao.dirtyRows()).isEmpty()
+    }
+
+    /**
+     * Each of the four dirtyRows queries hardcodes its own table name into the
+     * join condition, copy-pasted from TransactionDao's. A shadow recorded
+     * under a different table with the same row id would wrongly clear this
+     * row if that literal were ever wrong.
+     */
+    @Test
+    fun dirtyRows_isNotFooledByAShadowRecordedForAnotherTableWithTheSameRowId() = runTest {
+        seedCategories()
+        dao.upsert(budgetEntity(id = "b-food", categoryId = "food"))
+        database.syncShadowDao().record(shadow(table = "transactions", rowId = "b-food", remoteRevision = 1))
+
+        assertThat(dao.dirtyRows().map { it.id }).containsExactly("b-food")
+    }
+
+    private fun shadow(table: String, rowId: String, remoteRevision: Long) = SyncShadowEntity(
+        tableName = table,
+        rowId = rowId,
+        remoteRevision = remoteRevision,
+        payload = """{"notes":"a"}""",
+    )
 
     private suspend fun spendForAugust(): List<BudgetWithSpend> =
         dao.observeBudgetsWithSpend(yearMonth = august, from = augustFrom, to = augustTo).first()
