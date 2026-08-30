@@ -4,9 +4,15 @@ import dev.charanjeev.bahi.core.database.entity.BudgetEntity
 import dev.charanjeev.bahi.core.database.entity.CategoryEntity
 import dev.charanjeev.bahi.core.database.entity.CategoryRuleEntity
 import dev.charanjeev.bahi.core.database.entity.TransactionEntity
+import dev.charanjeev.bahi.core.model.ContentIdScheme
+import dev.charanjeev.bahi.core.model.contentHashOf
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.int
+import kotlinx.serialization.json.long
 
 /**
  * A row's synced fields, keyed by column name -- the payload carried by a
@@ -96,3 +102,126 @@ internal fun toFieldMap(entity: CategoryRuleEntity): JsonObject = buildJsonObjec
     put("merchant_contains", JsonPrimitive(entity.merchantContains))
     put("priority", JsonPrimitive(entity.priority))
 }
+
+/**
+ * The other direction: a merged payload becomes a row, for the sync engine's
+ * apply step (docs/sync-design.md §5, §6.2). Only ever called for a non-null
+ * [payload] -- a tombstone is written straight to the bookkeeping columns
+ * ([dev.charanjeev.bahi.core.database.dao.TransactionDao.applyRemoteTombstone]
+ * and its three siblings) and never needs a row rebuilt.
+ *
+ * The bookkeeping parameters ([localRevision], [remoteRevision],
+ * [pendingOperation], [updatedAt]) are the engine's decision, not this
+ * function's -- it only knows how to read the columns [toFieldMap] wrote,
+ * which is the same one-direction split that function's own doc explains.
+ *
+ * [createdAt] is not a payload field ([toFieldMap]'s doc says why) and has to
+ * come from the caller: the existing row's value if there is one, or "now"
+ * for a row this device is seeing for the first time -- see `SyncApplier`.
+ */
+internal fun transactionFromFieldMap(
+    id: String,
+    payload: JsonObject,
+    createdAt: Long,
+    updatedAt: Long,
+    localRevision: Long,
+    remoteRevision: Long?,
+    pendingOperation: String?,
+): TransactionEntity {
+    val accountId = (payload.getValue("account_id") as JsonPrimitive).content
+    val date = (payload.getValue("date") as JsonPrimitive).content
+    val amountMinor = (payload.getValue("amount_minor") as JsonPrimitive).long
+    val description = (payload.getValue("description") as JsonPrimitive).content
+    return TransactionEntity(
+        id = id,
+        amountMinor = amountMinor,
+        currencyCode = (payload.getValue("currency_code") as JsonPrimitive).content,
+        date = date,
+        description = description,
+        merchant = (payload.getValue("merchant") as JsonPrimitive).contentOrNull,
+        categoryId = (payload.getValue("category_id") as JsonPrimitive).contentOrNull,
+        accountId = accountId,
+        source = (payload.getValue("source") as JsonPrimitive).content,
+        notes = (payload.getValue("notes") as JsonPrimitive).contentOrNull,
+        categoryLockedByUser = (payload.getValue("category_locked_by_user") as JsonPrimitive).boolean,
+        // Derived, not carried -- see toFieldMap's doc on why content_hash is
+        // excluded from the payload. Recomputed from the same four columns
+        // rather than trusted from the sending device, so a row this device
+        // applies is indexed by the hash it would have computed itself.
+        contentHash = contentHashOf(ContentIdScheme.CURRENT, accountId, date, amountMinor, description),
+        importBatchId = (payload.getValue("import_batch_id") as JsonPrimitive).contentOrNull,
+        createdAt = createdAt,
+        updatedAt = updatedAt,
+        localRevision = localRevision,
+        remoteRevision = remoteRevision,
+        pendingOperation = pendingOperation,
+        deletedAt = null,
+    )
+}
+
+/** See [transactionFromFieldMap]. `categories` has no `created_at` column, so there is nothing to thread through. */
+internal fun categoryFromFieldMap(
+    id: String,
+    payload: JsonObject,
+    updatedAt: Long,
+    localRevision: Long,
+    remoteRevision: Long?,
+    pendingOperation: String?,
+): CategoryEntity = CategoryEntity(
+    id = id,
+    name = (payload.getValue("name") as JsonPrimitive).content,
+    parentId = (payload.getValue("parent_id") as JsonPrimitive).contentOrNull,
+    colorArgb = (payload.getValue("color_argb") as JsonPrimitive).int,
+    iconKey = (payload.getValue("icon_key") as JsonPrimitive).content,
+    isSystemDefined = (payload.getValue("is_system_defined") as JsonPrimitive).boolean,
+    updatedAt = updatedAt,
+    localRevision = localRevision,
+    remoteRevision = remoteRevision,
+    pendingOperation = pendingOperation,
+    deletedAt = null,
+)
+
+/** See [transactionFromFieldMap]. */
+internal fun budgetFromFieldMap(
+    id: String,
+    payload: JsonObject,
+    createdAt: Long,
+    updatedAt: Long,
+    localRevision: Long,
+    remoteRevision: Long?,
+    pendingOperation: String?,
+): BudgetEntity = BudgetEntity(
+    id = id,
+    categoryId = (payload.getValue("category_id") as JsonPrimitive).content,
+    yearMonth = (payload.getValue("year_month") as JsonPrimitive).content,
+    limitMinor = (payload.getValue("limit_minor") as JsonPrimitive).long,
+    currencyCode = (payload.getValue("currency_code") as JsonPrimitive).content,
+    createdAt = createdAt,
+    updatedAt = updatedAt,
+    localRevision = localRevision,
+    remoteRevision = remoteRevision,
+    pendingOperation = pendingOperation,
+    deletedAt = null,
+)
+
+/** See [transactionFromFieldMap]. */
+internal fun categoryRuleFromFieldMap(
+    id: String,
+    payload: JsonObject,
+    createdAt: Long,
+    updatedAt: Long,
+    localRevision: Long,
+    remoteRevision: Long?,
+    pendingOperation: String?,
+): CategoryRuleEntity = CategoryRuleEntity(
+    id = id,
+    categoryId = (payload.getValue("category_id") as JsonPrimitive).content,
+    merchantContains = (payload.getValue("merchant_contains") as JsonPrimitive).content,
+    priority = (payload.getValue("priority") as JsonPrimitive).int,
+    createdAt = createdAt,
+    updatedAt = updatedAt,
+    localRevision = localRevision,
+    remoteRevision = remoteRevision,
+    pendingOperation = pendingOperation,
+    deletedAt = null,
+)

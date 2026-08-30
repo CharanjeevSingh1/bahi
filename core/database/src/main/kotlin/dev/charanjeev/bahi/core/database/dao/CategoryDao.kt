@@ -25,6 +25,28 @@ interface CategoryDao {
     @Query("SELECT local_revision, remote_revision FROM categories WHERE id = :id")
     suspend fun revisionOf(id: String): RowRevision?
 
+    /** See [TransactionDao.rowById]: the local side of a merge, tombstone included. */
+    @Query("SELECT * FROM categories WHERE id = :id")
+    suspend fun rowById(id: String): CategoryEntity?
+
+    /** See [TransactionDao.applyRemoteTombstone]. */
+    @Query(
+        """
+        UPDATE categories
+        SET deleted_at = :deletedAt, updated_at = :updatedAt, local_revision = :localRevision,
+            remote_revision = :remoteRevision, pending_operation = :pendingOperation
+        WHERE id = :id
+        """,
+    )
+    suspend fun applyRemoteTombstone(
+        id: String,
+        deletedAt: Long,
+        updatedAt: Long,
+        localRevision: Long,
+        remoteRevision: Long,
+        pendingOperation: String?,
+    )
+
     /**
      * Soft delete: sync needs the tombstone, same as every other table (rule
      * 7). `categories` was the last table still hard-deleting, which nothing

@@ -297,6 +297,45 @@ interface TransactionDao {
     @Query("SELECT local_revision, remote_revision FROM transactions WHERE id = :id")
     suspend fun revisionOf(id: String): RowRevision?
 
+    /**
+     * The sync engine's read of "what do I currently have for this row",
+     * for the apply step (docs/sync-design.md §5, §6.2) -- no `deleted_at`
+     * condition, same reasoning as [revisionOf]: a tombstoned row is still
+     * the local side of a merge, not an absent one.
+     */
+    @Query("SELECT * FROM transactions WHERE id = :id")
+    suspend fun rowById(id: String): TransactionEntity?
+
+    /**
+     * Writes a merge/apply outcome that resolved to a tombstone
+     * (docs/sync-design.md §5, §6.2's per-batch transaction). Only ever
+     * called for a row [rowById] already found -- a tombstone for a row this
+     * device never had is not materialised (§1.2's cascade reasoning applies
+     * the other way: there is nothing here to soft-delete).
+     *
+     * Safe to run as a plain UPDATE with no revision guard: the caller
+     * (`SyncApplier`) reads the row and writes it back inside the same Room
+     * `withTransaction` block, and SQLite serialises writers for the
+     * duration of that transaction, so nothing else can have changed the row
+     * in between (docs/sync-design.md §6.2, §10.4's idempotence case).
+     */
+    @Query(
+        """
+        UPDATE transactions
+        SET deleted_at = :deletedAt, updated_at = :updatedAt, local_revision = :localRevision,
+            remote_revision = :remoteRevision, pending_operation = :pendingOperation
+        WHERE id = :id
+        """,
+    )
+    suspend fun applyRemoteTombstone(
+        id: String,
+        deletedAt: Long,
+        updatedAt: Long,
+        localRevision: Long,
+        remoteRevision: Long,
+        pendingOperation: String?,
+    )
+
     @Query("SELECT * FROM transactions WHERE pending_operation IS NOT NULL LIMIT :limit")
     suspend fun pendingChanges(limit: Int = 200): List<TransactionEntity>
 

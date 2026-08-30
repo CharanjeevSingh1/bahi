@@ -8,6 +8,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
+import javax.inject.Inject
 
 /**
  * One side of a merge: a row's payload (`null` = tombstone) plus the two
@@ -83,7 +84,7 @@ interface ConflictResolver {
     fun resolve(table: SyncTable, local: MergeSide, remote: MergeSide, base: JsonObject?): MergeResult
 }
 
-class DefaultConflictResolver : ConflictResolver {
+class DefaultConflictResolver @Inject constructor() : ConflictResolver {
 
     override fun resolve(table: SyncTable, local: MergeSide, remote: MergeSide, base: JsonObject?): MergeResult {
         val localPayload = local.payload

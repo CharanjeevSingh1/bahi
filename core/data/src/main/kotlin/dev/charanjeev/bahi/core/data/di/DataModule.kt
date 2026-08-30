@@ -15,6 +15,8 @@ import dev.charanjeev.bahi.core.data.repository.OfflineFirstBudgetRepository
 import dev.charanjeev.bahi.core.data.repository.OfflineFirstCategoryRepository
 import dev.charanjeev.bahi.core.data.repository.OfflineFirstCategoryRuleRepository
 import dev.charanjeev.bahi.core.data.repository.OfflineFirstTransactionRepository
+import dev.charanjeev.bahi.core.data.repository.RoomSyncApplier
+import dev.charanjeev.bahi.core.data.repository.SyncApplier
 import dev.charanjeev.bahi.core.data.repository.TransactionRepository
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -49,6 +51,12 @@ interface DataModule {
     fun bindBudgetRepository(
         implementation: OfflineFirstBudgetRepository,
     ): BudgetRepository
+
+    @Binds
+    @Singleton
+    fun bindSyncApplier(
+        implementation: RoomSyncApplier,
+    ): SyncApplier
 }
 
 @Module

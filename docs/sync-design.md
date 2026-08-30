@@ -564,6 +564,26 @@ created when the first device created it, which converges whatever order the two
 sync in and has no losing value to record. The full list is in `SyncPayloads.kt`,
 each exclusion with its reason.
 
+**Corrected while building slice 5c: `min(local, remote)` is not literally
+computable, and the actual rule is weaker.** `remote`'s `created_at` is never on
+the wire at all — it is excluded from the payload for the reason two paragraphs
+up, and `SyncOp` has no separate field for it the way it does for `updated_at`.
+So an applying device cannot compare the two values; it can only decide what to
+do with the one it has. The rule `SyncApplier` actually implements is the
+literal reading of "when this device first held the row" a few lines up: a row
+this device already has keeps its own `created_at` untouched, whatever the
+remote side's happens to be; a row arriving for the first time (no local row to
+keep a value from) gets apply time. That converges the common case — two
+devices that meet with the *same* content-derived row already independently
+imported keep their own, unrelated `created_at`s, which is fine, since nothing
+compares it — and is honestly weaker than "the row was created when the first
+device created it" for a row this device is only now creating on this pull:
+it gets *this* device's apply time, not the true first-creation instant, and
+nothing corrects that later. Harmless, because `created_at` carries no
+information anything else reads (§9's module-placement note makes the same
+point about `SyncPayloads.kt` being one-directional for exactly this reason),
+but the stronger claim above should not be read as implemented.
+
 Two bounds on how bad case (c) can get. Both are consequences of slice 2 rather
 than assumptions:
 
@@ -714,6 +734,39 @@ was for the other three sync columns, with pre-existing rows defaulting to
 `0` rather than `now()` — the safe direction to be wrong in, since `now()`
 would let every untouched category beat a genuine earlier edit it happens to
 race in a tiebreak, while `0` only ever loses one.
+
+**A fifth one, found while building slice 5c's apply step, and the one that
+would have broken push-back silently rather than loudly.** `local_revision`
+is a per-device counter — device A's copy of a row edited fifty times and
+device B's copy edited three times both started at 1 and climbed by one per
+edit, on scales that share nothing. `dirtyRows` compares `local_revision`
+against `sync_shadow.remote_revision` *for the same device*, which is safe on
+its own. But applying a remote op overwrites that shadow with a number from
+the *other* device's scale — and the naive move, bumping `local_revision` by
+one the same way every other write path does, would then compare B's small
+counter against A's large one on every future dirty check. If A's revision
+for a row ever exceeds whatever B's `local_revision` reaches next, B's own
+genuinely new edits to that row look "already synced" and stop being pushed —
+permanently, with nothing failing loudly, which is exactly the shape of bug
+§4.3 exists to catch and would not have caught this one.
+
+The fix is the move a Lamport clock makes on receiving a message: rebase to
+`max(what this device had, what it just learned)`, and add one only if this
+device is contributing something the remote does not already have (i.e. the
+merge outcome differs from the op's own payload). That keeps `local_revision`
+always at least as large as every revision this device has ever observed from
+anyone, so the comparison `dirtyRows` relies on stays valid regardless of how
+far two devices' counters had drifted before they met. Implemented in
+`SyncApplier.decide` (`:core:data`), with the reasoning above repeated at the
+call site rather than only here — the same "restate why, not just what"
+argument this document has made for every other guard in a `WHERE` clause.
+
+One more decision made in the same slice, smaller but worth recording: a
+tombstone applied from a remote op sets `deleted_at` to *this device's* apply
+time, not to any value carried on the wire — `SyncOp` has no deletion instant,
+the same way it has no `created_at` (see the correction in §4.1). Read the
+same way: not a fact about when the row died, but about when this device
+found out, which is all sync ever promises for either timestamp.
 
 ---
 
@@ -1460,6 +1513,37 @@ Hilt-Work and kotlinx-serialization wired up. No new module and no new edge:
   milestone that gives that module its first real screen; it is a stub
   composable today.
 
+**Corrected while building slice 5c: "field map -> entity ... belongs to the
+engine" was wrong about which engine.** `:core:sync` depends on `:core:data`
+(`implementation`, not `api`), so it never has `TransactionEntity` or
+`BahiDatabase` on its classpath at all — rule 3 isn't a discipline `:core:sync`
+chooses to keep here, the module graph makes it physically incapable of doing
+otherwise. So `transactionFromFieldMap` and its three siblings live in
+`SyncPayloads.kt`, `:core:data`, next to `toFieldMap` — the "one direction is
+the whole answer" sentence two paragraphs up turned out to describe the
+shadow specifically, not the general rule the next sentence tried to draw
+from it.
+
+That in turn moves more than the field-map reconstruction. §6.2's requirement
+— a pulled batch applies in one Room transaction — means whatever reads a
+row's current state, decides the merge, and writes the result has to do all
+three inside that one transaction, or a concurrent local edit landing between
+a stale read and a later write would be silently overwritten. Deciding the
+merge is `ConflictResolver`'s job and has to stay in `:core:sync` (that is the
+whole point of the module split above), but the transaction itself can only be
+opened where `BahiDatabase` is visible, which is `:core:data`. The two
+requirements meet at a narrow interface owned by `:core:data`,
+`RemoteMerge` (`SyncApplier.kt`'s neighbour, `RemoteMerge.kt`) — a pure
+`(table, local, remote, base) -> outcome` function, structurally identical to
+`ConflictResolver.resolve` but not the same type, so `:core:data` never
+imports `:core:sync`. `:core:sync`'s `ConflictResolverRemoteMerge` adapts one
+to the other and is bound to it by Hilt. The result: `SyncEngine` (`:core:sync`)
+does no classifying, merging or writing of its own — it fetches what changed
+on each side and hands the raw ops to `SyncApplier.apply` (`:core:data`), which
+owns the whole read-merge-write transaction. `SyncApplier` is the piece the
+original sentence meant to describe as "the engine"; it just does not live in
+the module named that.
+
 **WorkManager finally earns its keep.** It has sat in the version catalog unused
 since M0, and both previous designs explicitly declined to reach for it —
 csv-import-design §6 ("unattended/background work" isn't what an import is) and
@@ -1709,9 +1793,24 @@ M4a — slices 1–8. Each compiles and passes `checkModuleBoundaries` on its ow
    §10.1's two-device harness needs, plus the abstract `SyncTransportContractTest`
    from §10.4 so the same per-device-cursor guarantees get checked against
    whatever implements the interface next (M4b's Drive transport, manually).
-   Not yet built: the pull/classify/merge/apply/push loop itself (5c) — dirty
-   rows are found and a transport exists to carry them, nothing wires the two
-   together yet.
+   **5c is done:** the pull/classify/merge/apply/push loop. `SyncEngine`
+   (`:core:sync`) does the pull (cursor bookkeeping, skipping unreadable
+   batches without re-fetching them) and the push (dirty rows from all four
+   repositories into one batch, guarded acknowledgement); classify, merge and
+   apply run as one Room transaction in `:core:data`'s `SyncApplier`, reached
+   from `:core:sync` through the `RemoteMerge` seam documented in §9's
+   corrected module-placement note — that note is where the module split
+   settled, one level lower than this paragraph originally put it. Idempotence
+   is a revision watermark, not a content diff: an op no newer than what
+   `sync_shadow` already recorded for that row is skipped before the resolver
+   is ever called. Found and fixed while building it: `local_revision` needed
+   a Lamport-clock-style rebase across devices rather than a plain `+ 1`, and
+   `created_at`'s "resolved as `min(local, remote)`" claim in §4.1 was not
+   literally buildable — both corrected in place, next to what they correct.
+   `SyncApplierTest` (`:core:data`, real Room) and `SyncEngineTest`
+   (`:core:sync`, `InMemoryTransport` plus recording fakes) cover the two
+   halves. Not yet built: the two-device harness itself (slice 6) — nothing
+   has run two `SyncEngine`s against one transport and asserted convergence.
 6. **The convergence suite** (§10.1, §10.2). The two-device harness and all
    fourteen scripted scenarios. Also the §6.2 re-measurement of the budgets
    transient under sync-driven writes, with its run count.

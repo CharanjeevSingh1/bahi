@@ -46,6 +46,28 @@ interface CategoryRuleDao {
     @Query("SELECT local_revision, remote_revision FROM category_rules WHERE id = :id")
     suspend fun revisionOf(id: String): RowRevision?
 
+    /** See [TransactionDao.rowById]: the local side of a merge, tombstone included. */
+    @Query("SELECT * FROM category_rules WHERE id = :id")
+    suspend fun rowById(id: String): CategoryRuleEntity?
+
+    /** See [TransactionDao.applyRemoteTombstone]. */
+    @Query(
+        """
+        UPDATE category_rules
+        SET deleted_at = :deletedAt, updated_at = :updatedAt, local_revision = :localRevision,
+            remote_revision = :remoteRevision, pending_operation = :pendingOperation
+        WHERE id = :id
+        """,
+    )
+    suspend fun applyRemoteTombstone(
+        id: String,
+        deletedAt: Long,
+        updatedAt: Long,
+        localRevision: Long,
+        remoteRevision: Long,
+        pendingOperation: String?,
+    )
+
     /**
      * Priority is what decides which rule wins a conflict (§1.5), so
      * reordering is a real edit: it bumps the revision and marks the row

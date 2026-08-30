@@ -210,6 +210,29 @@ class FakeTransactionDao(
     override suspend fun revisionOf(id: String): RowRevision? =
         backing.value[id]?.let { RowRevision(it.localRevision, it.remoteRevision) }
 
+    /** Same tombstone-inclusive read as [revisionOf], for the sync engine's apply step. */
+    override suspend fun rowById(id: String): TransactionEntity? = backing.value[id]
+
+    override suspend fun applyRemoteTombstone(
+        id: String,
+        deletedAt: Long,
+        updatedAt: Long,
+        localRevision: Long,
+        remoteRevision: Long,
+        pendingOperation: String?,
+    ) {
+        val existing = backing.value[id] ?: return
+        backing.value = backing.value + (
+            id to existing.copy(
+                deletedAt = deletedAt,
+                updatedAt = updatedAt,
+                localRevision = localRevision,
+                remoteRevision = remoteRevision,
+                pendingOperation = pendingOperation,
+            )
+        )
+    }
+
     override suspend fun pendingChanges(limit: Int): List<TransactionEntity> =
         backing.value.values.filter { it.pendingOperation != null }.take(limit)
 
