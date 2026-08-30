@@ -17,6 +17,6 @@ class CategoryMappersTest {
             isSystemDefined = true,
         )
 
-        assertThat(toDomain(toEntity(category))).isEqualTo(category)
+        assertThat(toDomain(toEntity(category, updatedAt = 1_000L))).isEqualTo(category)
     }
 }

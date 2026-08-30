@@ -14,7 +14,10 @@ import kotlinx.coroutines.flow.map
  * SQLite backing this fake, so getting that transition right here is exactly
  * as important as getting the real @Query right.
  */
-class FakeTransactionDao : TransactionDao {
+class FakeTransactionDao(
+    /** dirtyRows joins against this, same reasoning as FakeBudgetDao sharing this class. */
+    private val shadows: FakeSyncShadowDao = FakeSyncShadowDao(),
+) : TransactionDao {
 
     private val backing = MutableStateFlow<Map<String, TransactionEntity>>(emptyMap())
 
@@ -209,6 +212,13 @@ class FakeTransactionDao : TransactionDao {
 
     override suspend fun pendingChanges(limit: Int): List<TransactionEntity> =
         backing.value.values.filter { it.pendingOperation != null }.take(limit)
+
+    /** Mirrors the real join: local_revision against the shadow's remote_revision, 0 if absent. */
+    override suspend fun dirtyRows(limit: Int): List<TransactionEntity> =
+        backing.value.values
+            .filter { it.localRevision > shadows.remoteRevisionOf("transactions", it.id) }
+            .sortedBy { it.id }
+            .take(limit)
 
     /**
      * The revision guard is mirrored rather than left implicit, for the same

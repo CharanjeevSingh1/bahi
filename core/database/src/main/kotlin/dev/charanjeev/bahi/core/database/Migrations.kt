@@ -302,6 +302,31 @@ object Migrations {
         }
     }
 
+    /**
+     * Gives `categories` an `updated_at`, the one column every other synced
+     * table already had and `categories` never needed before sync
+     * (docs/sync-design.md §4.3's category gap, found while building slice
+     * 5a). Purely additive, same shape as MIGRATION_3_4.
+     *
+     * `DEFAULT 0` for the same reason `local_revision` needed one in
+     * MIGRATION_3_4: SQLite refuses a NOT NULL column with no default, and
+     * the entity declares none of its own, so Room compares only type and
+     * nullability and a database-only DEFAULT does not diverge from the
+     * schema. 0 undersells how recently a pre-migration category was
+     * actually touched, which only matters the moment it next conflicts with
+     * an edit on another device -- at which point it is `0` against that
+     * edit's real timestamp, so the *other* device's edit wins the tiebreak.
+     * That is the safe direction to be wrong in: the alternative, `now()` at
+     * migration time, would make every untouched category look freshly
+     * edited and let it beat a genuine concurrent edit made earlier but
+     * pushed later.
+     */
+    val MIGRATION_6_7 = object : Migration(6, 7) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE categories ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0")
+        }
+    }
+
     private const val CSV_IMPORT = "CSV_IMPORT"
 
     val ALL: Array<Migration> = arrayOf(
@@ -310,5 +335,6 @@ object Migrations {
         MIGRATION_3_4,
         MIGRATION_4_5,
         MIGRATION_5_6,
+        MIGRATION_6_7,
     )
 }

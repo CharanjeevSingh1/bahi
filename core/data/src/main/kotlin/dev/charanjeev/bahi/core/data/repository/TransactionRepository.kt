@@ -68,6 +68,22 @@ interface TransactionRepository {
      * That number is what the user is shown, not the size of the request.
      */
     suspend fun applyRuleCategories(assignments: Map<String, String>): Int
+
+    /**
+     * Rows this device has changed that the remote has not acknowledged yet,
+     * for the sync engine's push step -- derived from `local_revision`
+     * against the shadow, not from a flag (docs/sync-design.md §4.3).
+     */
+    suspend fun dirtyRows(limit: Int = 200): List<DirtyRow>
+
+    /**
+     * Records that the remote accepted [rowId] at [remoteRevision] --
+     * unless the row has changed since the engine read it at
+     * [expectedLocalRevision], in which case this is a no-op and the row
+     * stays dirty for the next push. Mirrors `TransactionDao.markSynced`'s
+     * guard one layer up.
+     */
+    suspend fun markSynced(rowId: String, remoteRevision: Long, expectedLocalRevision: Long): Boolean
 }
 
 /**

@@ -33,4 +33,10 @@ interface CategoryRepository {
      * overwritten.
      */
     suspend fun seedSystemCategoriesIfNeeded()
+
+    /** See TransactionRepository.dirtyRows. */
+    suspend fun dirtyRows(limit: Int = 200): List<DirtyRow>
+
+    /** See TransactionRepository.markSynced. */
+    suspend fun markSynced(rowId: String, remoteRevision: Long, expectedLocalRevision: Long): Boolean
 }

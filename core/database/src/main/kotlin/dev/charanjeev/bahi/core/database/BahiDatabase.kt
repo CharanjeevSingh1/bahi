@@ -24,7 +24,7 @@ import dev.charanjeev.bahi.core.database.entity.TransactionEntity
         SyncShadowEntity::class,
         SyncConflictEntity::class,
     ],
-    version = 6,
+    version = 7,
     exportSchema = true,
 )
 abstract class BahiDatabase : RoomDatabase() {

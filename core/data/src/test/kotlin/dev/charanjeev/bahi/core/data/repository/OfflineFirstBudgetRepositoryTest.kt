@@ -2,6 +2,7 @@ package dev.charanjeev.bahi.core.data.repository
 
 import app.cash.turbine.test
 import com.google.common.truth.Truth.assertThat
+import dev.charanjeev.bahi.core.database.entity.SyncShadowEntity
 import dev.charanjeev.bahi.core.database.entity.TransactionEntity
 import dev.charanjeev.bahi.core.model.Budget
 import dev.charanjeev.bahi.core.model.Money
@@ -16,7 +17,8 @@ import org.junit.Test
 class OfflineFirstBudgetRepositoryTest {
 
     private val transactionDao = FakeTransactionDao()
-    private val dao = FakeBudgetDao(transactionDao)
+    private val shadows = FakeSyncShadowDao()
+    private val dao = FakeBudgetDao(transactionDao, shadows)
     private val clock = FixedClock(Instant.fromEpochMilliseconds(1_000))
     private val repository =
         OfflineFirstBudgetRepository(dao, transactionDao, clock, UnconfinedTestDispatcher())
@@ -429,5 +431,48 @@ class OfflineFirstBudgetRepositoryTest {
 
             assertThat(expectMostRecentItem().budgets.single().spent).isEqualTo(Money.ZERO)
         }
+    }
+
+    // --- dirtyRows / markSynced (docs/sync-design.md §4.3) ---
+
+    @Test
+    fun `a budget with no shadow at all is dirty`() = runTest {
+        repository.upsert(budget())
+
+        assertThat(repository.dirtyRows().map { it.rowId }).containsExactly(augustFood)
+    }
+
+    @Test
+    fun `a budget whose shadow matches its local_revision is not dirty`() = runTest {
+        repository.upsert(budget())
+        val revision = dao.getById(augustFood)!!.localRevision
+        shadows.record(SyncShadowEntity("budgets", augustFood, revision, "{}"))
+
+        assertThat(repository.dirtyRows()).isEmpty()
+    }
+
+    /** See the transaction repository's equivalent test: markSynced alone is not enough. */
+    @Test
+    fun `markSynced followed by the shadow write clears a budget from dirtyRows`() = runTest {
+        repository.upsert(budget())
+        val revision = dao.getById(augustFood)!!.localRevision
+
+        val acknowledged = repository.markSynced(augustFood, remoteRevision = 3, expectedLocalRevision = revision)
+        shadows.record(SyncShadowEntity("budgets", augustFood, 3, "{}"))
+
+        assertThat(acknowledged).isTrue()
+        assertThat(repository.dirtyRows()).isEmpty()
+    }
+
+    @Test
+    fun `markSynced refuses a budget that changed since it was read`() = runTest {
+        repository.upsert(budget())
+        val staleRevision = dao.getById(augustFood)!!.localRevision
+        repository.upsert(budget(limit = Money(900_000)))
+
+        val acknowledged = repository.markSynced(augustFood, remoteRevision = 3, expectedLocalRevision = staleRevision)
+
+        assertThat(acknowledged).isFalse()
+        assertThat(repository.dirtyRows().map { it.rowId }).containsExactly(augustFood)
     }
 }

@@ -301,6 +301,41 @@ interface TransactionDao {
     suspend fun pendingChanges(limit: Int = 200): List<TransactionEntity>
 
     /**
+     * What the sync engine actually pushes, and not the same thing as
+     * [pendingChanges] (docs/sync-design.md §4.3). A row is dirty here when
+     * this device has changed it since the remote last agreed --
+     * `local_revision` against `sync_shadow.remote_revision` for the same
+     * row, not the `pending_operation` flag every write path has to
+     * remember to set. `COALESCE(s.remote_revision, 0)` is what makes a row
+     * with no shadow row at all count as dirty: it has never synced, and
+     * `local_revision` starts at 1, so it is always greater than an absent
+     * shadow's implicit 0.
+     *
+     * `pending_operation` is untouched by this query and keeps its other
+     * job -- the UPSERT/DELETE marker [dev.charanjeev.bahi.core.model.SyncMetadata]
+     * exposes for display. It stops being what decides whether a row gets
+     * pushed, which is the point: a write path that bumps `local_revision`
+     * correctly but forgets that flag -- the exact bug §4.3 already found
+     * once in `TransactionDao.upsert` -- can no longer silently stop a row
+     * from syncing again, because nothing here reads the flag.
+     *
+     * No `deleted_at` condition, deliberately, matching [pendingChanges]: a
+     * tombstoned row that has not been pushed is exactly as dirty as a live
+     * one, and the engine tells the two apart by `deleted_at`, not by which
+     * query found the row.
+     */
+    @Query(
+        """
+        SELECT t.* FROM transactions t
+        LEFT JOIN sync_shadow s ON s.table_name = 'transactions' AND s.row_id = t.id
+        WHERE t.local_revision > COALESCE(s.remote_revision, 0)
+        ORDER BY t.id ASC
+        LIMIT :limit
+        """,
+    )
+    suspend fun dirtyRows(limit: Int = 200): List<TransactionEntity>
+
+    /**
      * Clears the pending flag for a row the remote has acknowledged --
      * **only if the row has not changed since it was read.**
      *

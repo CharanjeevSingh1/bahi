@@ -24,7 +24,10 @@ import kotlinx.coroutines.flow.map
  * repository's tests, which care that the cascade was driven; that it lands
  * on the right rows is CategoryDaoTest's job, against real Room.
  */
-class FakeCategoryDao : CategoryDao {
+class FakeCategoryDao(
+    /** dirtyRows joins against this, same reasoning as FakeBudgetDao sharing FakeTransactionDao. */
+    private val shadows: FakeSyncShadowDao = FakeSyncShadowDao(),
+) : CategoryDao {
 
     private val backing = MutableStateFlow<Map<String, CategoryEntity>>(emptyMap())
 
@@ -79,5 +82,25 @@ class FakeCategoryDao : CategoryDao {
         val fresh = categories.filterNot { it.id in backing.value }
         backing.value = backing.value + fresh.associateBy(CategoryEntity::id)
         return fresh.map { 1L }
+    }
+
+    /**
+     * Mirrors the real join: local_revision against the shadow's
+     * remote_revision, 0 if absent. Query-level only, matching CategoryDao --
+     * see the note there for why CategoryRepository doesn't expose this yet.
+     */
+    override suspend fun dirtyRows(limit: Int): List<CategoryEntity> =
+        backing.value.values
+            .filter { it.localRevision > shadows.remoteRevisionOf("categories", it.id) }
+            .sortedBy { it.id }
+            .take(limit)
+
+    override suspend fun markSynced(id: String, remoteRevision: Long, expectedLocalRevision: Long): Int {
+        val existing = backing.value[id] ?: return 0
+        if (existing.localRevision != expectedLocalRevision) return 0
+        backing.value = backing.value + (
+            id to existing.copy(pendingOperation = null, remoteRevision = remoteRevision)
+        )
+        return 1
     }
 }

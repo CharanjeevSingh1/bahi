@@ -8,7 +8,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.map
 
 /** A hand-written fake, matching FakeBudgetDao. */
-class FakeCategoryRuleDao : CategoryRuleDao {
+class FakeCategoryRuleDao(
+    /** dirtyRows joins against this, same reasoning as FakeBudgetDao sharing FakeTransactionDao. */
+    private val shadows: FakeSyncShadowDao = FakeSyncShadowDao(),
+) : CategoryRuleDao {
 
     private val backing = MutableStateFlow<Map<String, CategoryRuleEntity>>(emptyMap())
 
@@ -63,5 +66,26 @@ class FakeCategoryRuleDao : CategoryRuleDao {
                 localRevision = existing.localRevision + 1,
             )
         )
+    }
+
+    /** Mirrors the real join: local_revision against the shadow's remote_revision, 0 if absent. */
+    override suspend fun dirtyRows(limit: Int): List<CategoryRuleEntity> =
+        backing.value.values
+            .filter { it.localRevision > shadows.remoteRevisionOf("category_rules", it.id) }
+            .sortedBy { it.id }
+            .take(limit)
+
+    /**
+     * The revision guard is mirrored rather than left implicit, for the same
+     * reason FakeTransactionDao.markSynced does it: a fake that cleared the
+     * flag unconditionally would pass a test the real query fails.
+     */
+    override suspend fun markSynced(id: String, remoteRevision: Long, expectedLocalRevision: Long): Int {
+        val existing = backing.value[id] ?: return 0
+        if (existing.localRevision != expectedLocalRevision) return 0
+        backing.value = backing.value + (
+            id to existing.copy(pendingOperation = null, remoteRevision = remoteRevision)
+        )
+        return 1
     }
 }

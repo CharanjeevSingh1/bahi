@@ -33,7 +33,7 @@ class OfflineFirstCategoryRepository @Inject constructor(
         // through the tombstone, or reviving a deleted category restarts its
         // count at 1 and drops the remote's acknowledgement. See RowRevision.
         val revision = categoryDao.revisionOf(category.id)
-        val entity = toEntity(category).copy(
+        val entity = toEntity(category, updatedAt = clock.now().toEpochMilliseconds()).copy(
             isSystemDefined = existing?.isSystemDefined ?: category.isSystemDefined,
             pendingOperation = "UPSERT",
             localRevision = (revision?.localRevision ?: 0) + 1,
@@ -47,7 +47,24 @@ class OfflineFirstCategoryRepository @Inject constructor(
     }
 
     override suspend fun seedSystemCategoriesIfNeeded() = withContext(ioDispatcher) {
-        categoryDao.insertAllIgnoringConflicts(systemCategories.map(::toEntity))
+        val now = clock.now().toEpochMilliseconds()
+        categoryDao.insertAllIgnoringConflicts(systemCategories.map { toEntity(it, updatedAt = now) })
         Unit
     }
+
+    override suspend fun dirtyRows(limit: Int): List<DirtyRow> = withContext(ioDispatcher) {
+        categoryDao.dirtyRows(limit).map { entity ->
+            DirtyRow(
+                rowId = entity.id,
+                localRevision = entity.localRevision,
+                updatedAt = entity.updatedAt,
+                payload = if (entity.deletedAt != null) null else toFieldMap(entity),
+            )
+        }
+    }
+
+    override suspend fun markSynced(rowId: String, remoteRevision: Long, expectedLocalRevision: Long): Boolean =
+        withContext(ioDispatcher) {
+            categoryDao.markSynced(rowId, remoteRevision, expectedLocalRevision) > 0
+        }
 }

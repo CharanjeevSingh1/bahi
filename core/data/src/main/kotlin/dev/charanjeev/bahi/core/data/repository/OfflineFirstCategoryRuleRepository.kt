@@ -96,4 +96,20 @@ class OfflineFirstCategoryRuleRepository @Inject constructor(
             lockedSkippedCount = countLockedMatches(rules, locked),
         )
     }
+
+    override suspend fun dirtyRows(limit: Int): List<DirtyRow> = withContext(ioDispatcher) {
+        categoryRuleDao.dirtyRows(limit).map { entity ->
+            DirtyRow(
+                rowId = entity.id,
+                localRevision = entity.localRevision,
+                updatedAt = entity.updatedAt,
+                payload = if (entity.deletedAt != null) null else toFieldMap(entity),
+            )
+        }
+    }
+
+    override suspend fun markSynced(rowId: String, remoteRevision: Long, expectedLocalRevision: Long): Boolean =
+        withContext(ioDispatcher) {
+            categoryRuleDao.markSynced(rowId, remoteRevision, expectedLocalRevision) > 0
+        }
 }

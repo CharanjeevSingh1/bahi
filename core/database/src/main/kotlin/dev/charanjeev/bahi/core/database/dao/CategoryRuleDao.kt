@@ -89,4 +89,26 @@ interface CategoryRuleDao {
         """,
     )
     suspend fun softDelete(id: String, deletedAt: Long)
+
+    /** See [TransactionDao.dirtyRows]: derived from the shadow, not `pending_operation`. */
+    @Query(
+        """
+        SELECT r.* FROM category_rules r
+        LEFT JOIN sync_shadow s ON s.table_name = 'category_rules' AND s.row_id = r.id
+        WHERE r.local_revision > COALESCE(s.remote_revision, 0)
+        ORDER BY r.id ASC
+        LIMIT :limit
+        """,
+    )
+    suspend fun dirtyRows(limit: Int = 200): List<CategoryRuleEntity>
+
+    /** See [TransactionDao.markSynced]: guarded so a push acknowledgement can't clear a newer edit. */
+    @Query(
+        """
+        UPDATE category_rules
+        SET pending_operation = NULL, remote_revision = :remoteRevision
+        WHERE id = :id AND local_revision = :expectedLocalRevision
+        """,
+    )
+    suspend fun markSynced(id: String, remoteRevision: Long, expectedLocalRevision: Long): Int
 }

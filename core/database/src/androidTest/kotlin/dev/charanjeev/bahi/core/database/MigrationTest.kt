@@ -389,6 +389,36 @@ class MigrationTest {
         assertThat(countOf(migrated, "sync_conflicts")).isEqualTo(1)
     }
 
+    /**
+     * MIGRATION_6_7 gives `categories` the `updated_at` column every other
+     * synced table already had (docs/sync-design.md §4.3's category gap).
+     * Additive, same shape as migrate3To4's sync-columns test: the column
+     * exists, and a pre-existing row gets `0` rather than a fabricated
+     * "just touched" timestamp -- the DEFAULT the migration comment argues
+     * for.
+     */
+    @Test
+    fun migrate6To7_addsUpdatedAtToCategories_defaultingPreExistingRowsToZero() {
+        helper.createDatabase(TEST_DB, 6).apply {
+            execSQL(
+                """
+                INSERT INTO categories (
+                    id, name, parent_id, color_argb, icon_key, is_system_defined,
+                    local_revision, remote_revision, pending_operation, deleted_at
+                ) VALUES ('user-hobbies', 'Hobbies', NULL, 0, 'palette', 0, 1, NULL, NULL, NULL)
+                """.trimIndent(),
+            )
+            close()
+        }
+
+        val migrated = helper.runMigrationsAndValidate(TEST_DB, 7, true, Migrations.MIGRATION_6_7)
+
+        migrated.query("SELECT updated_at FROM categories WHERE id = 'user-hobbies'").use { cursor ->
+            assertThat(cursor.moveToFirst()).isTrue()
+            assertThat(cursor.getLong(0)).isEqualTo(0)
+        }
+    }
+
     private fun insertTransactionAtV4(
         db: SupportSQLiteDatabase,
         id: String,
@@ -434,6 +464,6 @@ class MigrationTest {
 
     private companion object {
         const val TEST_DB = "migration-test.db"
-        const val LATEST_VERSION = 6
+        const val LATEST_VERSION = 7
     }
 }

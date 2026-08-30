@@ -702,6 +702,19 @@ what a real regression would look like, and that is what the test catches:
 `expected: 0, but was: 1` on the return value, meaning the UPDATE matched the
 row it should have refused.
 
+**A fourth one, found while building slice 5's dirty-row derivation.**
+`categories` had no `updated_at` at all — it predates sync and never needed a
+timestamp before. `SyncOp.updatedAt` is non-nullable and §5.5's tiebreak
+genuinely needs a real one; `local_revision` is not a stand-in for it, because
+it is a per-device counter, not a comparable wall-clock value, and comparing
+two devices' counters as if they were would make the tiebreak's outcome
+depend on how many *local* edits each device happened to make rather than
+which edit came later. Fixed in `MIGRATION_6_7`, additive like `MIGRATION_3_4`
+was for the other three sync columns, with pre-existing rows defaulting to
+`0` rather than `now()` — the safe direction to be wrong in, since `now()`
+would let every untouched category beat a genuine earlier edit it happens to
+race in a tiebreak, while `0` only ever loses one.
+
 ---
 
 ## 5. Conflict resolution
@@ -1679,14 +1692,26 @@ M4a — slices 1–8. Each compiles and passes `checkModuleBoundaries` on its ow
    building it: when a shadow row is written and what the first sync does with
    a row that has no base (§4.1), and who reads `sync_conflicts` and what
    removes a row from it (§5.6). No resolution logic, no transport.
-4. **The resolver** (§5). `ConflictResolver` reshaped, per-entity field policies,
-   the field-coverage test, and every pure unit test for the merge rules. The
-   slice most worth independent review — the equivalent of column-role inference
-   in M2 and `applyRules` in M3.
+4. **The resolver** (§5). **Done.** `ConflictResolver` reshaped, per-entity field
+   policies, the field-coverage test, and every pure unit test for the merge
+   rules. The slice most worth independent review — the equivalent of
+   column-role inference in M2 and `applyRules` in M3.
 5. **The engine** (§4.2, §6.2). Pull → classify → merge → apply → push, each
    batch in one Room `@Transaction`, cursor handling, dirty-row derivation,
    idempotence. `SyncTransport` + `InMemoryTransport`. First slice where two
-   engines can talk.
+   engines can talk. **5a is done:** dirty-row derivation on all four tables —
+   `dirtyRows`/`markSynced` on every DAO and repository, derived from
+   `local_revision` against the shadow rather than `pending_operation` (§4.3),
+   plus the `categories.updated_at` gap found and fixed along the way
+   (`MIGRATION_6_7`). §4.3's guard is now load-bearing on all four tables, not
+   just documented on `TransactionDao`. **5b is done:** the `SyncTransport`
+   interface and `InMemoryTransport`, the mutable-list-behind-a-mutex fake
+   §10.1's two-device harness needs, plus the abstract `SyncTransportContractTest`
+   from §10.4 so the same per-device-cursor guarantees get checked against
+   whatever implements the interface next (M4b's Drive transport, manually).
+   Not yet built: the pull/classify/merge/apply/push loop itself (5c) — dirty
+   rows are found and a transport exists to carry them, nothing wires the two
+   together yet.
 6. **The convergence suite** (§10.1, §10.2). The two-device harness and all
    fourteen scripted scenarios. Also the §6.2 re-measurement of the budgets
    transient under sync-driven writes, with its run count.

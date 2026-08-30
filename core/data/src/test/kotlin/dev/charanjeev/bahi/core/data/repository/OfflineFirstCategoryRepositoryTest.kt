@@ -2,6 +2,7 @@ package dev.charanjeev.bahi.core.data.repository
 
 import app.cash.turbine.test
 import com.google.common.truth.Truth.assertThat
+import dev.charanjeev.bahi.core.database.entity.SyncShadowEntity
 import dev.charanjeev.bahi.core.model.Category
 import dev.charanjeev.bahi.core.testing.FixedClock
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -13,7 +14,8 @@ private const val DELETED_AT = 1_700L
 
 class OfflineFirstCategoryRepositoryTest {
 
-    private val dao = FakeCategoryDao()
+    private val shadows = FakeSyncShadowDao()
+    private val dao = FakeCategoryDao(shadows)
     private val clock = FixedClock(Instant.fromEpochMilliseconds(DELETED_AT))
     private val repository = OfflineFirstCategoryRepository(dao, clock, UnconfinedTestDispatcher())
 
@@ -159,5 +161,48 @@ class OfflineFirstCategoryRepositoryTest {
         repository.observeCategories().test {
             assertThat(awaitItem().map { it.id }).contains("food")
         }
+    }
+
+    // --- dirtyRows / markSynced (docs/sync-design.md §4.3) ---
+
+    @Test
+    fun `a category with no shadow at all is dirty`() = runTest {
+        repository.upsert(hobbies)
+
+        assertThat(repository.dirtyRows().map { it.rowId }).containsExactly("user-hobbies")
+    }
+
+    @Test
+    fun `a category whose shadow matches its local_revision is not dirty`() = runTest {
+        repository.upsert(hobbies)
+        val revision = dao.rowsIncludingDeleted().single { it.id == "user-hobbies" }.localRevision
+        shadows.record(SyncShadowEntity("categories", "user-hobbies", revision, "{}"))
+
+        assertThat(repository.dirtyRows()).isEmpty()
+    }
+
+    @Test
+    fun `renaming a synced category makes it dirty again`() = runTest {
+        repository.upsert(hobbies)
+        val revision = dao.rowsIncludingDeleted().single { it.id == "user-hobbies" }.localRevision
+        shadows.record(SyncShadowEntity("categories", "user-hobbies", revision, "{}"))
+
+        repository.upsert(hobbies.copy(name = "Hobbies & Crafts"))
+
+        assertThat(repository.dirtyRows().map { it.rowId }).containsExactly("user-hobbies")
+    }
+
+    /** See the transaction repository's equivalent test: markSynced alone is not enough. */
+    @Test
+    fun `markSynced followed by the shadow write clears a category from dirtyRows`() = runTest {
+        repository.upsert(hobbies)
+        val revision = dao.rowsIncludingDeleted().single { it.id == "user-hobbies" }.localRevision
+
+        val acknowledged =
+            repository.markSynced("user-hobbies", remoteRevision = 4, expectedLocalRevision = revision)
+        shadows.record(SyncShadowEntity("categories", "user-hobbies", 4, "{}"))
+
+        assertThat(acknowledged).isTrue()
+        assertThat(repository.dirtyRows()).isEmpty()
     }
 }

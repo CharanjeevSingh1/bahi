@@ -157,4 +157,20 @@ class OfflineFirstTransactionRepository @Inject constructor(
             if (assignments.isEmpty()) return@withContext 0
             transactionDao.applyRuleCategories(assignments, clock.now().toEpochMilliseconds())
         }
+
+    override suspend fun dirtyRows(limit: Int): List<DirtyRow> = withContext(ioDispatcher) {
+        transactionDao.dirtyRows(limit).map { entity ->
+            DirtyRow(
+                rowId = entity.id,
+                localRevision = entity.localRevision,
+                updatedAt = entity.updatedAt,
+                payload = if (entity.deletedAt != null) null else toFieldMap(entity),
+            )
+        }
+    }
+
+    override suspend fun markSynced(rowId: String, remoteRevision: Long, expectedLocalRevision: Long): Boolean =
+        withContext(ioDispatcher) {
+            transactionDao.markSynced(rowId, remoteRevision, expectedLocalRevision) > 0
+        }
 }

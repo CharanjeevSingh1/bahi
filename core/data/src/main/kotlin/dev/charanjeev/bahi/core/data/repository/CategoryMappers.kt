@@ -16,11 +16,17 @@ internal fun toDomain(entity: CategoryEntity): Category = Category(
     isSystemDefined = entity.isSystemDefined,
 )
 
-internal fun toEntity(model: Category): CategoryEntity = CategoryEntity(
+/**
+ * [updatedAt] is passed in rather than read off the model, matching
+ * BudgetMappers.toEntity: the domain [Category] carries no timestamp, so the
+ * repository supplies it.
+ */
+internal fun toEntity(model: Category, updatedAt: Long): CategoryEntity = CategoryEntity(
     id = model.id,
     name = model.name,
     parentId = model.parentId,
     colorArgb = model.colorArgb,
     iconKey = model.iconKey,
     isSystemDefined = model.isSystemDefined,
+    updatedAt = updatedAt,
 )

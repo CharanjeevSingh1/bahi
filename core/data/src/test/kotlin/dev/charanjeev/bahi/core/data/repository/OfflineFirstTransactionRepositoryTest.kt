@@ -1,6 +1,7 @@
 package dev.charanjeev.bahi.core.data.repository
 
 import com.google.common.truth.Truth.assertThat
+import dev.charanjeev.bahi.core.database.entity.SyncShadowEntity
 import dev.charanjeev.bahi.core.model.ContentIdScheme
 import dev.charanjeev.bahi.core.model.DateWindow
 import dev.charanjeev.bahi.core.model.Money
@@ -19,7 +20,8 @@ import org.junit.Test
 
 class OfflineFirstTransactionRepositoryTest {
 
-    private val dao = FakeTransactionDao()
+    private val shadows = FakeSyncShadowDao()
+    private val dao = FakeTransactionDao(shadows)
     private val clock = FixedClock(Instant.fromEpochMilliseconds(DELETED_AT))
     private val repository = OfflineFirstTransactionRepository(dao, clock, UnconfinedTestDispatcher())
 
@@ -407,6 +409,96 @@ class OfflineFirstTransactionRepositoryTest {
         val result = repository.observeTransactions(TransactionFilter(categoryIds = setOf("food"))).first()
 
         assertThat(result.single().amount).isEqualTo(Money(-4500))
+    }
+
+    // --- dirtyRows / markSynced (docs/sync-design.md §4.3) ---
+
+    @Test
+    fun `a row with no shadow at all is dirty`() = runTest {
+        repository.upsert(TestData.transaction(id = "a"))
+
+        val dirty = repository.dirtyRows()
+
+        assertThat(dirty.map { it.rowId }).containsExactly("a")
+    }
+
+    @Test
+    fun `a row whose shadow matches its local_revision is not dirty`() = runTest {
+        repository.upsert(TestData.transaction(id = "a"))
+        val revision = dao.entity("a")!!.localRevision
+        shadows.record(SyncShadowEntity(tableName = "transactions", rowId = "a", remoteRevision = revision, payload = "{}"))
+
+        assertThat(repository.dirtyRows()).isEmpty()
+    }
+
+    @Test
+    fun `editing a synced row makes it dirty again without touching pending_operation`() = runTest {
+        repository.upsert(TestData.transaction(id = "a"))
+        val syncedRevision = dao.entity("a")!!.localRevision
+        shadows.record(
+            SyncShadowEntity(tableName = "transactions", rowId = "a", remoteRevision = syncedRevision, payload = "{}"),
+        )
+        repository.update(TestData.transaction(id = "a", description = "edited on the tablet"))
+
+        val dirty = repository.dirtyRows()
+
+        assertThat(dirty.map { it.rowId }).containsExactly("a")
+    }
+
+    @Test
+    fun `a deleted row is dirty and carries no payload`() = runTest {
+        repository.upsert(TestData.transaction(id = "a"))
+        repository.delete("a")
+
+        val dirty = repository.dirtyRows()
+
+        assertThat(dirty.single().payload).isNull()
+    }
+
+    /**
+     * `markSynced` alone is not enough -- `dirtyRows` compares against the
+     * shadow, not the row's own `remote_revision`, so a row stays dirty until
+     * the engine also writes the shadow. Both happen together in the
+     * engine's one push-ack transaction (§4.1); this is two calls only
+     * because there is no engine yet to make it one.
+     */
+    @Test
+    fun `markSynced alone does not clear dirtyRows -- the shadow has to be written too`() = runTest {
+        repository.upsert(TestData.transaction(id = "a"))
+        val revision = dao.entity("a")!!.localRevision
+
+        val acknowledged = repository.markSynced(rowId = "a", remoteRevision = 7, expectedLocalRevision = revision)
+
+        assertThat(acknowledged).isTrue()
+        assertThat(repository.dirtyRows().map { it.rowId }).containsExactly("a")
+    }
+
+    @Test
+    fun `markSynced followed by the shadow write clears a row from dirtyRows`() = runTest {
+        repository.upsert(TestData.transaction(id = "a"))
+        val revision = dao.entity("a")!!.localRevision
+
+        repository.markSynced(rowId = "a", remoteRevision = 7, expectedLocalRevision = revision)
+        shadows.record(SyncShadowEntity(tableName = "transactions", rowId = "a", remoteRevision = 7, payload = "{}"))
+
+        assertThat(repository.dirtyRows()).isEmpty()
+    }
+
+    /**
+     * The slice 3a bug this guard exists for, one layer up: an edit landing
+     * between the engine reading a row and the push acknowledging it must not
+     * be lost.
+     */
+    @Test
+    fun `markSynced refuses a row that changed since it was read`() = runTest {
+        repository.upsert(TestData.transaction(id = "a"))
+        val staleRevision = dao.entity("a")!!.localRevision
+        repository.update(TestData.transaction(id = "a", description = "edited before the ack arrived"))
+
+        val acknowledged = repository.markSynced(rowId = "a", remoteRevision = 7, expectedLocalRevision = staleRevision)
+
+        assertThat(acknowledged).isFalse()
+        assertThat(repository.dirtyRows().map { it.rowId }).containsExactly("a")
     }
 
     private companion object {

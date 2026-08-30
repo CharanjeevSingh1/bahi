@@ -1,6 +1,7 @@
 package dev.charanjeev.bahi.core.importer
 
 import dev.charanjeev.bahi.core.data.repository.CategoryRuleRepository
+import dev.charanjeev.bahi.core.data.repository.DirtyRow
 import dev.charanjeev.bahi.core.model.CategoryRule
 import dev.charanjeev.bahi.core.model.RuleApplicationPreview
 import kotlinx.coroutines.flow.Flow
@@ -38,4 +39,8 @@ class FakeCategoryRuleRepository(private var stored: List<CategoryRule> = emptyL
 
     override suspend fun apply(preview: RuleApplicationPreview): Int =
         throw UnsupportedOperationException("The importer writes through TransactionRepository.applyRuleCategories.")
+
+    /** Not exercised: nothing under test here reaches the sync engine's push step. */
+    override suspend fun dirtyRows(limit: Int): List<DirtyRow> = emptyList()
+    override suspend fun markSynced(rowId: String, remoteRevision: Long, expectedLocalRevision: Long): Boolean = false
 }

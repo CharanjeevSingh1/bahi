@@ -103,4 +103,26 @@ interface BudgetDao {
         """,
     )
     suspend fun softDelete(id: String, deletedAt: Long)
+
+    /** See [TransactionDao.dirtyRows]: derived from the shadow, not `pending_operation`. */
+    @Query(
+        """
+        SELECT b.* FROM budgets b
+        LEFT JOIN sync_shadow s ON s.table_name = 'budgets' AND s.row_id = b.id
+        WHERE b.local_revision > COALESCE(s.remote_revision, 0)
+        ORDER BY b.id ASC
+        LIMIT :limit
+        """,
+    )
+    suspend fun dirtyRows(limit: Int = 200): List<BudgetEntity>
+
+    /** See [TransactionDao.markSynced]: guarded so a push acknowledgement can't clear a newer edit. */
+    @Query(
+        """
+        UPDATE budgets
+        SET pending_operation = NULL, remote_revision = :remoteRevision
+        WHERE id = :id AND local_revision = :expectedLocalRevision
+        """,
+    )
+    suspend fun markSynced(id: String, remoteRevision: Long, expectedLocalRevision: Long): Int
 }
