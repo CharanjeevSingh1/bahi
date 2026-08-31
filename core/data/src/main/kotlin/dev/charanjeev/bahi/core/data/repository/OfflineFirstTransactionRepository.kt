@@ -22,7 +22,12 @@ import javax.inject.Inject
  * writes into the same tables, so the UI updates through the normal Flow with
  * no special-casing for "we just synced".
  *
- * TODO(M4): conflict resolution hooks land here once :core:sync is built.
+ * Conflict resolution does not live here: `RoomSyncApplier` writes to
+ * `TransactionDao` directly from `:core:data`'s own package rather than
+ * through this repository (docs/sync-design.md §9's module-placement note
+ * explains why `SyncApplier` has to be `:core:data`-side of the `:core:sync`
+ * boundary), so this class's `upsert`/`update` stay exactly what a user edit
+ * calls.
  */
 class OfflineFirstTransactionRepository @Inject constructor(
     private val transactionDao: TransactionDao,

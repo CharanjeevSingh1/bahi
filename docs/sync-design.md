@@ -1933,6 +1933,20 @@ sections were the ones that did this.
   `sync_conflicts` rows pointing at nothing. Narrow (nothing in the UI does
   this) and not closed; the ordering argument that closes the ordinary case
   does not extend to it.
+- **A `category_id` conflict renders as an unusable id for a user-created
+  category.** §13 slice 8. The Settings screen shows `ConflictValue.Text`
+  verbatim -- fine for the seeded system categories (`"food"`,
+  `"entertainment"`), whose ids are readable slugs, but every other
+  user-created entity in this app (a transaction, a rule, a budget) gets its
+  id from `UUID.randomUUID()`, and there is no reason a category-creation
+  screen would do otherwise once one exists. The row would read `Kept:
+  7f3a9c21-...`, which tells the user nothing. `docs/screenshots/settings-conflicts.png`
+  is a flattering case precisely because it only exercises a seeded
+  category -- it is not evidence this is fine in general. Closing it needs a
+  join against `categories` (by id, filtered `deleted_at IS NULL` else
+  fall back to the id itself, the same way `RuleListItem`/`BudgetRow`
+  already resolve a category for display) at the point `SettingsViewModel`
+  builds `ConflictListItem`, not attempted in slice 8.
 
 ---
 
@@ -2110,8 +2124,9 @@ M4a — slices 1–8. Each compiles and passes `checkModuleBoundaries` on its ow
    -- restoring one on-device confirmed the write lands: `category_id`
    changed, `local_revision` bumped, the conflict acknowledged). One
    deliberate simplification, not attempted here: `category_id`'s value
-   renders as the raw id, not the category's name -- resolving it needs a
-   join this slice's scope didn't extend to.
+   renders as the raw id, not the category's name. §11 has the sharper
+   version of that gap -- the screenshot's own category ids are the seeded
+   system slugs, which is a flattering case, not the general one.
 
 M4b — slice 9. **Deferred, not next** (§2, D3): it is a milestone's worth of
 work on its own, none of the hard part lives in it, and M4a is complete and
