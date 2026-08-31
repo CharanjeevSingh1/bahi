@@ -101,6 +101,76 @@ interface TransactionDao {
     fun observeUncategorisedSpend(from: String, to: String): Flow<Long>
 
     /**
+     * Expense spend per live category for a month, aggregated by SQLite --
+     * same reasoning as `BudgetDao.observeBudgetsWithSpend`: a rule, import
+     * or hand edit that changes a `category_id` has to re-emit here on its
+     * own, with no invalidation step for anyone to forget.
+     *
+     * `category_id IN (SELECT id FROM categories WHERE deleted_at IS NULL)`
+     * is the exact complement of [observeUncategorisedSpend]'s WHERE clause
+     * -- that query is `category_id IS NULL OR category_id NOT IN (...)`.
+     * Together the two partition every expense transaction exactly once:
+     * this query would otherwise either drop a transaction pointing at a
+     * tombstoned category (counted nowhere) or double-count it (counted
+     * here and in the uncategorised line), which is the exhaustiveness bug
+     * a category breakdown is not allowed to have (docs/budgets-design.md
+     * §2.2).
+     *
+     * `amount_minor < 0`, not a category-based exclusion, is what keeps
+     * Income and Transfers off the chart -- the same "filtered by sign, not
+     * by category semantics" rule §2.2 uses for a budget's spend. A salary
+     * credit never reaches this query no matter what it is filed under.
+     */
+    @Query(
+        """
+        SELECT category_id, COALESCE(SUM(-amount_minor), 0) AS spent_minor
+        FROM transactions
+        WHERE amount_minor < 0
+          AND deleted_at IS NULL
+          AND date BETWEEN :from AND :to
+          AND category_id IN (SELECT id FROM categories WHERE deleted_at IS NULL)
+        GROUP BY category_id
+        """,
+    )
+    fun observeCategorySpend(from: String, to: String): Flow<List<CategorySpendRow>>
+
+    /**
+     * Expense spend per calendar month in [from]..[to], for the insights
+     * trend chart. `year_month` comes out of `date`'s own "YYYY-MM-DD..."
+     * text rather than a second stored column, the same way `YearMonth`
+     * itself is just the first seven characters of that format.
+     *
+     * A month with no expense rows in range is simply absent from the
+     * result -- the caller (`OfflineFirstInsightsRepository`) zero-fills it,
+     * and is only correct doing so because it also knows the window it asked
+     * for started no earlier than the app's first transaction (see
+     * [observeEarliestTransactionDate]). This query alone cannot tell "spent
+     * nothing" apart from "the app didn't exist yet".
+     */
+    @Query(
+        """
+        SELECT substr(date, 1, 7) AS year_month, COALESCE(SUM(-amount_minor), 0) AS spent_minor
+        FROM transactions
+        WHERE amount_minor < 0 AND deleted_at IS NULL AND date BETWEEN :from AND :to
+        GROUP BY year_month
+        ORDER BY year_month ASC
+        """,
+    )
+    fun observeMonthlySpend(from: String, to: String): Flow<List<MonthlySpendRow>>
+
+    /**
+     * The earliest live transaction's date, or null with none at all. The
+     * only thing that tells the insights trend how far back a month can be
+     * zero-filled rather than simply omitted -- see [observeMonthlySpend].
+     *
+     * No `amount_minor` condition: an income-only month before any expense
+     * ever happened is still a month the app has history for, and drawing
+     * it as a genuine ₹0 expense bar is correct, not an omission.
+     */
+    @Query("SELECT MIN(date) FROM transactions WHERE deleted_at IS NULL")
+    fun observeEarliestTransactionDate(): Flow<String?>
+
+    /**
      * Layer 1 of the lock guard (docs/budgets-design.md §1.4): the candidate
      * set for a rule run, with `category_locked_by_user = 0` as a *query
      * condition* rather than a filter the caller applies afterwards. A

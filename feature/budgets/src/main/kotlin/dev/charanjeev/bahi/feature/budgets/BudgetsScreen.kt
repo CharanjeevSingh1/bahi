@@ -46,6 +46,7 @@ import dev.charanjeev.bahi.core.model.Money
 import dev.charanjeev.bahi.core.model.YearMonth
 import dev.charanjeev.bahi.core.designsystem.theme.LocalSemanticColors
 import dev.charanjeev.bahi.core.ui.MoneyText
+import dev.charanjeev.bahi.core.ui.displayName
 import dev.charanjeev.bahi.core.ui.formatMoney
 
 @Composable

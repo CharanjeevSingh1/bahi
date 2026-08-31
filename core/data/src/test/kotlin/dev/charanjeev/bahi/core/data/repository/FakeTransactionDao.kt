@@ -1,5 +1,7 @@
 package dev.charanjeev.bahi.core.data.repository
 
+import dev.charanjeev.bahi.core.database.dao.CategorySpendRow
+import dev.charanjeev.bahi.core.database.dao.MonthlySpendRow
 import dev.charanjeev.bahi.core.database.dao.RowRevision
 import dev.charanjeev.bahi.core.database.dao.TransactionDao
 import dev.charanjeev.bahi.core.database.entity.TransactionEntity
@@ -61,6 +63,36 @@ class FakeTransactionDao(
                 .filter { it.date >= from && it.date <= to }
                 .sumOf { -it.amountMinor }
         }
+
+    /**
+     * Like [observeUncategorisedSpend] above, this does not mirror the
+     * tombstoned-category half of the real query's condition -- there is no
+     * categories table backing this fake to check against, only a plain
+     * `categoryId != null`. That edge case is CategoryDaoTest/TransactionDaoTest's
+     * job against real Room; what this fake buys is the aggregation and sign
+     * filtering the repository's grouping and combine logic depend on.
+     */
+    override fun observeCategorySpend(from: String, to: String): Flow<List<CategorySpendRow>> =
+        backing.map { entities ->
+            entities.values
+                .filter { it.categoryId != null && it.amountMinor < 0 && it.deletedAt == null }
+                .filter { it.date >= from && it.date <= to }
+                .groupBy { it.categoryId!! }
+                .map { (categoryId, rows) -> CategorySpendRow(categoryId, rows.sumOf { -it.amountMinor }) }
+        }
+
+    override fun observeMonthlySpend(from: String, to: String): Flow<List<MonthlySpendRow>> =
+        backing.map { entities ->
+            entities.values
+                .filter { it.amountMinor < 0 && it.deletedAt == null }
+                .filter { it.date >= from && it.date <= to }
+                .groupBy { it.date.substring(0, 7) }
+                .map { (yearMonth, rows) -> MonthlySpendRow(yearMonth, rows.sumOf { -it.amountMinor }) }
+                .sortedBy { it.yearMonth }
+        }
+
+    override fun observeEarliestTransactionDate(): Flow<String?> =
+        backing.map { entities -> entities.values.filter { it.deletedAt == null }.minOfOrNull { it.date } }
 
     override suspend fun countExistingHashes(hashes: List<String>): Map<String, Int> =
         backing.value.values
