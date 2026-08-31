@@ -37,6 +37,16 @@ jobs:
       - name: Compile
         run: ./gradlew assembleDebug --stacktrace -PwarningsAsErrors=true
 
+      # Separate from the debug compile above so an R8/shrinker failure --
+      # a different failure mode than a plain compile error, usually a
+      # missing keep rule for something reflection- or serialization-based
+      # -- shows up as its own red step instead of being buried inside
+      # "Compile". Local, warm-cache cost is ~25s on top of assembleDebug;
+      # revisit if a cold CI runner makes this step expensive enough to
+      # move to nightly.yml instead of blocking every push.
+      - name: Compile release (R8)
+        run: ./gradlew assembleRelease --stacktrace -PwarningsAsErrors=true
+
       - name: Unit tests
         run: ./gradlew unitTests --stacktrace
 

@@ -36,8 +36,14 @@ class AndroidApplicationConventionPlugin : Plugin<Project> {
                         getDefaultProguardFile("proguard-android-optimize.txt"),
                         "proguard-rules.pro",
                     )
-                    // Debug signing so `assembleRelease` works on a fresh clone and in
-                    // CI. Swap for a real keystore before publishing.
+                    // Debug signing, and staying that way: this project doesn't ship to
+                    // Play Store, a real keystore can't be committed to a public repo,
+                    // and CI has to be able to run `assembleRelease` on every push
+                    // without a secret it would need to be handed. The R8 build this
+                    // produces is real -- minification and resource shrinking are on,
+                    // same as a shipping build -- only the signature is a placeholder.
+                    // If that changes (an actual release channel), the keystore comes
+                    // from CI secrets, not from committing one here.
                     signingConfig = signingConfigs.getByName("debug")
                 }
             }
