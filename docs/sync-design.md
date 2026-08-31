@@ -1266,9 +1266,29 @@ Three qualifications, because the answer is "no, provided":
    That does not change the analysis — 2.66 ms against a 16.7 ms frame, conflated
    before composition reads it — but it does change the *frequency*, and the
    measurement in `BudgetTotalsTransientTest` was taken under user-driven writes.
-   Re-measuring under sync-driven writes is a slice-6 item, and per CLAUDE.md's
-   rule about this exact test, whatever number comes out gets stated with its run
-   count.
+
+   **Re-measured under sync-driven writes** (`SyncDrivenBudgetTotalsTransientTest`,
+   `:core:data`; unassigned across slices 6 and 7, closed out afterward rather
+   than left unowned): the same write, routed through `RoomSyncApplier.apply`
+   -- one remote `SyncOp`, applied inside sync's own `withTransaction` -- instead
+   of a direct DAO call from a screen. 30 runs each direction, one emulator
+   (Pixel_9_Pro_XL API 36): the forward direction (uncategorised → budgeted) tore
+   on 19/30 runs (2 double-counted, 17 counted in neither); the reverse direction
+   tore on 21/30 runs (17 double-counted, 4 counted in neither). Both torn shapes
+   occur in both directions, the same finding `BudgetTotalsTransientTest` already
+   made under user-driven writes -- which side re-queries first is still not
+   ordered by anything the write path controls. All 60 runs settled on the
+   correct pair with exactly one transition per side; none violated the three
+   order-independent properties. Applying through the sync path adds a merge
+   decision and a full-row upsert ahead of the write, but that work happens
+   before the transaction commits, so Room's invalidation still fires once from
+   one write, same as the direct-DAO path -- nothing here found a second commit,
+   an oscillation, or a wrong settle. The higher tear rate than intuition might
+   expect is not compared against a same-sample-size number for the direct-DAO
+   path, because `BudgetTotalsTransientTest` runs each direction once per CI
+   invocation rather than in a loop; a frequency comparison between the two
+   paths would need that test re-run at the same count first, which is out of
+   scope here.
 
 ### 6.3 The content hash
 
@@ -2053,7 +2073,10 @@ M4a — slices 1–8. Each compiles and passes `checkModuleBoundaries` on its ow
    for `ON DELETE CASCADE` safety. One scripted scenario added
    (`bDeletesAndCompactsBeforeAPulls_aReconcilesAndHardDeletes`) alongside
    the fourteen from §10.2. §7 has the full write-up and the one limitation
-   this slice knowingly left open.
+   this slice knowingly left open. The §6.2 budgets-transient re-measurement
+   named in slice 6 as owed was not picked up here either -- closed out
+   afterward, as a standalone item, once that gap was noticed; §6.2 has the
+   result.
 8. **Sync UI** in `:feature:settings` (§5.6). Sync status from `SyncStatus`
    (which already exists and is already the right shape), the conflict list, and
    restoring a discarded value. Gives that module its first real screen. Note
