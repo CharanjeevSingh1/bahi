@@ -40,12 +40,13 @@ fun editRuleRoute(ruleId: String) = "$EditRuleRoute/$ruleId"
  * the app module already owns, so the app module never sees a screen or a
  * ViewModel directly -- same shape as transactionsScreen.
  */
-fun NavGraphBuilder.budgetsScreen(navController: NavHostController) {
+fun NavGraphBuilder.budgetsScreen(navController: NavHostController, onOpenSettings: () -> Unit = {}) {
     composable(route = BudgetsRoute) {
         BudgetsScreen(
             onAddBudget = { month -> navController.navigate(newBudgetRoute(month)) },
             onEditBudget = { id, month -> navController.navigate(editBudgetRoute(id, month)) },
             onOpenRules = { navController.navigate(RulesRoute) },
+            onOpenSettings = onOpenSettings,
         )
     }
     composable(

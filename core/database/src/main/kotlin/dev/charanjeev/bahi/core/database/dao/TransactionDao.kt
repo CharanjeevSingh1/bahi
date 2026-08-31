@@ -74,11 +74,25 @@ interface TransactionDao {
      *
      * COALESCE for the same reason as there: no uncategorised spending has to
      * arrive as 0, not as a null the caller has to remember to handle.
+     *
+     * **A transaction whose category was deleted counts here too, and the
+     * second condition is not optional.** Since v4 a deleted category is a
+     * tombstone rather than a missing row, so `ON DELETE SET_NULL` no longer
+     * fires and the transaction keeps pointing at it
+     * (`CategoryDao.softDeleteUserCategory`). Its budget was tombstoned by the
+     * same cascade, so without this the spend would be in no budget *and* not
+     * uncategorised -- money that is on the ledger and on no line of the
+     * budgets screen. Reading `categories` also puts that table in the flow's
+     * invalidation set, which is what makes the uncategorised line update the
+     * moment a category is deleted rather than on the next unrelated write.
      */
     @Query(
         """
         SELECT COALESCE(SUM(-amount_minor), 0) FROM transactions
-        WHERE category_id IS NULL
+        WHERE (
+                category_id IS NULL
+                OR category_id NOT IN (SELECT id FROM categories WHERE deleted_at IS NULL)
+              )
           AND amount_minor < 0
           AND deleted_at IS NULL
           AND date BETWEEN :from AND :to
@@ -279,11 +293,146 @@ interface TransactionDao {
     suspend fun applyRuleCategories(assignments: Map<String, String>, updatedAt: Long): Int =
         assignments.entries.sumOf { (id, categoryId) -> applyRuleCategory(id, categoryId, updatedAt) }
 
+    /** See [RowRevision]: no `deleted_at` condition, deliberately. */
+    @Query("SELECT local_revision, remote_revision FROM transactions WHERE id = :id")
+    suspend fun revisionOf(id: String): RowRevision?
+
+    /**
+     * The sync engine's read of "what do I currently have for this row",
+     * for the apply step (docs/sync-design.md §5, §6.2) -- no `deleted_at`
+     * condition, same reasoning as [revisionOf]: a tombstoned row is still
+     * the local side of a merge, not an absent one.
+     */
+    @Query("SELECT * FROM transactions WHERE id = :id")
+    suspend fun rowById(id: String): TransactionEntity?
+
+    /**
+     * Writes a merge/apply outcome that resolved to a tombstone
+     * (docs/sync-design.md §5, §6.2's per-batch transaction). Only ever
+     * called for a row [rowById] already found -- a tombstone for a row this
+     * device never had is not materialised (§1.2's cascade reasoning applies
+     * the other way: there is nothing here to soft-delete).
+     *
+     * Safe to run as a plain UPDATE with no revision guard: the caller
+     * (`SyncApplier`) reads the row and writes it back inside the same Room
+     * `withTransaction` block, and SQLite serialises writers for the
+     * duration of that transaction, so nothing else can have changed the row
+     * in between (docs/sync-design.md §6.2, §10.4's idempotence case).
+     */
+    @Query(
+        """
+        UPDATE transactions
+        SET deleted_at = :deletedAt, updated_at = :updatedAt, local_revision = :localRevision,
+            remote_revision = :remoteRevision, pending_operation = :pendingOperation
+        WHERE id = :id
+        """,
+    )
+    suspend fun applyRemoteTombstone(
+        id: String,
+        deletedAt: Long,
+        updatedAt: Long,
+        localRevision: Long,
+        remoteRevision: Long,
+        pendingOperation: String?,
+    )
+
     @Query("SELECT * FROM transactions WHERE pending_operation IS NOT NULL LIMIT :limit")
     suspend fun pendingChanges(limit: Int = 200): List<TransactionEntity>
 
-    @Query("UPDATE transactions SET pending_operation = NULL, remote_revision = :remoteRevision WHERE id = :id")
-    suspend fun markSynced(id: String, remoteRevision: Long)
+    /**
+     * What the sync engine actually pushes, and not the same thing as
+     * [pendingChanges] (docs/sync-design.md §4.3). A row is dirty here when
+     * this device has changed it since the remote last agreed --
+     * `local_revision` against `sync_shadow.remote_revision` for the same
+     * row, not the `pending_operation` flag every write path has to
+     * remember to set. `COALESCE(s.remote_revision, 0)` is what makes a row
+     * with no shadow row at all count as dirty: it has never synced, and
+     * `local_revision` starts at 1, so it is always greater than an absent
+     * shadow's implicit 0.
+     *
+     * `pending_operation` is untouched by this query and keeps its other
+     * job -- the UPSERT/DELETE marker [dev.charanjeev.bahi.core.model.SyncMetadata]
+     * exposes for display. It stops being what decides whether a row gets
+     * pushed, which is the point: a write path that bumps `local_revision`
+     * correctly but forgets that flag -- the exact bug §4.3 already found
+     * once in `TransactionDao.upsert` -- can no longer silently stop a row
+     * from syncing again, because nothing here reads the flag.
+     *
+     * No `deleted_at` condition, deliberately, matching [pendingChanges]: a
+     * tombstoned row that has not been pushed is exactly as dirty as a live
+     * one, and the engine tells the two apart by `deleted_at`, not by which
+     * query found the row.
+     */
+    @Query(
+        """
+        SELECT t.* FROM transactions t
+        LEFT JOIN sync_shadow s ON s.table_name = 'transactions' AND s.row_id = t.id
+        WHERE t.local_revision > COALESCE(s.remote_revision, 0)
+        ORDER BY t.id ASC
+        LIMIT :limit
+        """,
+    )
+    suspend fun dirtyRows(limit: Int = 200): List<TransactionEntity>
+
+    /**
+     * Clears the pending flag for a row the remote has acknowledged --
+     * **only if the row has not changed since it was read.**
+     *
+     * [expectedLocalRevision] is the revision the pusher saw when
+     * [pendingChanges] handed it the row. Without it, a user edit landing
+     * between the read and this call is lost from every *other* device
+     * permanently: the edit correctly bumps `local_revision` and re-sets
+     * `pending_operation`, and then this clears the flag regardless, so the
+     * row is dirty, unflagged, and never pushed again. It is not lost
+     * locally, which is exactly what would make it hard to notice.
+     *
+     * The condition is in the WHERE clause rather than in the caller for the
+     * same reason [applyRuleCategory]'s lock guard is: a guarantee that
+     * depends on the caller checking first is a guarantee that ends the day
+     * someone adds a second caller. Zero rows updated means the row moved
+     * under the push and stays pending for the next round -- the same
+     * "report the honest count" return value [softDeleteBatch] uses.
+     */
+    @Query(
+        """
+        UPDATE transactions
+        SET pending_operation = NULL, remote_revision = :remoteRevision
+        WHERE id = :id AND local_revision = :expectedLocalRevision
+        """,
+    )
+    suspend fun markSynced(id: String, remoteRevision: Long, expectedLocalRevision: Long): Int
+
+    /**
+     * Every id this device holds for this table, tombstoned or not
+     * (docs/sync-design.md §7's full-reconciliation path): a row's absence
+     * from a compacted remote's snapshot is only informative when compared
+     * against everything this device has, not just what is currently dirty.
+     */
+    @Query("SELECT id FROM transactions")
+    suspend fun allIds(): List<String>
+
+    /**
+     * The tombstone horizon's local half (§7, D8): ids old enough that no
+     * device still plausibly offline could be relying on seeing this
+     * deletion. Returning the ids, rather than deleting in one `DELETE ...
+     * WHERE`, is what lets the caller (`TombstoneReaper`) also forget the
+     * matching `sync_shadow`/`sync_conflicts` rows -- neither table has a
+     * real foreign key back here (the parent table is named by a column), so
+     * nothing does that automatically.
+     */
+    @Query("SELECT id FROM transactions WHERE deleted_at IS NOT NULL AND deleted_at < :before")
+    suspend fun tombstonesOlderThan(before: Long): List<String>
+
+    /**
+     * The one place a transaction row is ever really gone rather than
+     * tombstoned. Only ever called, by `TombstoneReaper`, for an id
+     * [tombstonesOlderThan] just returned inside the same transaction --
+     * calling it on a live row would destroy user data with no soft-delete
+     * to recover from, which is the one thing rule 7 (CLAUDE.md) exists to
+     * prevent.
+     */
+    @Query("DELETE FROM transactions WHERE id = :id")
+    suspend fun hardDelete(id: String): Int
 
     /**
      * Runs de-duplication and insert inside one transaction so a large import
@@ -321,9 +470,13 @@ interface TransactionDao {
         //
         // Filtered on the insert's own answer rather than assuming `fresh`
         // all landed: onConflict = IGNORE returns -1 for a row it skipped.
-        // That can't happen today (ids are freshly generated UUIDs), which
-        // is precisely why assuming it would be the kind of thing nobody
-        // notices when it stops being true.
+        // It stopped being hypothetical in M4a slice 2. Imported rows carry
+        // ids derived from their own content, so a row the quota above let
+        // through can still collide with one already stored -- which happens
+        // exactly when the stable-order assumption in this doc is violated,
+        // and is the only place a violation is visible at all. The quota
+        // stays the de-duplication mechanism; this is the net under it, not
+        // a second one.
         val rowIds = insertAllIgnoringConflicts(fresh)
         return fresh.filterIndexed { index, _ -> rowIds[index] != -1L }.map { it.id }
     }

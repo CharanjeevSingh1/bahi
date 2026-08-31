@@ -42,6 +42,32 @@ interface CategoryRuleDao {
     @Upsert
     suspend fun upsert(rule: CategoryRuleEntity)
 
+    /** See [RowRevision]: no `deleted_at` condition, deliberately. */
+    @Query("SELECT local_revision, remote_revision FROM category_rules WHERE id = :id")
+    suspend fun revisionOf(id: String): RowRevision?
+
+    /** See [TransactionDao.rowById]: the local side of a merge, tombstone included. */
+    @Query("SELECT * FROM category_rules WHERE id = :id")
+    suspend fun rowById(id: String): CategoryRuleEntity?
+
+    /** See [TransactionDao.applyRemoteTombstone]. */
+    @Query(
+        """
+        UPDATE category_rules
+        SET deleted_at = :deletedAt, updated_at = :updatedAt, local_revision = :localRevision,
+            remote_revision = :remoteRevision, pending_operation = :pendingOperation
+        WHERE id = :id
+        """,
+    )
+    suspend fun applyRemoteTombstone(
+        id: String,
+        deletedAt: Long,
+        updatedAt: Long,
+        localRevision: Long,
+        remoteRevision: Long,
+        pendingOperation: String?,
+    )
+
     /**
      * Priority is what decides which rule wins a conflict (§1.5), so
      * reordering is a real edit: it bumps the revision and marks the row
@@ -85,4 +111,38 @@ interface CategoryRuleDao {
         """,
     )
     suspend fun softDelete(id: String, deletedAt: Long)
+
+    /** See [TransactionDao.dirtyRows]: derived from the shadow, not `pending_operation`. */
+    @Query(
+        """
+        SELECT r.* FROM category_rules r
+        LEFT JOIN sync_shadow s ON s.table_name = 'category_rules' AND s.row_id = r.id
+        WHERE r.local_revision > COALESCE(s.remote_revision, 0)
+        ORDER BY r.id ASC
+        LIMIT :limit
+        """,
+    )
+    suspend fun dirtyRows(limit: Int = 200): List<CategoryRuleEntity>
+
+    /** See [TransactionDao.markSynced]: guarded so a push acknowledgement can't clear a newer edit. */
+    @Query(
+        """
+        UPDATE category_rules
+        SET pending_operation = NULL, remote_revision = :remoteRevision
+        WHERE id = :id AND local_revision = :expectedLocalRevision
+        """,
+    )
+    suspend fun markSynced(id: String, remoteRevision: Long, expectedLocalRevision: Long): Int
+
+    /** See [TransactionDao.allIds]. */
+    @Query("SELECT id FROM category_rules")
+    suspend fun allIds(): List<String>
+
+    /** See [TransactionDao.tombstonesOlderThan]. */
+    @Query("SELECT id FROM category_rules WHERE deleted_at IS NOT NULL AND deleted_at < :before")
+    suspend fun tombstonesOlderThan(before: Long): List<String>
+
+    /** See [TransactionDao.hardDelete]. */
+    @Query("DELETE FROM category_rules WHERE id = :id")
+    suspend fun hardDelete(id: String): Int
 }

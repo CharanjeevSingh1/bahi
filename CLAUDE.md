@@ -6,7 +6,7 @@ Project context for Claude Code. Read this before making changes.
 
 Bahi — an offline-first personal finance tracker for Android. It is a **portfolio project**: the code is read by hiring managers, so clarity and correctness matter more than feature count. A reviewer should be able to open any file and understand why it is written the way it is.
 
-Current state: **M3 complete**. M0 scaffolding, M1 transactions, M2 CSV import, M3 budgets and rule-based auto-categorisation. See the Roadmap in README.md.
+Current state: **M4a complete**. M0 scaffolding, M1 transactions, M2 CSV import, M3 budgets and rule-based auto-categorisation, M4a row-level sync — engine, resolver, two-device convergence suite, tombstone horizon, and the Settings screen that surfaces a conflict and restores a discarded value. No network yet: that's M4b. See the Roadmap in README.md.
 
 ## Stack
 
@@ -55,6 +55,8 @@ CI compiles with `-PwarningsAsErrors=true`. Before pushing, run `./gradlew clean
 
 Dependencies are declared **only** in `gradle/libs.versions.toml`. Never inline a version in a module build file. Shared build config goes in a convention plugin in `build-logic/`, never copy-pasted across modules.
 
+Run Gradle quietly and read only what failed: ./gradlew <tasks> --quiet 2>&1 | tail -60. On failure, read the report file rather than scrolling the console output.
+
 ## Working style
 
 - **Ask before adding any new third-party dependency.** The dependency list is deliberately small.
@@ -68,7 +70,7 @@ Dependencies are declared **only** in `gradle/libs.versions.toml`. Never inline 
 
 ## Things that are intentionally not done yet
 
-`:core:importer` and `:core:sync` contain interfaces only. Those are M2 and M4. Do not implement them unless the task explicitly says to.
+`:core:importer` (M2) and `:core:sync` (M4a) are both fully implemented now — this note is stale as of M4a and left here only so its history is visible; do not treat either as a stub. What is genuinely not built: **M4b**, the Drive transport that carries `:core:sync`'s operations between devices (OAuth, quota, key management, real compaction) — `SyncEngine` has no caller anywhere in the app until it exists, so sync does not run yet, only proves it would converge. Do not implement M4b unless the task explicitly says to.
 
 # Build speed. 
 - Don't run ./gradlew clean unless you suspect stale state .

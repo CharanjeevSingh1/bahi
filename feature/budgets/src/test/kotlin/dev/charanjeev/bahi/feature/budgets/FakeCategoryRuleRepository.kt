@@ -1,6 +1,7 @@
 package dev.charanjeev.bahi.feature.budgets
 
 import dev.charanjeev.bahi.core.data.repository.CategoryRuleRepository
+import dev.charanjeev.bahi.core.data.repository.DirtyRow
 import dev.charanjeev.bahi.core.model.CategoryRule
 import dev.charanjeev.bahi.core.model.RuleApplicationPreview
 import dev.charanjeev.bahi.core.model.Transaction
@@ -113,4 +114,8 @@ class FakeCategoryRuleRepository(
         }
         return RuleApplicationPreview(assignments, lockedSkipped)
     }
+
+    /** Not exercised: nothing under test here reaches the sync engine's push step. */
+    override suspend fun dirtyRows(limit: Int): List<DirtyRow> = emptyList()
+    override suspend fun markSynced(rowId: String, remoteRevision: Long, expectedLocalRevision: Long): Boolean = false
 }

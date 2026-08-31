@@ -1,7 +1,9 @@
 package dev.charanjeev.bahi.core.data.repository
 
 import dev.charanjeev.bahi.core.database.entity.TransactionEntity
+import dev.charanjeev.bahi.core.model.ContentIdScheme
 import dev.charanjeev.bahi.core.model.Money
+import dev.charanjeev.bahi.core.model.contentHashOf
 import dev.charanjeev.bahi.core.model.Transaction
 import dev.charanjeev.bahi.core.model.TransactionSource
 import kotlinx.datetime.Instant
@@ -52,12 +54,16 @@ internal fun toEntity(model: Transaction, importBatchId: String? = null): Transa
 )
 
 /**
- * Deliberately excludes id, category and notes: the same bank row re-imported
- * after the user has categorised it must still be recognised as a duplicate.
+ * Which fields decide identity, and the hash over them, both live in
+ * `:core:model`'s RowIdentity -- the migration that rewrote these values
+ * (`Migrations.MIGRATION_4_5`) has to compute them identically from raw
+ * columns, and two implementations of "the same hash" is the kind of thing
+ * that agrees right up until someone edits one of them.
  */
-internal fun contentHashOf(model: Transaction): String = listOf(
-    model.accountId,
-    model.date.toString(),
-    model.amount.minorUnits.toString(),
-    model.description.trim().uppercase(),
-).joinToString(separator = "|").hashCode().toString()
+internal fun contentHashOf(model: Transaction): String = contentHashOf(
+    scheme = ContentIdScheme.CURRENT,
+    accountId = model.accountId,
+    date = model.date.toString(),
+    amountMinor = model.amount.minorUnits,
+    description = model.description,
+)

@@ -2,6 +2,7 @@ package dev.charanjeev.bahi.core.data.repository
 
 import app.cash.turbine.test
 import com.google.common.truth.Truth.assertThat
+import dev.charanjeev.bahi.core.database.entity.SyncShadowEntity
 import dev.charanjeev.bahi.core.database.entity.TransactionEntity
 import dev.charanjeev.bahi.core.model.CategoryRule
 import dev.charanjeev.bahi.core.testing.FixedClock
@@ -12,7 +13,8 @@ import org.junit.Test
 
 class OfflineFirstCategoryRuleRepositoryTest {
 
-    private val dao = FakeCategoryRuleDao()
+    private val shadows = FakeSyncShadowDao()
+    private val dao = FakeCategoryRuleDao(shadows)
     private val transactionDao = FakeTransactionDao()
     private val clock = FixedClock(Instant.fromEpochMilliseconds(1_000))
     private val repository =
@@ -29,6 +31,24 @@ class OfflineFirstCategoryRuleRepositoryTest {
         merchantContains = merchantContains,
         priority = priority,
     )
+
+    @Test
+    fun `reviving a deleted rule continues its revision rather than restarting`() = runTest {
+        // Same shape as the category and budget cases: the revision read has
+        // to see through the tombstone (docs/sync-design.md §4.3), or the
+        // revived row claims to be brand new to a remote that has already
+        // acknowledged version 7 of it.
+        repository.upsert(rule())
+        dao.upsert(dao.allRows().single().copy(remoteRevision = 7))
+        repository.delete("rule-1")
+
+        repository.upsert(rule(merchantContains = "ZOMATO"))
+
+        val row = dao.allRows().single()
+        assertThat(row.localRevision).isEqualTo(3)
+        assertThat(row.remoteRevision).isEqualTo(7)
+        assertThat(row.deletedAt).isNull()
+    }
 
     @Test
     fun `rules are observed in evaluation order`() = runTest {
@@ -328,5 +348,50 @@ class OfflineFirstCategoryRuleRepositoryTest {
 
         assertThat(repository.apply(preview)).isEqualTo(0)
         assertThat(transactionDao.entity("t1")?.categoryId).isNull()
+    }
+
+    // --- dirtyRows / markSynced (docs/sync-design.md §4.3) ---
+
+    @Test
+    fun `a rule with no shadow at all is dirty`() = runTest {
+        repository.upsert(rule())
+
+        assertThat(repository.dirtyRows().map { it.rowId }).containsExactly("rule-1")
+    }
+
+    @Test
+    fun `a rule whose shadow matches its local_revision is not dirty`() = runTest {
+        repository.upsert(rule())
+        val revision = dao.getById("rule-1")!!.localRevision
+        shadows.record(SyncShadowEntity("category_rules", "rule-1", revision, "{}"))
+
+        assertThat(repository.dirtyRows()).isEmpty()
+    }
+
+    @Test
+    fun `reordering a synced rule makes it dirty again`() = runTest {
+        repository.upsert(rule(id = "rule-1"))
+        repository.upsert(rule(id = "rule-2"))
+        val revision1 = dao.getById("rule-1")!!.localRevision
+        val revision2 = dao.getById("rule-2")!!.localRevision
+        shadows.record(SyncShadowEntity("category_rules", "rule-1", revision1, "{}"))
+        shadows.record(SyncShadowEntity("category_rules", "rule-2", revision2, "{}"))
+
+        repository.reorder(listOf("rule-2", "rule-1"))
+
+        assertThat(repository.dirtyRows().map { it.rowId }).containsExactly("rule-1", "rule-2")
+    }
+
+    /** See the transaction repository's equivalent test: markSynced alone is not enough. */
+    @Test
+    fun `markSynced followed by the shadow write clears a rule from dirtyRows`() = runTest {
+        repository.upsert(rule())
+        val revision = dao.getById("rule-1")!!.localRevision
+
+        val acknowledged = repository.markSynced("rule-1", remoteRevision = 5, expectedLocalRevision = revision)
+        shadows.record(SyncShadowEntity("category_rules", "rule-1", 5, "{}"))
+
+        assertThat(acknowledged).isTrue()
+        assertThat(repository.dirtyRows()).isEmpty()
     }
 }

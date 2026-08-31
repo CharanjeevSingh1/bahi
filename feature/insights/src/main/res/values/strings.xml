@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="insights_title">Insights</string>
+    <string name="insights_settings_content_description">Settings</string>
 
     <!-- Names what the screen will hold rather than promising a date. A user
          who reads this should be able to tell an unbuilt screen from a broken

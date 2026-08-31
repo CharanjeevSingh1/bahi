@@ -19,6 +19,16 @@ interface BudgetDao {
     fun observeForMonth(yearMonth: String): Flow<List<BudgetEntity>>
 
     /**
+     * Every live budget, regardless of month. `BudgetRepository` has no
+     * equivalent -- every screen wants one month -- so this exists only for
+     * the sync convergence suite's `dump()` (docs/sync-design.md §10.1),
+     * which has to compare *all* of a device's budgets against the other
+     * device's, not one month at a time.
+     */
+    @Query("SELECT * FROM budgets WHERE deleted_at IS NULL ORDER BY id ASC")
+    suspend fun getAllActive(): List<BudgetEntity>
+
+    /**
      * Every budget for [yearMonth] with what has been spent against it,
      * aggregated by SQLite. Not a list of budgets the caller then folds
      * transactions into: §3 of docs/budgets-design.md depends on this being
@@ -90,6 +100,32 @@ interface BudgetDao {
     @Upsert
     suspend fun upsert(budget: BudgetEntity)
 
+    /** See [RowRevision]: no `deleted_at` condition, deliberately. */
+    @Query("SELECT local_revision, remote_revision FROM budgets WHERE id = :id")
+    suspend fun revisionOf(id: String): RowRevision?
+
+    /** See [TransactionDao.rowById]: the local side of a merge, tombstone included. */
+    @Query("SELECT * FROM budgets WHERE id = :id")
+    suspend fun rowById(id: String): BudgetEntity?
+
+    /** See [TransactionDao.applyRemoteTombstone]. */
+    @Query(
+        """
+        UPDATE budgets
+        SET deleted_at = :deletedAt, updated_at = :updatedAt, local_revision = :localRevision,
+            remote_revision = :remoteRevision, pending_operation = :pendingOperation
+        WHERE id = :id
+        """,
+    )
+    suspend fun applyRemoteTombstone(
+        id: String,
+        deletedAt: Long,
+        updatedAt: Long,
+        localRevision: Long,
+        remoteRevision: Long,
+        pendingOperation: String?,
+    )
+
     /** Soft delete: sync needs the tombstone, same as every other table (rule 7). */
     @Query(
         """
@@ -99,4 +135,38 @@ interface BudgetDao {
         """,
     )
     suspend fun softDelete(id: String, deletedAt: Long)
+
+    /** See [TransactionDao.dirtyRows]: derived from the shadow, not `pending_operation`. */
+    @Query(
+        """
+        SELECT b.* FROM budgets b
+        LEFT JOIN sync_shadow s ON s.table_name = 'budgets' AND s.row_id = b.id
+        WHERE b.local_revision > COALESCE(s.remote_revision, 0)
+        ORDER BY b.id ASC
+        LIMIT :limit
+        """,
+    )
+    suspend fun dirtyRows(limit: Int = 200): List<BudgetEntity>
+
+    /** See [TransactionDao.markSynced]: guarded so a push acknowledgement can't clear a newer edit. */
+    @Query(
+        """
+        UPDATE budgets
+        SET pending_operation = NULL, remote_revision = :remoteRevision
+        WHERE id = :id AND local_revision = :expectedLocalRevision
+        """,
+    )
+    suspend fun markSynced(id: String, remoteRevision: Long, expectedLocalRevision: Long): Int
+
+    /** See [TransactionDao.allIds]. */
+    @Query("SELECT id FROM budgets")
+    suspend fun allIds(): List<String>
+
+    /** See [TransactionDao.tombstonesOlderThan]. */
+    @Query("SELECT id FROM budgets WHERE deleted_at IS NOT NULL AND deleted_at < :before")
+    suspend fun tombstonesOlderThan(before: Long): List<String>
+
+    /** See [TransactionDao.hardDelete]. */
+    @Query("DELETE FROM budgets WHERE id = :id")
+    suspend fun hardDelete(id: String): Int
 }

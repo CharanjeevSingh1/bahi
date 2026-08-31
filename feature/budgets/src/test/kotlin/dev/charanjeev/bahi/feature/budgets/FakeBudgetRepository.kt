@@ -1,6 +1,7 @@
 package dev.charanjeev.bahi.feature.budgets
 
 import dev.charanjeev.bahi.core.data.repository.BudgetRepository
+import dev.charanjeev.bahi.core.data.repository.DirtyRow
 import dev.charanjeev.bahi.core.model.Budget
 import dev.charanjeev.bahi.core.model.BudgetProgress
 import dev.charanjeev.bahi.core.model.MonthlyBudgets
@@ -69,4 +70,8 @@ class FakeBudgetRepository : BudgetRepository {
         budgets.value = budgets.value - id
         spendByBudgetId.value = spendByBudgetId.value - id
     }
+
+    /** Not exercised: nothing under test here reaches the sync engine's push step. */
+    override suspend fun dirtyRows(limit: Int): List<DirtyRow> = emptyList()
+    override suspend fun markSynced(rowId: String, remoteRevision: Long, expectedLocalRevision: Long): Boolean = false
 }

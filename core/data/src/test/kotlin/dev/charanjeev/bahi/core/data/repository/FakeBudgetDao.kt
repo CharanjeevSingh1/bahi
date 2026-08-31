@@ -2,6 +2,7 @@ package dev.charanjeev.bahi.core.data.repository
 
 import dev.charanjeev.bahi.core.database.dao.BudgetDao
 import dev.charanjeev.bahi.core.database.dao.BudgetWithSpend
+import dev.charanjeev.bahi.core.database.dao.RowRevision
 import dev.charanjeev.bahi.core.database.entity.BudgetEntity
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -22,6 +23,8 @@ class FakeBudgetDao(
      * which is the whole behaviour under test.
      */
     private val transactions: FakeTransactionDao = FakeTransactionDao(),
+    /** dirtyRows joins against this, same reasoning as sharing [transactions] above. */
+    private val shadows: FakeSyncShadowDao = FakeSyncShadowDao(),
 ) : BudgetDao {
 
     private val backing = MutableStateFlow<Map<String, BudgetEntity>>(emptyMap())
@@ -68,10 +71,44 @@ class FakeBudgetDao(
     override suspend fun getById(id: String): BudgetEntity? =
         backing.value[id]?.takeIf { it.deletedAt == null }
 
+    override suspend fun getAllActive(): List<BudgetEntity> =
+        backing.value.values.filter { it.deletedAt == null }.sortedBy { it.id }
+
     override suspend fun findActive(categoryId: String, yearMonth: String): BudgetEntity? =
         backing.value.values.firstOrNull {
             it.categoryId == categoryId && it.yearMonth == yearMonth && it.deletedAt == null
         }
+
+    /**
+     * Reads through the tombstone, exactly as the real query does -- a fake
+     * that filtered `deletedAt == null` here would hide the resurrection bug
+     * this exists to fix and agree with whatever it was written to agree with.
+     */
+    override suspend fun revisionOf(id: String): RowRevision? =
+        backing.value[id]?.let { RowRevision(it.localRevision, it.remoteRevision) }
+
+    /** Same tombstone-inclusive read as [revisionOf], for the sync engine's apply step. */
+    override suspend fun rowById(id: String): BudgetEntity? = backing.value[id]
+
+    override suspend fun applyRemoteTombstone(
+        id: String,
+        deletedAt: Long,
+        updatedAt: Long,
+        localRevision: Long,
+        remoteRevision: Long,
+        pendingOperation: String?,
+    ) {
+        val existing = backing.value[id] ?: return
+        backing.value = backing.value + (
+            id to existing.copy(
+                deletedAt = deletedAt,
+                updatedAt = updatedAt,
+                localRevision = localRevision,
+                remoteRevision = remoteRevision,
+                pendingOperation = pendingOperation,
+            )
+        )
+    }
 
     override suspend fun upsert(budget: BudgetEntity) {
         backing.value = backing.value + (budget.id to budget)
@@ -86,5 +123,37 @@ class FakeBudgetDao(
                 localRevision = existing.localRevision + 1,
             )
         )
+    }
+
+    /** Mirrors the real join: local_revision against the shadow's remote_revision, 0 if absent. */
+    override suspend fun dirtyRows(limit: Int): List<BudgetEntity> =
+        backing.value.values
+            .filter { it.localRevision > shadows.remoteRevisionOf("budgets", it.id) }
+            .sortedBy { it.id }
+            .take(limit)
+
+    /**
+     * The revision guard is mirrored rather than left implicit, for the same
+     * reason FakeTransactionDao.markSynced does it: a fake that cleared the
+     * flag unconditionally would pass a test the real query fails.
+     */
+    override suspend fun markSynced(id: String, remoteRevision: Long, expectedLocalRevision: Long): Int {
+        val existing = backing.value[id] ?: return 0
+        if (existing.localRevision != expectedLocalRevision) return 0
+        backing.value = backing.value + (
+            id to existing.copy(pendingOperation = null, remoteRevision = remoteRevision)
+        )
+        return 1
+    }
+
+    override suspend fun allIds(): List<String> = backing.value.keys.toList()
+
+    override suspend fun tombstonesOlderThan(before: Long): List<String> =
+        backing.value.values.filter { (it.deletedAt ?: return@filter false) < before }.map { it.id }
+
+    override suspend fun hardDelete(id: String): Int {
+        if (!backing.value.containsKey(id)) return 0
+        backing.value = backing.value - id
+        return 1
     }
 }

@@ -16,6 +16,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -53,6 +54,7 @@ fun BudgetsRoute(
     onAddBudget: (YearMonth) -> Unit = {},
     onEditBudget: (String, YearMonth) -> Unit = { _, _ -> },
     onOpenRules: () -> Unit = {},
+    onOpenSettings: () -> Unit = {},
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
@@ -66,6 +68,7 @@ fun BudgetsRoute(
         onDeleteConfirmed = viewModel::onDeleteConfirmed,
         onDeleteCancelled = viewModel::onDeleteCancelled,
         onOpenRules = onOpenRules,
+        onOpenSettings = onOpenSettings,
     )
 }
 
@@ -83,6 +86,7 @@ internal fun BudgetsScreen(
     onDeleteConfirmed: () -> Unit = {},
     onDeleteCancelled: () -> Unit = {},
     onOpenRules: () -> Unit = {},
+    onOpenSettings: () -> Unit = {},
 ) {
     Scaffold(
         modifier = modifier,
@@ -92,6 +96,12 @@ internal fun BudgetsScreen(
                 actions = {
                     TextButton(onClick = onOpenRules, modifier = Modifier.testTag(BudgetsTestTags.RULES_ACTION)) {
                         Text(stringResource(R.string.budgets_rules_action))
+                    }
+                    IconButton(onClick = onOpenSettings, modifier = Modifier.testTag(BudgetsTestTags.SETTINGS_ACTION)) {
+                        Icon(
+                            imageVector = Icons.Default.Settings,
+                            contentDescription = stringResource(R.string.budgets_settings_content_description),
+                        )
                     }
                 },
             )

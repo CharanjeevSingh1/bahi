@@ -17,13 +17,13 @@ Most of my production Android work — mobile banking on the Backbase platform, 
 Two problems here are genuinely hard and get the most attention:
 
 1. **CSV import** — inferring column mappings across bank exports that disagree about column order, date format, debit sign convention, and whether the file even starts with a header row. See [`docs/csv-import-design.md`](docs/csv-import-design.md) for the inference design.
-2. **Sync conflict resolution** — per-field resolution, because last-write-wins on a whole row silently discards a category the user set on their phone while their tablet was offline. Not yet implemented; see **M4** in the [Roadmap](#roadmap).
+2. **Sync conflict resolution** — two devices that were both offline, both edited overlapping state, and now have to agree. Per-field resolution against a stored merge base, because last-write-wins on a whole row silently discards the category the user set on their phone while their tablet was offline. There is no authoritative side to defer to — no server decides, and no bank is involved; both devices are peers, and the merge has to be right without one. The engine, the resolver, the two-device convergence suite and the Settings screen that surfaces a conflict and lets a discarded value be restored are all built and proven on CI with no network. See [`docs/sync-design.md`](docs/sync-design.md) and **M4a** in the [Roadmap](#roadmap).
 
 <p align="center">
   <img src="docs/screenshots/transactions.png" width="320" alt="Transaction list grouped by date">
   <img src="docs/screenshots/import-preview-clean.png" width="320" alt="CSV import preview with inferred column mappings">
   <img src="docs/screenshots/budgets-typical.png" width="320" alt="Budgets for a month, one over its limit">
-  <img src="docs/screenshots/filtered-empty.png" width="320" alt="Filtered-empty state showing a zero total for the filtered range">
+  <img src="docs/screenshots/settings-conflicts.png" width="320" alt="Settings screen listing a sync conflict, with kept and discarded values and a restore action">
 </p>
 ---
 
@@ -142,8 +142,9 @@ cd bahi
 - [x] **M1** — Transaction CRUD, categories, list and detail screens
 - [x] **M2** — CSV import: column-mapping inference, preview, de-duplication
 - [x] **M3** — Budgets and rule-based auto-categorisation
-- [ ] **M4** — Row-level sync with per-field conflict resolution
+- [x] **M4a** — Row-level sync, the convergence engine: per-field merge against a stored base, proven by running two engines over two databases and a fake transport in one process. No network. [`docs/sync-design.md`](docs/sync-design.md)
 - [ ] **M5** — Insights, baseline profile, Macrobenchmark startup numbers
+- [ ] **M4b** — *Deferred, not next.* The transport that carries M4a's operations between devices. Deferred because the hard part is not in it: convergence is decided on-device, and M4a proves that on CI with no credentials, whereas M4b is OAuth, quota, key management and a compaction step with no compare-and-swap.
 
 ---
 

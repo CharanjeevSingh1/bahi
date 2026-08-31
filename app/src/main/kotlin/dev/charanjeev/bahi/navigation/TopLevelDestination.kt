@@ -17,11 +17,11 @@ import dev.charanjeev.bahi.feature.transactions.navigation.TransactionsRoute
 /**
  * The tabs, and the only place that knows which routes are tabs.
  *
- * Settings is deliberately absent. There is nothing to configure yet, and a
- * tab that opens an empty screen costs a quarter of the bar to say so. When
- * something real lands there -- a sync account in M4, a theme choice -- it
- * becomes a top-bar action, because a screen you visit twice a year does not
- * belong next to the three you use daily.
+ * Settings is deliberately absent. A screen you visit rarely -- reviewing a
+ * sync conflict, eventually a theme choice -- does not belong next to the
+ * three you use daily, so it is a top-bar action on each of them
+ * (`onOpenSettings`, wired in `BahiNavHost`) rather than a fourth tab that
+ * would cost a quarter of the bar for something opened a few times a month.
  *
  * [graphRoute] and [startRoute] are different things and both are needed: the
  * bar navigates to the *graph*, because that is what carries a saved back

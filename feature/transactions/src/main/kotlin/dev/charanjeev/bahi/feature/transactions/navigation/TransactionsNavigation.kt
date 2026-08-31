@@ -28,12 +28,14 @@ fun editTransactionRoute(transactionId: String) = "$EditTransactionRoute/$transa
 fun NavGraphBuilder.transactionsScreen(
     navController: NavHostController,
     onImportClick: () -> Unit = {},
+    onOpenSettings: () -> Unit = {},
 ) {
     composable(route = TransactionsRoute) {
         TransactionsScreen(
             onAddTransaction = { navController.navigate(NewTransactionRoute) },
             onTransactionClick = { id -> navController.navigate(editTransactionRoute(id)) },
             onImportClick = onImportClick,
+            onOpenSettings = onOpenSettings,
         )
     }
     composable(route = NewTransactionRoute) {

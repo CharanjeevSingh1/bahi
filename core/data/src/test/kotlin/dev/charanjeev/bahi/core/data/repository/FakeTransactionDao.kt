@@ -1,5 +1,6 @@
 package dev.charanjeev.bahi.core.data.repository
 
+import dev.charanjeev.bahi.core.database.dao.RowRevision
 import dev.charanjeev.bahi.core.database.dao.TransactionDao
 import dev.charanjeev.bahi.core.database.entity.TransactionEntity
 import kotlinx.coroutines.flow.Flow
@@ -13,7 +14,10 @@ import kotlinx.coroutines.flow.map
  * SQLite backing this fake, so getting that transition right here is exactly
  * as important as getting the real @Query right.
  */
-class FakeTransactionDao : TransactionDao {
+class FakeTransactionDao(
+    /** dirtyRows joins against this, same reasoning as FakeBudgetDao sharing this class. */
+    private val shadows: FakeSyncShadowDao = FakeSyncShadowDao(),
+) : TransactionDao {
 
     private val backing = MutableStateFlow<Map<String, TransactionEntity>>(emptyMap())
 
@@ -121,10 +125,26 @@ class FakeTransactionDao : TransactionDao {
         )
     }
 
+    /**
+     * One entry per input row, -1 for a row the conflict strategy skipped --
+     * which is what Room returns and what `importBatch` indexes its result
+     * against. Returning only the inserted rows would have shifted that index
+     * silently, and it stopped being unreachable in M4a slice 2: imported ids
+     * are derived from content now, so an insert really can collide.
+     */
     override suspend fun insertAllIgnoringConflicts(transactions: List<TransactionEntity>): List<Long> {
-        val fresh = transactions.filterNot { it.id in backing.value }
-        backing.value = backing.value + fresh.associateBy(TransactionEntity::id)
-        return fresh.map { 1L }
+        val stored = backing.value.toMutableMap()
+        val rowIds = transactions.map { transaction ->
+            if (stored.containsKey(transaction.id)) {
+                // IGNORE, not REPLACE: the stored row stands.
+                -1L
+            } else {
+                stored[transaction.id] = transaction
+                1L
+            }
+        }
+        backing.value = stored
+        return rowIds
     }
 
     override suspend fun softDelete(id: String, deletedAt: Long) {
@@ -182,13 +202,69 @@ class FakeTransactionDao : TransactionDao {
         return 1
     }
 
+    /**
+     * Reads through the tombstone, exactly as the real query does -- a fake
+     * that filtered `deletedAt == null` here would hide the resurrection bug
+     * this exists to fix and agree with whatever it was written to agree with.
+     */
+    override suspend fun revisionOf(id: String): RowRevision? =
+        backing.value[id]?.let { RowRevision(it.localRevision, it.remoteRevision) }
+
+    /** Same tombstone-inclusive read as [revisionOf], for the sync engine's apply step. */
+    override suspend fun rowById(id: String): TransactionEntity? = backing.value[id]
+
+    override suspend fun applyRemoteTombstone(
+        id: String,
+        deletedAt: Long,
+        updatedAt: Long,
+        localRevision: Long,
+        remoteRevision: Long,
+        pendingOperation: String?,
+    ) {
+        val existing = backing.value[id] ?: return
+        backing.value = backing.value + (
+            id to existing.copy(
+                deletedAt = deletedAt,
+                updatedAt = updatedAt,
+                localRevision = localRevision,
+                remoteRevision = remoteRevision,
+                pendingOperation = pendingOperation,
+            )
+        )
+    }
+
     override suspend fun pendingChanges(limit: Int): List<TransactionEntity> =
         backing.value.values.filter { it.pendingOperation != null }.take(limit)
 
-    override suspend fun markSynced(id: String, remoteRevision: Long) {
-        val existing = backing.value[id] ?: return
+    /** Mirrors the real join: local_revision against the shadow's remote_revision, 0 if absent. */
+    override suspend fun dirtyRows(limit: Int): List<TransactionEntity> =
+        backing.value.values
+            .filter { it.localRevision > shadows.remoteRevisionOf("transactions", it.id) }
+            .sortedBy { it.id }
+            .take(limit)
+
+    /**
+     * The revision guard is mirrored rather than left implicit, for the same
+     * reason the lock condition on `ruleCandidates` is: a fake that cleared
+     * the flag unconditionally would pass a test the real query fails.
+     */
+    override suspend fun markSynced(id: String, remoteRevision: Long, expectedLocalRevision: Long): Int {
+        val existing = backing.value[id] ?: return 0
+        if (existing.localRevision != expectedLocalRevision) return 0
         backing.value = backing.value + (
             id to existing.copy(pendingOperation = null, remoteRevision = remoteRevision)
         )
+        return 1
+    }
+
+    override suspend fun allIds(): List<String> = backing.value.keys.toList()
+
+    override suspend fun tombstonesOlderThan(before: Long): List<String> =
+        backing.value.values.filter { (it.deletedAt ?: return@filter false) < before }.map { it.id }
+
+    override suspend fun hardDelete(id: String): Int {
+        if (!backing.value.containsKey(id)) return 0
+        backing.value = backing.value - id
+        return 1
     }
 }

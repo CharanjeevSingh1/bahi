@@ -5,5 +5,6 @@ plugins {
 
 dependencies {
     api(libs.kotlinx.datetime)
-    implementation(libs.kotlinx.serialization.json)
+    // api, not implementation: JsonObject is in SyncOp's public signature.
+    api(libs.kotlinx.serialization.json)
 }

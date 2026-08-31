@@ -20,6 +20,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.FileUpload
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -68,6 +69,7 @@ fun TransactionsRoute(
     onAddTransaction: () -> Unit = {},
     onTransactionClick: (String) -> Unit = {},
     onImportClick: () -> Unit = {},
+    onOpenSettings: () -> Unit = {},
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     TransactionsScreen(
@@ -79,6 +81,7 @@ fun TransactionsRoute(
         onAddTransaction = onAddTransaction,
         onTransactionClick = onTransactionClick,
         onImportClick = onImportClick,
+        onOpenSettings = onOpenSettings,
         onCategoryFilterToggled = viewModel::onCategoryFilterToggled,
         onDateRangeOptionSelected = viewModel::onDateRangeOptionSelected,
         onCustomDateRangeSelected = viewModel::onCustomDateRangeSelected,
@@ -102,6 +105,7 @@ internal fun TransactionsScreen(
     onAddTransaction: () -> Unit = {},
     onTransactionClick: (String) -> Unit = {},
     onImportClick: () -> Unit = {},
+    onOpenSettings: () -> Unit = {},
     onCategoryFilterToggled: (String) -> Unit = {},
     onDateRangeOptionSelected: (DateRangeOption?) -> Unit = {},
     onCustomDateRangeSelected: (LocalDate, LocalDate) -> Unit = { _, _ -> },
@@ -130,7 +134,7 @@ internal fun TransactionsScreen(
 
     Scaffold(
         modifier = modifier,
-        topBar = { TransactionsTopBar(uiState, onImportClick) },
+        topBar = { TransactionsTopBar(uiState, onImportClick, onOpenSettings) },
         snackbarHost = { SnackbarHost(snackbarHostState) },
         floatingActionButton = {
             FloatingActionButton(
@@ -210,6 +214,7 @@ internal fun TransactionsScreen(
 private fun TransactionsTopBar(
     uiState: TransactionsUiState,
     onImportClick: () -> Unit,
+    onOpenSettings: () -> Unit,
 ) {
     // EmptyFiltered still carries a (zero) net total for the active filter --
     // showing it here rather than nothing is what keeps a legitimately empty
@@ -247,6 +252,15 @@ private fun TransactionsTopBar(
                 Icon(
                     imageVector = Icons.Default.FileUpload,
                     contentDescription = stringResource(R.string.transactions_import_content_description),
+                )
+            }
+            IconButton(
+                onClick = onOpenSettings,
+                modifier = Modifier.testTag(TransactionsTestTags.SETTINGS_BUTTON),
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Settings,
+                    contentDescription = stringResource(R.string.transactions_settings_content_description),
                 )
             }
         },
@@ -506,5 +520,6 @@ internal object TransactionsTestTags {
     const val LIST = "transactions:list"
     const val ADD_FAB = "transactions:add_fab"
     const val IMPORT_BUTTON = "transactions:import_button"
+    const val SETTINGS_BUTTON = "transactions:settings_button"
     fun rowTag(transactionId: String) = "transactions:row:$transactionId"
 }

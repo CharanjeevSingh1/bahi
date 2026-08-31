@@ -1,9 +1,14 @@
 package dev.charanjeev.bahi.core.data.repository
 
 import com.google.common.truth.Truth.assertThat
+import dev.charanjeev.bahi.core.database.entity.SyncShadowEntity
+import dev.charanjeev.bahi.core.model.ContentIdScheme
 import dev.charanjeev.bahi.core.model.DateWindow
 import dev.charanjeev.bahi.core.model.Money
 import dev.charanjeev.bahi.core.model.TransactionFilter
+import dev.charanjeev.bahi.core.model.TransactionSource
+import dev.charanjeev.bahi.core.model.contentDerivedId
+import dev.charanjeev.bahi.core.model.contentHashOf
 import dev.charanjeev.bahi.core.testing.FixedClock
 import dev.charanjeev.bahi.core.testing.TestData
 import kotlinx.coroutines.flow.first
@@ -15,9 +20,130 @@ import org.junit.Test
 
 class OfflineFirstTransactionRepositoryTest {
 
-    private val dao = FakeTransactionDao()
+    private val shadows = FakeSyncShadowDao()
+    private val dao = FakeTransactionDao(shadows)
     private val clock = FixedClock(Instant.fromEpochMilliseconds(DELETED_AT))
     private val repository = OfflineFirstTransactionRepository(dao, clock, UnconfinedTestDispatcher())
+
+    private fun imported(id: String = "placeholder", description: String = "BLUE TOKAI COFFEE") =
+        TestData.transaction(id = id, description = description, source = TransactionSource.CSV_IMPORT)
+
+    private fun expectedId(description: String = "BLUE TOKAI COFFEE", occurrence: Int = 0) = contentDerivedId(
+        ContentIdScheme.CURRENT,
+        contentHashOf(
+            scheme = ContentIdScheme.CURRENT,
+            accountId = "acct-1",
+            date = "2026-03-14",
+            amountMinor = -45_000,
+            description = description,
+        ),
+        occurrence,
+    )
+
+    // --- content-derived ids (docs/sync-design.md §3.1) ---
+
+    @Test
+    fun `importAll replaces an imported row's id with one derived from its content`() = runTest {
+        repository.importAll(listOf(imported()))
+
+        assertThat(dao.rows.value.keys).containsExactly(expectedId())
+    }
+
+    @Test
+    fun `importAll leaves a manual row's id alone`() = runTest {
+        // Two devices are not going to independently type the same transaction
+        // and mean one row, so there is nothing for a derived id to converge.
+        repository.importAll(listOf(TestData.transaction(id = "typed-by-hand")))
+
+        assertThat(dao.rows.value.keys).containsExactly("typed-by-hand")
+    }
+
+    @Test
+    fun `two identical imported rows are numbered so both survive`() = runTest {
+        // The case csv-import-design §4 was fixed for: two genuinely identical
+        // coffees are two transactions, not one duplicated.
+        val result = repository.importAll(listOf(imported("a"), imported("b")))
+
+        assertThat(result.insertedCount).isEqualTo(2)
+        assertThat(dao.rows.value.keys).containsExactly(expectedId(occurrence = 0), expectedId(occurrence = 1))
+    }
+
+    @Test
+    fun `two devices importing the same statement derive the same ids`() = runTest {
+        // The whole point. Without this the two devices hold 2N rows with 2N
+        // ids, nothing downstream can tell they are duplicates, and
+        // de-duplication never runs again after import time.
+        val otherDevice = OfflineFirstTransactionRepository(
+            FakeTransactionDao(),
+            FixedClock(Instant.fromEpochMilliseconds(DELETED_AT)),
+            UnconfinedTestDispatcher(),
+        )
+        val statement = listOf(imported("phone-1"), imported("phone-2", description = "ELECTRICITY"))
+
+        repository.importAll(statement)
+        otherDevice.importAll(listOf(imported("tablet-1"), imported("tablet-2", description = "ELECTRICITY")))
+
+        assertThat(dao.rows.value.keys).containsExactlyElementsIn(
+            statement.map { expectedId(it.description) },
+        )
+    }
+
+    @Test
+    fun `re-importing the same statement adds nothing and changes no id`() = runTest {
+        repository.importAll(listOf(imported()))
+
+        val second = repository.importAll(listOf(imported()))
+
+        assertThat(second.insertedCount).isEqualTo(0)
+        assertThat(dao.rows.value.keys).containsExactly(expectedId())
+    }
+
+    @Test
+    fun `an id from an unknown scheme version survives an import`() = runTest {
+        // Re-keying it to h1 would split the row from every other device
+        // holding it, which is the one-way door the version prefix avoids.
+        repository.importAll(listOf(imported(id = "h2:deadbeef#0")))
+
+        assertThat(dao.rows.value.keys).containsExactly("h2:deadbeef#0")
+    }
+
+    // --- revision bookkeeping (docs/sync-design.md §4.3) ---
+
+    @Test
+    fun `a newly created transaction is queued for the next push`() = runTest {
+        // Transactions were the odd one out: update, softDelete,
+        // undoSoftDelete and softDeleteBatch all mark the row, and upsert --
+        // the create path -- wrote toEntity's defaults. A transaction the user
+        // typed would have been invisible to pendingChanges and never pushed
+        // at all, which is a row that exists on one device forever.
+        repository.upsert(TestData.transaction(id = "a"))
+
+        assertThat(dao.pendingChanges().map { it.id }).containsExactly("a")
+        assertThat(dao.entity("a")?.pendingOperation).isEqualTo("UPSERT")
+    }
+
+    @Test
+    fun `editing through upsert bumps the revision rather than resetting it`() = runTest {
+        repository.upsert(TestData.transaction(id = "a"))
+
+        repository.upsert(TestData.transaction(id = "a", description = "OTHER"))
+
+        assertThat(dao.entity("a")?.localRevision).isEqualTo(2)
+    }
+
+    @Test
+    fun `reviving a deleted transaction continues its revision rather than restarting`() = runTest {
+        repository.upsert(TestData.transaction(id = "a"))
+        dao.markSynced(id = "a", remoteRevision = 7, expectedLocalRevision = 1)
+        repository.delete("a")
+
+        repository.upsert(TestData.transaction(id = "a", description = "OTHER"))
+
+        val entity = dao.entity("a")
+        assertThat(entity?.localRevision).isEqualTo(3)
+        assertThat(entity?.remoteRevision).isEqualTo(7)
+        assertThat(entity?.deletedAt).isNull()
+    }
 
     @Test
     fun `delete sets a pending DELETE and a tombstone`() = runTest {
@@ -283,6 +409,96 @@ class OfflineFirstTransactionRepositoryTest {
         val result = repository.observeTransactions(TransactionFilter(categoryIds = setOf("food"))).first()
 
         assertThat(result.single().amount).isEqualTo(Money(-4500))
+    }
+
+    // --- dirtyRows / markSynced (docs/sync-design.md §4.3) ---
+
+    @Test
+    fun `a row with no shadow at all is dirty`() = runTest {
+        repository.upsert(TestData.transaction(id = "a"))
+
+        val dirty = repository.dirtyRows()
+
+        assertThat(dirty.map { it.rowId }).containsExactly("a")
+    }
+
+    @Test
+    fun `a row whose shadow matches its local_revision is not dirty`() = runTest {
+        repository.upsert(TestData.transaction(id = "a"))
+        val revision = dao.entity("a")!!.localRevision
+        shadows.record(SyncShadowEntity(tableName = "transactions", rowId = "a", remoteRevision = revision, payload = "{}"))
+
+        assertThat(repository.dirtyRows()).isEmpty()
+    }
+
+    @Test
+    fun `editing a synced row makes it dirty again without touching pending_operation`() = runTest {
+        repository.upsert(TestData.transaction(id = "a"))
+        val syncedRevision = dao.entity("a")!!.localRevision
+        shadows.record(
+            SyncShadowEntity(tableName = "transactions", rowId = "a", remoteRevision = syncedRevision, payload = "{}"),
+        )
+        repository.update(TestData.transaction(id = "a", description = "edited on the tablet"))
+
+        val dirty = repository.dirtyRows()
+
+        assertThat(dirty.map { it.rowId }).containsExactly("a")
+    }
+
+    @Test
+    fun `a deleted row is dirty and carries no payload`() = runTest {
+        repository.upsert(TestData.transaction(id = "a"))
+        repository.delete("a")
+
+        val dirty = repository.dirtyRows()
+
+        assertThat(dirty.single().payload).isNull()
+    }
+
+    /**
+     * `markSynced` alone is not enough -- `dirtyRows` compares against the
+     * shadow, not the row's own `remote_revision`, so a row stays dirty until
+     * the engine also writes the shadow. Both happen together in the
+     * engine's one push-ack transaction (§4.1); this is two calls only
+     * because there is no engine yet to make it one.
+     */
+    @Test
+    fun `markSynced alone does not clear dirtyRows -- the shadow has to be written too`() = runTest {
+        repository.upsert(TestData.transaction(id = "a"))
+        val revision = dao.entity("a")!!.localRevision
+
+        val acknowledged = repository.markSynced(rowId = "a", remoteRevision = 7, expectedLocalRevision = revision)
+
+        assertThat(acknowledged).isTrue()
+        assertThat(repository.dirtyRows().map { it.rowId }).containsExactly("a")
+    }
+
+    @Test
+    fun `markSynced followed by the shadow write clears a row from dirtyRows`() = runTest {
+        repository.upsert(TestData.transaction(id = "a"))
+        val revision = dao.entity("a")!!.localRevision
+
+        repository.markSynced(rowId = "a", remoteRevision = 7, expectedLocalRevision = revision)
+        shadows.record(SyncShadowEntity(tableName = "transactions", rowId = "a", remoteRevision = 7, payload = "{}"))
+
+        assertThat(repository.dirtyRows()).isEmpty()
+    }
+
+    /**
+     * The slice 3a bug this guard exists for, one layer up: an edit landing
+     * between the engine reading a row and the push acknowledging it must not
+     * be lost.
+     */
+    @Test
+    fun `markSynced refuses a row that changed since it was read`() = runTest {
+        repository.upsert(TestData.transaction(id = "a"))
+        val staleRevision = dao.entity("a")!!.localRevision
+        repository.update(TestData.transaction(id = "a", description = "edited before the ack arrived"))
+
+        val acknowledged = repository.markSynced(rowId = "a", remoteRevision = 7, expectedLocalRevision = staleRevision)
+
+        assertThat(acknowledged).isFalse()
+        assertThat(repository.dirtyRows().map { it.rowId }).containsExactly("a")
     }
 
     private companion object {

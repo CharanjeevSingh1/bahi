@@ -12,6 +12,8 @@ import dev.charanjeev.bahi.feature.csvimport.navigation.ImportRoute
 import dev.charanjeev.bahi.feature.csvimport.navigation.importScreen
 import dev.charanjeev.bahi.feature.insights.navigation.InsightsRoute
 import dev.charanjeev.bahi.feature.insights.navigation.insightsScreen
+import dev.charanjeev.bahi.feature.settings.navigation.SettingsRoute
+import dev.charanjeev.bahi.feature.settings.navigation.settingsScreen
 import dev.charanjeev.bahi.feature.transactions.navigation.TransactionsRoute
 import dev.charanjeev.bahi.feature.transactions.navigation.transactionsScreen
 
@@ -43,6 +45,7 @@ fun BahiNavHost(
             transactionsScreen(
                 navController,
                 onImportClick = { navController.navigate(ImportRoute) },
+                onOpenSettings = { navController.navigate(SettingsRoute) },
             )
             // Import is an action on transactions, not a destination of its
             // own: you import *into* the list you are looking at. So it sits
@@ -55,7 +58,7 @@ fun BahiNavHost(
             route = TopLevelDestination.BUDGETS.graphRoute,
             startDestination = BudgetsRoute,
         ) {
-            budgetsScreen(navController)
+            budgetsScreen(navController, onOpenSettings = { navController.navigate(SettingsRoute) })
         }
 
         navigation(
@@ -76,11 +79,14 @@ fun BahiNavHost(
                     )
                     navController.navigate(RulesRoute)
                 },
+                onOpenSettings = { navController.navigate(SettingsRoute) },
             )
         }
 
-        // No settings destination: see TopLevelDestination for why the tab
-        // isn't there, and :feature:settings for the stub that is waiting.
+        // Not nested in any tab's graph, and reached from a top-bar action on
+        // all three rather than from the bottom bar -- see TopLevelDestination
+        // for why Settings isn't a tab.
+        settingsScreen(navController)
     }
 }
 
