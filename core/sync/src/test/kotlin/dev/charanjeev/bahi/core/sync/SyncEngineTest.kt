@@ -7,6 +7,7 @@ import dev.charanjeev.bahi.core.data.repository.CategoryRuleRepository
 import dev.charanjeev.bahi.core.data.repository.DirtyRow
 import dev.charanjeev.bahi.core.data.repository.ImportBatchResult
 import dev.charanjeev.bahi.core.data.repository.SyncApplier
+import dev.charanjeev.bahi.core.data.repository.TombstoneReaper
 import dev.charanjeev.bahi.core.data.repository.TransactionRepository
 import dev.charanjeev.bahi.core.model.Budget
 import dev.charanjeev.bahi.core.model.Category
@@ -15,7 +16,9 @@ import dev.charanjeev.bahi.core.model.MonthlyBudgets
 import dev.charanjeev.bahi.core.model.Money
 import dev.charanjeev.bahi.core.model.OP_FORMAT_VERSION
 import dev.charanjeev.bahi.core.model.OpBatch
+import dev.charanjeev.bahi.core.model.RemoteSnapshot
 import dev.charanjeev.bahi.core.model.RuleApplicationPreview
+import dev.charanjeev.bahi.core.model.SnapshotRow
 import dev.charanjeev.bahi.core.model.SyncOp
 import dev.charanjeev.bahi.core.model.SyncTable
 import dev.charanjeev.bahi.core.model.Transaction
@@ -45,7 +48,7 @@ class SyncEngineTest {
         val transport = InMemoryTransport()
         val applier = FakeSyncApplier()
         val engine = SyncEngine(
-            transport, applier,
+            transport, applier, FakeTombstoneReaper(),
             FakeTransactionRepository(), FakeCategoryRepository(), FakeBudgetRepository(), FakeCategoryRuleRepository(),
             deviceId = "device-a",
         )
@@ -62,7 +65,7 @@ class SyncEngineTest {
         val categories = FakeCategoryRepository(dirty = listOf(DirtyRow("c1", localRevision = 2, updatedAt = 200, payload = payload())))
         val budgets = FakeBudgetRepository(dirty = listOf(DirtyRow("b1", localRevision = 3, updatedAt = 300, payload = payload())))
         val rules = FakeCategoryRuleRepository(dirty = listOf(DirtyRow("r1", localRevision = 4, updatedAt = 400, payload = payload())))
-        val engine = SyncEngine(transport, FakeSyncApplier(), transactions, categories, budgets, rules, deviceId = "device-a")
+        val engine = SyncEngine(transport, FakeSyncApplier(), FakeTombstoneReaper(), transactions, categories, budgets, rules, deviceId = "device-a")
 
         engine.sync()
 
@@ -87,7 +90,7 @@ class SyncEngineTest {
             dirty = listOf(DirtyRow("t1", localRevision = 5, updatedAt = 100, payload = payload())),
         )
         val engine = SyncEngine(
-            transport, FakeSyncApplier(),
+            transport, FakeSyncApplier(), FakeTombstoneReaper(),
             transactions, FakeCategoryRepository(), FakeBudgetRepository(), FakeCategoryRuleRepository(),
             deviceId = "device-a",
         )
@@ -115,7 +118,7 @@ class SyncEngineTest {
             dirty = listOf(DirtyRow("t1", localRevision = 5, updatedAt = 100, payload = payload(value = 42))),
         )
         val engine = SyncEngine(
-            transport, applier,
+            transport, applier, FakeTombstoneReaper(),
             transactions, FakeCategoryRepository(), FakeBudgetRepository(), FakeCategoryRuleRepository(),
             deviceId = "device-a",
         )
@@ -136,7 +139,7 @@ class SyncEngineTest {
             markSyncedResult = false, // the row moved under the push (§4.3's guard)
         )
         val engine = SyncEngine(
-            transport, applier,
+            transport, applier, FakeTombstoneReaper(),
             transactions, FakeCategoryRepository(), FakeBudgetRepository(), FakeCategoryRuleRepository(),
             deviceId = "device-a",
         )
@@ -156,7 +159,7 @@ class SyncEngineTest {
         )
         val applier = FakeSyncApplier()
         val engine = SyncEngine(
-            transport, applier,
+            transport, applier, FakeTombstoneReaper(),
             transactions, FakeCategoryRepository(), FakeBudgetRepository(), FakeCategoryRuleRepository(),
             deviceId = "device-a",
         )
@@ -176,7 +179,7 @@ class SyncEngineTest {
         transport.push(OpBatch("device-b", seq = 2, ops = listOf(op(rowId = "y", remoteRevision = 2))))
         val applier = FakeSyncApplier()
         val engine = SyncEngine(
-            transport, applier,
+            transport, applier, FakeTombstoneReaper(),
             FakeTransactionRepository(), FakeCategoryRepository(), FakeBudgetRepository(), FakeCategoryRuleRepository(),
             deviceId = "device-a",
         )
@@ -195,7 +198,7 @@ class SyncEngineTest {
         transport.push(OpBatch("device-b", seq = 1, ops = listOf(op(rowId = "x", remoteRevision = 1)), version = OP_FORMAT_VERSION + 1))
         val applier = FakeSyncApplier()
         val engine = SyncEngine(
-            transport, applier,
+            transport, applier, FakeTombstoneReaper(),
             FakeTransactionRepository(), FakeCategoryRepository(), FakeBudgetRepository(), FakeCategoryRuleRepository(),
             deviceId = "device-a",
         )
@@ -206,6 +209,73 @@ class SyncEngineTest {
         engine.sync()
 
         assertThat(applier.calls.flatMap { it.first }).isEmpty()
+    }
+
+    /** §7, D8: reaping runs once per cycle rather than waiting on a periodic worker slice 9 has not built yet. */
+    @Test
+    fun `sync reaps tombstones and acknowledged conflicts past the horizon every cycle`() = runTest {
+        val reaper = FakeTombstoneReaper()
+        val engine = SyncEngine(
+            InMemoryTransport(), FakeSyncApplier(), reaper,
+            FakeTransactionRepository(), FakeCategoryRepository(), FakeBudgetRepository(), FakeCategoryRuleRepository(),
+            deviceId = "device-a",
+        )
+
+        engine.sync()
+        engine.sync()
+
+        assertThat(reaper.reapCount).isEqualTo(2)
+    }
+
+    /**
+     * §7: once a peer's history has been compacted past what this device has
+     * pulled, an incremental [SyncTransport.pull] would silently miss
+     * whatever was dropped -- reconciling against the snapshot instead is
+     * the only safe option, exactly what a fresh device does on its first
+     * sync (§7's "the reconciliation path is needed anyway for a new
+     * device").
+     */
+    @Test
+    fun `a device behind the compacted horizon reconciles instead of pulling directly`() = runTest {
+        val transport = InMemoryTransport()
+        transport.push(OpBatch("device-b", seq = 1, ops = listOf(op(rowId = "x", remoteRevision = 1))))
+        transport.push(OpBatch("device-b", seq = 2, ops = listOf(op(rowId = "y", remoteRevision = 2))))
+        transport.compact() // device-a has pulled neither batch -- its cursor for device-b is now behind the horizon.
+        val applier = FakeSyncApplier()
+        val engine = SyncEngine(
+            transport, applier, FakeTombstoneReaper(),
+            FakeTransactionRepository(), FakeCategoryRepository(), FakeBudgetRepository(), FakeCategoryRuleRepository(),
+            deviceId = "device-a",
+        )
+
+        engine.sync()
+
+        assertThat(applier.reconcileCalls).hasSize(1)
+        assertThat(applier.reconcileCalls.single().first.rows.map { it.rowId }).containsExactly("x", "y")
+        // The compacted batches are gone from the transport (InMemoryTransportCompactionTest
+        // covers that directly) -- apply() must not have been handed an empty pull as if it were meaningful.
+        assertThat(applier.calls).isEmpty()
+    }
+
+    /** The other half: once reconciled, this device must not reconcile the same horizon again on every future cycle. */
+    @Test
+    fun `reconciling advances the cursor so the next sync pulls normally instead of reconciling again`() = runTest {
+        val transport = InMemoryTransport()
+        transport.push(OpBatch("device-b", seq = 1, ops = listOf(op(rowId = "x", remoteRevision = 1))))
+        transport.compact()
+        val applier = FakeSyncApplier()
+        val engine = SyncEngine(
+            transport, applier, FakeTombstoneReaper(),
+            FakeTransactionRepository(), FakeCategoryRepository(), FakeBudgetRepository(), FakeCategoryRuleRepository(),
+            deviceId = "device-a",
+        )
+        engine.sync() // reconciles, cursor for device-b advances to the horizon (seq 1)
+
+        transport.push(OpBatch("device-b", seq = 2, ops = listOf(op(rowId = "z", remoteRevision = 1))))
+        engine.sync()
+
+        assertThat(applier.reconcileCalls).hasSize(1)
+        assertThat(applier.calls.flatMap { it.first }.map { it.rowId }).containsExactly("z")
     }
 
     private fun op(rowId: String, remoteRevision: Long) = SyncOp(
@@ -221,6 +291,7 @@ class SyncEngineTest {
 private class FakeSyncApplier : SyncApplier {
     val calls = mutableListOf<Pair<List<SyncOp>, String>>()
     val recordedPushes = mutableListOf<PushedShadow>()
+    val reconcileCalls = mutableListOf<Pair<RemoteSnapshot, String>>()
 
     override suspend fun apply(ops: List<SyncOp>, localDeviceId: String) {
         calls += ops to localDeviceId
@@ -229,9 +300,22 @@ private class FakeSyncApplier : SyncApplier {
     override suspend fun recordPushed(table: SyncTable, rowId: String, remoteRevision: Long, payload: JsonObject?) {
         recordedPushes += PushedShadow(table, rowId, remoteRevision, payload)
     }
+
+    override suspend fun reconcile(snapshot: RemoteSnapshot, localDeviceId: String) {
+        reconcileCalls += snapshot to localDeviceId
+    }
 }
 
 private data class PushedShadow(val table: SyncTable, val rowId: String, val remoteRevision: Long, val payload: JsonObject?)
+
+private class FakeTombstoneReaper : TombstoneReaper {
+    var reapCount = 0
+        private set
+
+    override suspend fun reap() {
+        reapCount += 1
+    }
+}
 
 /** Records exactly the two calls [SyncEngine] makes: reading what is dirty, and acknowledging what was pushed. */
 private class FakeTransactionRepository(

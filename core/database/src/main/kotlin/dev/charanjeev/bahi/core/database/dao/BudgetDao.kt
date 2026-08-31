@@ -157,4 +157,16 @@ interface BudgetDao {
         """,
     )
     suspend fun markSynced(id: String, remoteRevision: Long, expectedLocalRevision: Long): Int
+
+    /** See [TransactionDao.allIds]. */
+    @Query("SELECT id FROM budgets")
+    suspend fun allIds(): List<String>
+
+    /** See [TransactionDao.tombstonesOlderThan]. */
+    @Query("SELECT id FROM budgets WHERE deleted_at IS NOT NULL AND deleted_at < :before")
+    suspend fun tombstonesOlderThan(before: Long): List<String>
+
+    /** See [TransactionDao.hardDelete]. */
+    @Query("DELETE FROM budgets WHERE id = :id")
+    suspend fun hardDelete(id: String): Int
 }

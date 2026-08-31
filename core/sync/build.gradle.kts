@@ -6,6 +6,16 @@ plugins {
 
 android {
     namespace = "dev.charanjeev.bahi.core.sync"
+
+    defaultConfig {
+        // ConvergencePropertyTest's CI-vs-nightly split (docs/sync-design.md
+        // §10.3, §13 slice 7): `./gradlew connectedDebugAndroidTest` runs the
+        // default 50 seeds; `.github/workflows/nightly.yml` passes
+        // `-PseedCount=1000` for the larger corpus. Only ever read if a test
+        // asks InstrumentationRegistry for it, so this line is a no-op for
+        // every other instrumented test in this module.
+        testInstrumentationRunnerArguments["seedCount"] = (project.findProperty("seedCount") as String?) ?: "50"
+    }
 }
 
 dependencies {

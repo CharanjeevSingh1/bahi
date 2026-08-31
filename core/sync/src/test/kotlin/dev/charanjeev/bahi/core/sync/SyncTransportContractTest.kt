@@ -93,6 +93,19 @@ abstract class SyncTransportContractTest {
         assertThat(transport.pull(emptyMap()).map { it.seq }).containsExactly(1L, 2L, 3L).inOrder()
     }
 
+    /**
+     * A transport nothing has ever compacted has nothing an incremental pull
+     * could miss (docs/sync-design.md §7) -- an empty horizon is the safe
+     * default every implementation has to start from, compacted or not.
+     */
+    @Test
+    fun `snapshot of a transport nothing has compacted has an empty horizon`() = runTest {
+        val transport = createTransport()
+        transport.push(opBatch(deviceId = "device-a", seq = 1))
+
+        assertThat(transport.snapshot().horizon).isEmpty()
+    }
+
     private fun opBatch(deviceId: String, seq: Long) = OpBatch(
         deviceId = deviceId,
         seq = seq,

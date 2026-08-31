@@ -1369,6 +1369,73 @@ more than the value. D8.
 `sync_conflicts` rows that have been acknowledged age out on the same horizon
 (§5.6).
 
+**Built in slice 7.** M4a has no real compaction (that is M4b's periodic job,
+§8.3, slice 9) and no real Drive transport to compact, so this section's
+"remote carries a horizon watermark" needed a concrete shape before any of it
+could be a tested path rather than a description. What got built:
+
+- `SyncTransport` gained one new method, `snapshot(): RemoteSnapshot` --
+  `RemoteSnapshot(horizon: Map<deviceId, seq>, rows: List<SnapshotRow>)`,
+  `:core:model`. `horizon` is empty for a transport nothing has ever
+  compacted, which is the safe default every implementation starts from:
+  an empty horizon can never be "behind", so nothing reconciles against it
+  by mistake.
+- Triggering compaction is deliberately **not** part of `SyncTransport`.
+  On Drive it will be a periodic maintenance job (slice 9) that some device
+  runs opportunistically, not something the engine asks for. `InMemoryTransport`
+  gets a `compact()` method that is not part of the interface, exists only so
+  a test can put a device behind the horizon on purpose, and folds every
+  batch pushed so far into a `RemoteSnapshot` the same way `RoomSyncApplier`
+  folds a batch -- newest op per row wins, tombstones excluded from the
+  result rows -- then drops every batch it just folded in.
+- `SyncEngine.sync` calls `transport.snapshot()` on every cycle and compares
+  its own per-peer cursor against `horizon`. Behind, for any peer, means
+  incremental `pull` is skipped for that cycle in favour of
+  `SyncApplier.reconcile(snapshot, deviceId)`, and the cursor is advanced to
+  `horizon` afterward so the next cycle pulls normally again. Fetching the
+  full snapshot on every cycle is the simple choice for a free, in-memory
+  fake; a real backend paying a network round trip for this on every sync
+  would likely want a cheaper way to learn just the horizon first -- not a
+  problem this engine has evidence for yet, so not built.
+- `SyncApplier.reconcile` applies every row the snapshot still knows about
+  exactly like an ordinary pulled op, reusing `apply`'s own merge machinery
+  (the reasoning this section already gives: a fresh install's first sync is
+  the same shape). For a local row **absent** from the snapshot, the exact
+  rule this section left as "decide by local_revision versus shadow": no
+  shadow, or `local_revision` greater than the shadow's `remote_revision`,
+  means either a genuine local creation remote has never seen or a local
+  edit newer than what was last agreed -- edit-over-delete (§5.3) one
+  horizon later, so the row survives untouched (its stale shadow, if any, is
+  forgotten so it is pushed as a fresh creation rather than compared against
+  a base remote can no longer produce). Otherwise -- nothing beyond what was
+  already agreed -- the row is hard-deleted, and its `sync_shadow`/
+  `sync_conflicts` rows go with it.
+- `TombstoneReaper` (`:core:data`) is the local hard-delete half, run from
+  `SyncEngine.sync` once per cycle rather than a periodic worker -- there is
+  no WorkManager wiring yet (slice 9) to run it any other way, and this is
+  what makes the horizon an exercised path today. It reaps
+  `SyncTable.entries` **reversed** -- every child table before
+  `CATEGORIES` -- on purpose: `budgets.category_id` and
+  `category_rules.category_id` are `ON DELETE CASCADE`, and
+  `CategoryDao.softDeleteUserCategory` always tombstones a category and its
+  budgets/rules at the same instant, so by the time a category is old enough
+  to reap, anything that would cascade from it has already been reaped (and
+  already forgotten from `sync_shadow`/`sync_conflicts`) on its own account.
+  Reaping in the other order would let the category's hard delete cascade
+  first, leaving the budget/rule's shadow and conflict rows pointing at
+  nothing. `TombstoneReaperTest` (`:core:data`, real Room) asserts this
+  directly rather than trusting the ordering argument.
+- **A gap this ordering does not close, left as a known limitation rather
+  than fixed:** a budget or rule created *after* its category was
+  soft-deleted but before that category is hard-deleted (the category row
+  still exists, so the foreign key permits the insert) is not itself old
+  enough to be reaped on its own account when the category finally is. The
+  category's hard delete still cascades to it, and that budget or rule's
+  `sync_shadow`/`sync_conflicts` rows are orphaned exactly the way the
+  reversed reap order exists to prevent for the ordinary case. Narrow --
+  nothing in the UI creates a budget under a category already marked
+  deleted -- and not something this slice built machinery to close. §11.
+
 ---
 
 ## 8. The backend (M4b)
@@ -1823,6 +1890,18 @@ sections were the ones that did this.
   nothing in the app does yet. Sync is not the place to introduce either, but it
   is the place where getting them wrong later becomes expensive, because the
   wrong assumption is baked into ids.
+- **A budget or rule created under an already-soft-deleted category can be
+  orphaned by the tombstone horizon.** §7. `TombstoneReaper` reaps children
+  before `CATEGORIES` specifically so a category's `ON DELETE CASCADE` never
+  outruns its own budgets and rules being reaped on their own account -- but
+  that only holds because `softDeleteUserCategory` tombstones a category and
+  its budgets/rules at the same instant. A budget or rule inserted *after*
+  that (the category row still exists, so the foreign key permits it) is
+  younger, is not reaped on its own account when the category finally is,
+  and still gets swept up by the cascade -- leaving its `sync_shadow`/
+  `sync_conflicts` rows pointing at nothing. Narrow (nothing in the UI does
+  this) and not closed; the ordering argument that closes the ordinary case
+  does not extend to it.
 
 ---
 
@@ -1957,8 +2036,24 @@ M4a — slices 1–8. Each compiles and passes `checkModuleBoundaries` on its ow
    checkable rather than merely designed; slice 7 still owes the 50-seed/
    1,000-seed CI/nightly split (this slice's property test runs 50 seeds
    every time, with no nightly tier yet) and the §6.2 re-measurement.
-7. **The property test and the horizon** (§10.3, §7). Generator, seed corpus,
-   nightly job; tombstone horizon and the full-reconciliation path.
+7. **The horizon, and the property test's remaining CI shape** (§10.3, §7).
+   **Done.** The CI/nightly split: `ConvergencePropertyTest` reads its seed
+   count from `InstrumentationRegistry` (`DEFAULT_SEED_COUNT = 50`),
+   `core/sync/build.gradle.kts` wires a `seedCount` Gradle property into
+   `testInstrumentationRunnerArguments`, `ci.yml`'s existing `instrumented`
+   job runs the default on every push, and a new `nightly.yml` runs
+   `-PseedCount=1000` on a daily schedule (`workflow_dispatch` too) against
+   just this one test class. The tombstone horizon: `SyncTransport.snapshot()`,
+   `InMemoryTransport.compact()` as a test-only compaction simulation (real
+   compaction is still M4b/slice 9), `SyncEngine`'s per-cycle horizon check
+   and reconcile-then-resume-pulling flow, `SyncApplier.reconcile` (reuses
+   `apply`'s merge machinery for rows the snapshot still knows about, and
+   implements §7's "decide by local_revision versus shadow" for rows it
+   doesn't), and `TombstoneReaper` reaping child tables before `CATEGORIES`
+   for `ON DELETE CASCADE` safety. One scripted scenario added
+   (`bDeletesAndCompactsBeforeAPulls_aReconcilesAndHardDeletes`) alongside
+   the fourteen from §10.2. §7 has the full write-up and the one limitation
+   this slice knowingly left open.
 8. **Sync UI** in `:feature:settings` (§5.6). Sync status from `SyncStatus`
    (which already exists and is already the right shape), the conflict list, and
    restoring a discarded value. Gives that module its first real screen. Note

@@ -7,6 +7,7 @@ import dev.charanjeev.bahi.core.data.repository.OfflineFirstCategoryRepository
 import dev.charanjeev.bahi.core.data.repository.OfflineFirstCategoryRuleRepository
 import dev.charanjeev.bahi.core.data.repository.OfflineFirstTransactionRepository
 import dev.charanjeev.bahi.core.data.repository.RoomSyncApplier
+import dev.charanjeev.bahi.core.data.repository.RoomTombstoneReaper
 import dev.charanjeev.bahi.core.database.BahiDatabase
 import dev.charanjeev.bahi.core.sync.ConflictResolverRemoteMerge
 import dev.charanjeev.bahi.core.sync.DefaultConflictResolver
@@ -60,10 +61,12 @@ class SyncTestDevice(
     // suite has to prove the shipped policy converges, not a simplified
     // stand-in for it.
     private val applier = RoomSyncApplier(database, ConflictResolverRemoteMerge(DefaultConflictResolver()), clock)
+    private val reaper = RoomTombstoneReaper(database, clock)
 
     val engine = SyncEngine(
         transport = transport,
         applier = applier,
+        reaper = reaper,
         transactionRepository = transactionRepository,
         categoryRepository = categoryRepository,
         budgetRepository = budgetRepository,

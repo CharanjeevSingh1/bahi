@@ -145,4 +145,15 @@ class FakeBudgetDao(
         )
         return 1
     }
+
+    override suspend fun allIds(): List<String> = backing.value.keys.toList()
+
+    override suspend fun tombstonesOlderThan(before: Long): List<String> =
+        backing.value.values.filter { (it.deletedAt ?: return@filter false) < before }.map { it.id }
+
+    override suspend fun hardDelete(id: String): Int {
+        if (!backing.value.containsKey(id)) return 0
+        backing.value = backing.value - id
+        return 1
+    }
 }

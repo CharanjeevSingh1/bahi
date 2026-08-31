@@ -7,6 +7,8 @@ import com.google.common.truth.Truth.assertThat
 import dev.charanjeev.bahi.core.database.BahiDatabase
 import dev.charanjeev.bahi.core.database.entity.CategoryEntity
 import dev.charanjeev.bahi.core.database.entity.TransactionEntity
+import dev.charanjeev.bahi.core.model.RemoteSnapshot
+import dev.charanjeev.bahi.core.model.SnapshotRow
 import dev.charanjeev.bahi.core.model.SyncOp
 import dev.charanjeev.bahi.core.model.SyncTable
 import dev.charanjeev.bahi.core.testing.FixedClock
@@ -237,6 +239,94 @@ class SyncApplierTest {
         assertThat(category).isNotNull()
         assertThat(category!!.name).isEqualTo("Food")
     }
+
+    // --- reconcile (docs/sync-design.md §7, D8's full-reconciliation path) ---
+
+    @Test
+    fun reconcileAppliesEverySnapshotRowLikeAnOrdinaryPulledOp() = runTest {
+        applier.reconcile(
+            RemoteSnapshot(horizon = mapOf("device-b" to 1), rows = listOf(snapshotRow(rowId = "t1", remoteRevision = 5, amountMinor = -100))),
+            localDeviceId = "device-a",
+        )
+
+        val row = database.transactionDao().rowById("t1")
+        assertThat(row).isNotNull()
+        assertThat(row!!.amountMinor).isEqualTo(-100)
+        assertThat(database.syncShadowDao().baseOf("transactions", "t1")!!.remoteRevision).isEqualTo(5)
+    }
+
+    /**
+     * §7's clean case: the row is not merely tombstoned locally, it may still
+     * look entirely live here, because the tombstone that would have told
+     * this device about the deletion was itself compacted away before this
+     * device ever pulled it. Nothing beyond what was last agreed
+     * ([shadow]'s revision equals the row's own) means there is no local
+     * edit to protect, so remote having forgotten the row entirely is taken
+     * at face value.
+     */
+    @Test
+    fun reconcileHardDeletesALiveLocalRowMissingFromTheSnapshotWithNothingUnpushed() = runTest {
+        database.transactionDao().upsert(transactionEntity(id = "t1", amountMinor = -100, localRevision = 3))
+        database.syncShadowDao().record(shadow(rowId = "t1", remoteRevision = 3, payload = payloadOf(-100)))
+        database.syncConflictDao().record(conflictOf(rowId = "t1"))
+
+        applier.reconcile(RemoteSnapshot(horizon = mapOf("device-b" to 9), rows = emptyList()), localDeviceId = "device-a")
+
+        assertThat(database.transactionDao().rowById("t1")).isNull()
+        assertThat(database.syncShadowDao().baseOf("transactions", "t1")).isNull()
+        assertThat(database.syncConflictDao().observeForRow("transactions", "t1").first()).isEmpty()
+    }
+
+    /**
+     * Edit-over-delete (§5.3), one horizon later: this device edited the row
+     * after the last state it and remote agreed on, and remote has since
+     * forgotten the row entirely. The edit survives -- a lost edit does not
+     * come back, a redundant re-push costs nothing -- and the stale base is
+     * forgotten so the row is pushed as if it were a fresh creation rather
+     * than compared against a base remote can no longer produce.
+     */
+    @Test
+    fun reconcileKeepsALocalEditNewerThanTheShadowEvenWhenMissingFromTheSnapshot() = runTest {
+        database.transactionDao().upsert(transactionEntity(id = "t1", amountMinor = -200, localRevision = 5))
+        database.syncShadowDao().record(shadow(rowId = "t1", remoteRevision = 3, payload = payloadOf(-100)))
+
+        applier.reconcile(RemoteSnapshot(horizon = mapOf("device-b" to 9), rows = emptyList()), localDeviceId = "device-a")
+
+        val row = database.transactionDao().rowById("t1")
+        assertThat(row).isNotNull()
+        assertThat(row!!.amountMinor).isEqualTo(-200)
+        assertThat(database.syncShadowDao().baseOf("transactions", "t1")).isNull()
+    }
+
+    /** A row this device has never synced at all -- absence from the snapshot is simply "remote never got it yet". */
+    @Test
+    fun reconcileLeavesAGenuineLocalCreationNeverSyncedAlone() = runTest {
+        database.transactionDao().upsert(transactionEntity(id = "t1", amountMinor = -300, localRevision = 1))
+
+        applier.reconcile(RemoteSnapshot(horizon = mapOf("device-b" to 9), rows = emptyList()), localDeviceId = "device-a")
+
+        assertThat(database.transactionDao().rowById("t1")).isNotNull()
+        assertThat(database.syncShadowDao().baseOf("transactions", "t1")).isNull()
+    }
+
+    private fun snapshotRow(rowId: String, remoteRevision: Long, amountMinor: Long, updatedAt: Long = 1_000) = SnapshotRow(
+        table = SyncTable.TRANSACTIONS.tableName,
+        rowId = rowId,
+        remoteRevision = remoteRevision,
+        updatedAt = updatedAt,
+        payload = payloadOf(amountMinor, updatedAt),
+    )
+
+    private fun conflictOf(rowId: String) = dev.charanjeev.bahi.core.database.entity.SyncConflictEntity(
+        id = "conflict-$rowId",
+        tableName = "transactions",
+        rowId = rowId,
+        field = "notes",
+        resolvedAt = 1L,
+        chosenValue = """"chosen"""",
+        discardedValue = """"discarded"""",
+        reason = "test",
+    )
 
     private fun payloadOf(amountMinor: Long, updatedAt: Long = 0L): JsonObject = transactionOp(
         rowId = "unused",

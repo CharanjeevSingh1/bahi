@@ -4,6 +4,8 @@ import androidx.room.withTransaction
 import dev.charanjeev.bahi.core.database.BahiDatabase
 import dev.charanjeev.bahi.core.database.entity.SyncConflictEntity
 import dev.charanjeev.bahi.core.database.entity.SyncShadowEntity
+import dev.charanjeev.bahi.core.model.RemoteSnapshot
+import dev.charanjeev.bahi.core.model.SnapshotRow
 import dev.charanjeev.bahi.core.model.SyncOp
 import dev.charanjeev.bahi.core.model.SyncTable
 import kotlinx.datetime.Clock
@@ -51,6 +53,21 @@ interface SyncApplier {
      * shadow write's convention for a tombstoned base.
      */
     suspend fun recordPushed(table: SyncTable, rowId: String, remoteRevision: Long, payload: JsonObject?)
+
+    /**
+     * The full-reconciliation path (docs/sync-design.md §7, D8): what a
+     * device whose pull cursor has fallen behind a compacted remote's
+     * horizon does instead of an incremental [apply]. Every row [snapshot]
+     * still knows about is applied exactly like an ordinary pulled op --
+     * reusing [apply]'s own merge machinery is what §7 means by "the
+     * reconciliation path is needed anyway for a new device", since a fresh
+     * install's first sync is the same shape. What is genuinely new here is
+     * the rows this device has that [snapshot] does not: absence is only
+     * informative when compared against everything this device holds, not
+     * just what is currently dirty, which is why this takes a whole table
+     * scan rather than a batch of ops.
+     */
+    suspend fun reconcile(snapshot: RemoteSnapshot, localDeviceId: String)
 }
 
 /**
@@ -290,6 +307,104 @@ class RoomSyncApplier @Inject constructor(
         recordShadowAndConflicts(SyncTable.CATEGORY_RULES, rowId, op, decision)
     }
 
+    override suspend fun reconcile(snapshot: RemoteSnapshot, localDeviceId: String) {
+        database.withTransaction {
+            val rowsByTable = snapshot.rows.groupBy { it.table }
+            // Parent tables first, same reasoning as apply(): a budget or
+            // rule the snapshot is (re)creating must not land ahead of its
+            // category.
+            for (table in SyncTable.entries) {
+                for (row in rowsByTable[table.tableName].orEmpty()) {
+                    applyOne(table, row.rowId, row.toSyncOp(), localDeviceId)
+                }
+            }
+            // Children before CATEGORIES (SyncTable.entries reversed): a
+            // category hard-deleted before its budgets/rules were checked
+            // would cascade-delete them ahead of this pass ever seeing
+            // them, and their shadow/conflict rows would be left orphaned.
+            for (table in SyncTable.entries.reversed()) {
+                reconcileRowsMissingFromSnapshot(table, rowsByTable[table.tableName].orEmpty(), localDeviceId)
+            }
+        }
+    }
+
+    /**
+     * The half of §7's algorithm [apply] has no equivalent of: a row this
+     * device holds that [snapshot] no longer mentions at all. Absence means
+     * one of two things, and [SyncShadowEntity] plus `local_revision` is
+     * what tells them apart -- the same causal test §5.2's fast-forward
+     * table uses, one horizon later.
+     */
+    private suspend fun reconcileRowsMissingFromSnapshot(table: SyncTable, presentRows: List<SnapshotRow>, localDeviceId: String) {
+        val present = presentRows.mapTo(mutableSetOf()) { it.rowId }
+        for (id in allIdsFor(table)) {
+            if (id in present) continue
+            val shadow = database.syncShadowDao().baseOf(table.tableName, id)
+            // The row moved (or vanished) under this same transaction's own
+            // earlier pass -- nothing left to reconcile.
+            val localRevision = localRevisionFor(table, id) ?: continue
+
+            if (shadow == null || localRevision > shadow.remoteRevision) {
+                // No base at all -- remote has never seen this row, a
+                // genuine local creation -- or a local edit newer than what
+                // was last agreed, i.e. this device kept editing a row
+                // remote deleted (and has since forgotten entirely). Either
+                // way this is edit-over-delete (§5.3) one horizon later: the
+                // row survives, dirty, to be pushed as if new. A stale base
+                // no longer describes anything remote can still produce, so
+                // it is forgotten rather than compared against again.
+                if (shadow != null) database.syncShadowDao().forget(table.tableName, id)
+            } else {
+                // This device has nothing beyond what was already agreed,
+                // and remote has forgotten the row entirely: it was deleted,
+                // and the deletion is now out of retention. Hard delete, not
+                // a tombstone -- there is nothing left anywhere to
+                // reconcile a tombstone against.
+                hardDeleteFor(table, id)
+                database.syncShadowDao().forget(table.tableName, id)
+                database.syncConflictDao().forgetRow(table.tableName, id)
+            }
+        }
+    }
+
+    private suspend fun allIdsFor(table: SyncTable): List<String> = when (table) {
+        SyncTable.TRANSACTIONS -> database.transactionDao().allIds()
+        SyncTable.CATEGORIES -> database.categoryDao().allIds()
+        SyncTable.BUDGETS -> database.budgetDao().allIds()
+        SyncTable.CATEGORY_RULES -> database.categoryRuleDao().allIds()
+    }
+
+    private suspend fun localRevisionFor(table: SyncTable, id: String): Long? = when (table) {
+        SyncTable.TRANSACTIONS -> database.transactionDao().revisionOf(id)?.localRevision
+        SyncTable.CATEGORIES -> database.categoryDao().revisionOf(id)?.localRevision
+        SyncTable.BUDGETS -> database.budgetDao().revisionOf(id)?.localRevision
+        SyncTable.CATEGORY_RULES -> database.categoryRuleDao().revisionOf(id)?.localRevision
+    }
+
+    private suspend fun hardDeleteFor(table: SyncTable, id: String) {
+        when (table) {
+            SyncTable.TRANSACTIONS -> database.transactionDao().hardDelete(id)
+            SyncTable.CATEGORIES -> database.categoryDao().hardDelete(id)
+            SyncTable.BUDGETS -> database.budgetDao().hardDelete(id)
+            SyncTable.CATEGORY_RULES -> database.categoryRuleDao().hardDelete(id)
+        }
+    }
+
+    private fun SnapshotRow.toSyncOp() = SyncOp(
+        table = table,
+        rowId = rowId,
+        remoteRevision = remoteRevision,
+        // A snapshot row is compaction's merged current state, not one
+        // device's edit -- there is no single author to name (see
+        // [SnapshotRow]'s doc). This is only ever consulted as a last-resort
+        // deterministic tiebreak when [updatedAt] ties exactly (§5.5), so any
+        // fixed value is safe; it is never compared for equality against a
+        // real device id.
+        deviceId = SNAPSHOT_DEVICE_ID,
+        updatedAt = updatedAt,
+        payload = payload,
+    )
+
     override suspend fun recordPushed(table: SyncTable, rowId: String, remoteRevision: Long, payload: JsonObject?) {
         database.syncShadowDao().record(
             SyncShadowEntity(
@@ -379,3 +494,6 @@ private fun decide(local: MergeSideInput, existingLocalRevision: Long, op: SyncO
         conflicts = outcome.conflicts,
     )
 }
+
+/** See [RoomSyncApplier.toSyncOp]. */
+private const val SNAPSHOT_DEVICE_ID = "sync-snapshot"

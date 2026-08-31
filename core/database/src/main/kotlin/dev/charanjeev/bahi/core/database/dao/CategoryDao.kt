@@ -156,4 +156,28 @@ interface CategoryDao {
         """,
     )
     suspend fun markSynced(id: String, remoteRevision: Long, expectedLocalRevision: Long): Int
+
+    /** See [TransactionDao.allIds]. */
+    @Query("SELECT id FROM categories")
+    suspend fun allIds(): List<String>
+
+    /** See [TransactionDao.tombstonesOlderThan]. */
+    @Query("SELECT id FROM categories WHERE deleted_at IS NOT NULL AND deleted_at < :before")
+    suspend fun tombstonesOlderThan(before: Long): List<String>
+
+    /**
+     * See [TransactionDao.hardDelete]. `budgets.category_id` and
+     * `category_rules.category_id` both cascade (`ON DELETE CASCADE`), so a
+     * budget or rule still pointing at this category is deleted with it --
+     * `TombstoneReaper` reaps both tables first for exactly this reason, so
+     * by the time a category is old enough to reap here, anything that would
+     * cascade has already been reaped (and forgotten from `sync_shadow`/
+     * `sync_conflicts`) on its own account rather than silently through this
+     * cascade. `transactions.category_id` is `ON DELETE SET_NULL`: any live
+     * transaction still pointing at this category (deliberately left in
+     * place by [softDeleteUserCategory], not nulled at delete time) finally
+     * gets nulled here, once the category is not merely gone but forgotten.
+     */
+    @Query("DELETE FROM categories WHERE id = :id")
+    suspend fun hardDelete(id: String): Int
 }

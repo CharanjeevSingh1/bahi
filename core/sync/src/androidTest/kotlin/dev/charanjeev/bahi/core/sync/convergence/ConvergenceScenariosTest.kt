@@ -353,4 +353,36 @@ class ConvergenceScenariosTest {
         // Garbling is accepted (D10, §6.5); agreement is not optional.
         assertThat(a.dump().categoryRules.map { it.id }).isEqualTo(b.dump().categoryRules.map { it.id })
     }
+
+    // --- 15: the tombstone horizon and full reconciliation (§7, new in slice 7) ---
+
+    /**
+     * Not one of §10.2's original fourteen -- this is slice 7's own scenario,
+     * the one D8 argues the horizon's value matters less than: the
+     * reconciliation path actually running rather than staying a theoretical
+     * one. Device B deletes a row and pushes it; before A ever pulls that
+     * batch, the transport compacts, folding both devices' history into one
+     * snapshot and dropping the individual ops -- including the delete A
+     * never saw. A's next sync has to notice its cursor for device-b is
+     * behind the new horizon, reconcile against the snapshot instead of
+     * pulling directly, and -- since A never touched the row after the
+     * state it and B last agreed on -- hard-delete its own live-looking copy
+     * rather than resurrect it.
+     */
+    @Test
+    fun bDeletesAndCompactsBeforeAPulls_aReconcilesAndHardDeletes() = convergenceTest {
+        a.transactionRepository.upsert(tx("t1", amount = -1_000, at = a.clock.now()))
+        syncToQuiescence()
+
+        b.transactionRepository.delete("t1")
+        b.sync() // pushed, but device-a never pulls this batch directly.
+        transport.compact()
+
+        a.sync()
+
+        assertThat(a.dump().transactions).isEmpty()
+        syncToQuiescence()
+        assertConverged()
+        assertThat(a.dump().transactions).isEmpty()
+    }
 }

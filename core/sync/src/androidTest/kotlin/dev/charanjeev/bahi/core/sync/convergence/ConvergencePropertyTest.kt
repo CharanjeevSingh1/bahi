@@ -1,6 +1,7 @@
 package dev.charanjeev.bahi.core.sync.convergence
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
 import com.google.common.truth.Truth.assertWithMessage
 import dev.charanjeev.bahi.core.model.Money
 import dev.charanjeev.bahi.core.model.YearMonth
@@ -30,20 +31,26 @@ import kotlin.random.Random
  * be remembered rather than enforced, per that same section.
  *
  * Run count, stated per CLAUDE.md's rule on this after
- * `BudgetTotalsTransientTest`: [SEED_COUNT] fixed seeds, every run. A
- * CI-vs-nightly split with a larger corpus on a schedule is slice 7's own
- * item, still owed -- see docs/sync-design.md §13 slice 7. Each seed is
- * deterministic and reproducible regardless of count: a failure names the
- * seed, and re-running [runSeed] with just that number reproduces it with no
- * other state.
+ * `BudgetTotalsTransientTest`: [DEFAULT_SEED_COUNT] fixed seeds on every push
+ * (`.github/workflows/ci.yml`'s `connectedDebugAndroidTest`), and a larger
+ * corpus on a nightly schedule (`.github/workflows/nightly.yml`) that passes
+ * `-PseedCount=1000` -- `core/sync/build.gradle.kts` wires that Gradle
+ * property into `testInstrumentationRunnerArguments["seedCount"]`, and
+ * [configuredSeedCount] reads it back at run time, so the same test class
+ * (and the same APK) runs either size depending on how it was launched.
+ * Slice 7's own split: slice 6 built this test at a single fixed count with
+ * this split named as the piece still owed. Each seed is deterministic and
+ * reproducible regardless of count: a failure names the seed, and re-running
+ * [runSeed] with just that number reproduces it with no other state.
  */
 @RunWith(AndroidJUnit4::class)
 class ConvergencePropertyTest {
 
     @Test
     fun seeds_convergeToTheSameDatabase() = runTest {
+        val seedCount = configuredSeedCount()
         val failures = mutableListOf<String>()
-        for (seed in 1..SEED_COUNT) {
+        for (seed in 1..seedCount) {
             try {
                 runSeed(seed)
             } catch (e: Throwable) {
@@ -51,14 +58,17 @@ class ConvergencePropertyTest {
             }
         }
         assertWithMessage(
-            "Convergence failed for ${failures.size}/$SEED_COUNT seeds. Reproduce with " +
+            "Convergence failed for ${failures.size}/$seedCount seeds. Reproduce with " +
                 "ConvergencePropertyTest.runSeed(<seed>) directly.\n" +
                 failures.joinToString("\n"),
         ).that(failures).isEmpty()
     }
 
     companion object {
-        const val SEED_COUNT = 50
+        const val DEFAULT_SEED_COUNT = 50
+
+        private fun configuredSeedCount(): Int =
+            InstrumentationRegistry.getArguments().getString("seedCount")?.toIntOrNull() ?: DEFAULT_SEED_COUNT
     }
 }
 

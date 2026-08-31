@@ -133,4 +133,16 @@ interface CategoryRuleDao {
         """,
     )
     suspend fun markSynced(id: String, remoteRevision: Long, expectedLocalRevision: Long): Int
+
+    /** See [TransactionDao.allIds]. */
+    @Query("SELECT id FROM category_rules")
+    suspend fun allIds(): List<String>
+
+    /** See [TransactionDao.tombstonesOlderThan]. */
+    @Query("SELECT id FROM category_rules WHERE deleted_at IS NOT NULL AND deleted_at < :before")
+    suspend fun tombstonesOlderThan(before: Long): List<String>
+
+    /** See [TransactionDao.hardDelete]. */
+    @Query("DELETE FROM category_rules WHERE id = :id")
+    suspend fun hardDelete(id: String): Int
 }

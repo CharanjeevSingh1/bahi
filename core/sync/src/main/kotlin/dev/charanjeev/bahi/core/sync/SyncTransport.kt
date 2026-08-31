@@ -1,6 +1,7 @@
 package dev.charanjeev.bahi.core.sync
 
 import dev.charanjeev.bahi.core.model.OpBatch
+import dev.charanjeev.bahi.core.model.RemoteSnapshot
 
 /**
  * What the engine needs from a backend, and nothing about what the backend
@@ -30,4 +31,16 @@ interface SyncTransport {
      * first pull.
      */
     suspend fun pull(after: Map<String, Long>): List<OpBatch>
+
+    /**
+     * The current merged state, and the per-device seq it already accounts
+     * for (docs/sync-design.md §7, §8.3). A transport that has never
+     * compacted anything answers with an empty [RemoteSnapshot.horizon] --
+     * there is nothing an incremental [pull] could miss, so nothing here is
+     * ever behind it. Triggering compaction itself is not part of this
+     * interface: on Drive it is a periodic maintenance job (M4b, slice 9)
+     * writing a new snapshot file, not something the engine asks for -- this
+     * method only ever reads whatever the most recent one says.
+     */
+    suspend fun snapshot(): RemoteSnapshot
 }

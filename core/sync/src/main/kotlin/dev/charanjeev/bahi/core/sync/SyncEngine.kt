@@ -5,6 +5,7 @@ import dev.charanjeev.bahi.core.data.repository.CategoryRepository
 import dev.charanjeev.bahi.core.data.repository.CategoryRuleRepository
 import dev.charanjeev.bahi.core.data.repository.DirtyRow
 import dev.charanjeev.bahi.core.data.repository.SyncApplier
+import dev.charanjeev.bahi.core.data.repository.TombstoneReaper
 import dev.charanjeev.bahi.core.data.repository.TransactionRepository
 import dev.charanjeev.bahi.core.model.OpBatch
 import dev.charanjeev.bahi.core.model.SyncOp
@@ -35,6 +36,7 @@ import dev.charanjeev.bahi.core.model.SyncTable
 class SyncEngine(
     private val transport: SyncTransport,
     private val applier: SyncApplier,
+    private val reaper: TombstoneReaper,
     private val transactionRepository: TransactionRepository,
     private val categoryRepository: CategoryRepository,
     private val budgetRepository: BudgetRepository,
@@ -45,13 +47,26 @@ class SyncEngine(
     private val cursor = mutableMapOf<String, Long>()
     private var nextPushSeq = 1L
 
-    /** One full cycle: pull whatever is new and apply it, then push whatever is still dirty. */
+    /**
+     * One full cycle: pull whatever is new and apply it, then push whatever
+     * is still dirty, then sweep tombstones and acknowledged conflicts past
+     * the horizon (docs/sync-design.md §7, D8).
+     *
+     * The reap runs here, once per cycle, rather than from a periodic
+     * worker: M4a has no WorkManager wiring yet (slice 9, M4b's job), so
+     * this is what makes the horizon a code path every scripted scenario and
+     * every property-test seed actually exercises, instead of one waiting on
+     * scheduling infrastructure that does not exist yet.
+     */
     suspend fun sync() {
         pull()
         push()
+        reaper.reap()
     }
 
     private suspend fun pull() {
+        reconcileIfBehindHorizon()
+
         val batches = transport.pull(cursor)
         if (batches.isNotEmpty()) {
             // A batch from a future format version is skipped rather than
@@ -62,6 +77,34 @@ class SyncEngine(
             for (batch in batches) {
                 cursor[batch.deviceId] = maxOf(cursor[batch.deviceId] ?: 0L, batch.seq)
             }
+        }
+    }
+
+    /**
+     * §7: a device whose cursor for some peer is older than that peer's
+     * entry in the remote's [dev.charanjeev.bahi.core.model.RemoteSnapshot.horizon]
+     * cannot trust an incremental pull -- history it has not seen for that
+     * peer has already been deleted -- and reconciles against the snapshot
+     * instead. Reconciling brings this device level with the *whole*
+     * horizon, not just the peer that happened to trigger it, because a
+     * compacted snapshot is one merged file covering every device (§8.3);
+     * there is no cheaper way to ask "just the part I'm missing".
+     *
+     * Calling [SyncTransport.snapshot] on every cycle is the simple choice
+     * for [InMemoryTransport], where it is free. A real backend (M4b) that
+     * pays a network round trip for this on every sync, whether or not it is
+     * ever behind, would likely want a cheaper way to learn the horizon
+     * before fetching the rows -- not a problem this engine has evidence for
+     * yet.
+     */
+    private suspend fun reconcileIfBehindHorizon() {
+        val snapshot = transport.snapshot()
+        val behindHorizon = snapshot.horizon.any { (peerId, seq) -> (cursor[peerId] ?: 0L) < seq }
+        if (!behindHorizon) return
+
+        applier.reconcile(snapshot, deviceId)
+        for ((peerId, seq) in snapshot.horizon) {
+            cursor[peerId] = maxOf(cursor[peerId] ?: 0L, seq)
         }
     }
 

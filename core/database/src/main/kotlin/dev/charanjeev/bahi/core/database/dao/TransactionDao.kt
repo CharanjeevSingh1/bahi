@@ -403,6 +403,38 @@ interface TransactionDao {
     suspend fun markSynced(id: String, remoteRevision: Long, expectedLocalRevision: Long): Int
 
     /**
+     * Every id this device holds for this table, tombstoned or not
+     * (docs/sync-design.md §7's full-reconciliation path): a row's absence
+     * from a compacted remote's snapshot is only informative when compared
+     * against everything this device has, not just what is currently dirty.
+     */
+    @Query("SELECT id FROM transactions")
+    suspend fun allIds(): List<String>
+
+    /**
+     * The tombstone horizon's local half (§7, D8): ids old enough that no
+     * device still plausibly offline could be relying on seeing this
+     * deletion. Returning the ids, rather than deleting in one `DELETE ...
+     * WHERE`, is what lets the caller (`TombstoneReaper`) also forget the
+     * matching `sync_shadow`/`sync_conflicts` rows -- neither table has a
+     * real foreign key back here (the parent table is named by a column), so
+     * nothing does that automatically.
+     */
+    @Query("SELECT id FROM transactions WHERE deleted_at IS NOT NULL AND deleted_at < :before")
+    suspend fun tombstonesOlderThan(before: Long): List<String>
+
+    /**
+     * The one place a transaction row is ever really gone rather than
+     * tombstoned. Only ever called, by `TombstoneReaper`, for an id
+     * [tombstonesOlderThan] just returned inside the same transaction --
+     * calling it on a live row would destroy user data with no soft-delete
+     * to recover from, which is the one thing rule 7 (CLAUDE.md) exists to
+     * prevent.
+     */
+    @Query("DELETE FROM transactions WHERE id = :id")
+    suspend fun hardDelete(id: String): Int
+
+    /**
      * Runs de-duplication and insert inside one transaction so a large import
      * can't half-apply if the process dies midway.
      *

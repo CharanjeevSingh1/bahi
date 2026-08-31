@@ -84,3 +84,52 @@ enum class SyncTable(val tableName: String) {
         fun of(tableName: String): SyncTable? = entries.firstOrNull { it.tableName == tableName }
     }
 }
+
+/**
+ * The tombstone horizon (docs/sync-design.md §7, D8): a local tombstone
+ * older than this is hard-deleted, and a device whose per-peer pull cursor
+ * has fallen behind a compacted remote's [RemoteSnapshot.horizon] can no
+ * longer trust an incremental pull and must reconcile against the snapshot
+ * instead. One constant for both, on purpose -- the value that makes the
+ * first safe is exactly the value that makes the second necessary: a
+ * tombstone is only safe to forget once every plausibly-offline device has
+ * had a chance to see it, and that is the same "longer than any device is
+ * plausibly offline" bound §7 sizes the horizon against.
+ */
+const val TOMBSTONE_HORIZON_DAYS: Int = 90
+
+/**
+ * What a compacted remote answers instead of raw ops once it has forgotten
+ * history older than [horizon] (docs/sync-design.md §7, §8.3). Modelled after
+ * the shape §8.3 settled on for Drive -- `snapshot/<n>.json` holding every
+ * device's merged current state -- rather than after the ops that produced
+ * it, because that history is exactly what compaction has thrown away.
+ *
+ * [rows] carries only *live* rows: a snapshot is "what currently exists", not
+ * a log, so a row deleted and then compacted away simply has no entry, and a
+ * device that still has that row locally learns this by its absence (§7's
+ * "for any local row absent from the snapshot, decide...").
+ */
+@Serializable
+data class RemoteSnapshot(
+    val horizon: Map<String, Long>,
+    val rows: List<SnapshotRow>,
+)
+
+/**
+ * One live row as of a [RemoteSnapshot]. Same shape as [SyncOp] minus
+ * [SyncOp.isTombstone] (a snapshot never carries a tombstone row, see
+ * [RemoteSnapshot]) and minus a single authoring [SyncOp.deviceId] --
+ * compaction merges every device's contributions into one state, so there is
+ * no one device to attribute a snapshot row to. A device applying it treats
+ * it exactly like an ordinary pulled op (docs/sync-design.md §7: "the
+ * reconciliation path is needed anyway for a new device").
+ */
+@Serializable
+data class SnapshotRow(
+    val table: String,
+    val rowId: String,
+    val remoteRevision: Long,
+    val updatedAt: Long,
+    val payload: JsonObject,
+)
