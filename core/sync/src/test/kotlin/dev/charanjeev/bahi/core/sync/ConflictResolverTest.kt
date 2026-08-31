@@ -259,6 +259,26 @@ class ConflictResolverTest {
         assertThat(result.conflicts).isEmpty()
     }
 
+    /**
+     * Found while building slice 6's two-device harness: an "edited" side
+     * that is actually unchanged since [base] is not a concurrent edit at
+     * all -- it is §5.2's fast-forward row, and the delete should win
+     * outright. Before this test existed, an unchanged side and a genuinely
+     * edited side both fell into "keep the edited payload", which meant a
+     * delete that had already been pulled and fast-forwarded on one device
+     * came back to life the moment that device's *own* unchanged copy was
+     * compared against the delete on a later sync.
+     */
+    @Test
+    fun `deletion vs edit -- an unchanged side is not an edit, and the deletion wins`() {
+        val base = payload(notes = "original")
+
+        val result = resolver.resolve(SyncTable.TRANSACTIONS, side(null), side(base), base)
+
+        assertThat(result.payload).isNull()
+        assertThat(result.conflicts).isEmpty()
+    }
+
     @Test
     fun `deletion vs edit -- both sides deleting the row is not a conflict`() {
         val result = resolver.resolve(SyncTable.TRANSACTIONS, side(null), side(null), payload())

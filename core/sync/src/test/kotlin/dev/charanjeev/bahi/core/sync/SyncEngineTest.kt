@@ -97,6 +97,57 @@ class SyncEngineTest {
         assertThat(transactions.markSyncedCalls).containsExactly(Triple("t1", 5L, 5L))
     }
 
+    /**
+     * The bug found while building slice 6's two-device harness: `dirtyRows`
+     * judges a row dirty against `sync_shadow.remote_revision`, not the
+     * `remote_revision` *column* `markSynced` updates on the row itself.
+     * Acknowledging a push without also writing the shadow leaves that row
+     * permanently dirty -- every device that has ever pushed anything would
+     * re-push it forever, which is exactly what the two-device harness's
+     * simplest possible scenario (one edit, one sync) hit before this test
+     * and SyncEngine.push's fix existed.
+     */
+    @Test
+    fun `a successful push writes the shadow so the row is not pushed forever`() = runTest {
+        val transport = InMemoryTransport()
+        val applier = FakeSyncApplier()
+        val transactions = FakeTransactionRepository(
+            dirty = listOf(DirtyRow("t1", localRevision = 5, updatedAt = 100, payload = payload(value = 42))),
+        )
+        val engine = SyncEngine(
+            transport, applier,
+            transactions, FakeCategoryRepository(), FakeBudgetRepository(), FakeCategoryRuleRepository(),
+            deviceId = "device-a",
+        )
+
+        engine.sync()
+
+        assertThat(applier.recordedPushes).containsExactly(
+            PushedShadow(SyncTable.TRANSACTIONS, "t1", remoteRevision = 5L, payload = payload(value = 42)),
+        )
+    }
+
+    @Test
+    fun `a push that fails its guard does not write a shadow for the stale revision`() = runTest {
+        val transport = InMemoryTransport()
+        val applier = FakeSyncApplier()
+        val transactions = FakeTransactionRepository(
+            dirty = listOf(DirtyRow("t1", localRevision = 5, updatedAt = 100, payload = payload())),
+            markSyncedResult = false, // the row moved under the push (§4.3's guard)
+        )
+        val engine = SyncEngine(
+            transport, applier,
+            transactions, FakeCategoryRepository(), FakeBudgetRepository(), FakeCategoryRuleRepository(),
+            deviceId = "device-a",
+        )
+
+        engine.sync()
+
+        // Recording it anyway would claim this device and the remote agree
+        // on a revision the row has already moved past.
+        assertThat(applier.recordedPushes).isEmpty()
+    }
+
     @Test
     fun `this device's own push is never pulled back on the next cycle`() = runTest {
         val transport = InMemoryTransport()
@@ -169,13 +220,24 @@ class SyncEngineTest {
 
 private class FakeSyncApplier : SyncApplier {
     val calls = mutableListOf<Pair<List<SyncOp>, String>>()
+    val recordedPushes = mutableListOf<PushedShadow>()
+
     override suspend fun apply(ops: List<SyncOp>, localDeviceId: String) {
         calls += ops to localDeviceId
     }
+
+    override suspend fun recordPushed(table: SyncTable, rowId: String, remoteRevision: Long, payload: JsonObject?) {
+        recordedPushes += PushedShadow(table, rowId, remoteRevision, payload)
+    }
 }
 
+private data class PushedShadow(val table: SyncTable, val rowId: String, val remoteRevision: Long, val payload: JsonObject?)
+
 /** Records exactly the two calls [SyncEngine] makes: reading what is dirty, and acknowledging what was pushed. */
-private class FakeTransactionRepository(private val dirty: List<DirtyRow> = emptyList()) : TransactionRepository {
+private class FakeTransactionRepository(
+    private val dirty: List<DirtyRow> = emptyList(),
+    private val markSyncedResult: Boolean = true,
+) : TransactionRepository {
     val markSyncedCalls = mutableListOf<Triple<String, Long, Long>>()
     override fun observeTransactions(filter: TransactionFilter): Flow<List<Transaction>> = MutableStateFlow(emptyList())
     override fun observeTransaction(id: String): Flow<Transaction?> = MutableStateFlow(null)
@@ -189,7 +251,7 @@ private class FakeTransactionRepository(private val dirty: List<DirtyRow> = empt
     override suspend fun dirtyRows(limit: Int): List<DirtyRow> = dirty
     override suspend fun markSynced(rowId: String, remoteRevision: Long, expectedLocalRevision: Long): Boolean {
         markSyncedCalls += Triple(rowId, remoteRevision, expectedLocalRevision)
-        return true
+        return markSyncedResult
     }
 }
 

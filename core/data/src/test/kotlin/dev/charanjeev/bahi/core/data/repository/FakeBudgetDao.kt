@@ -71,6 +71,9 @@ class FakeBudgetDao(
     override suspend fun getById(id: String): BudgetEntity? =
         backing.value[id]?.takeIf { it.deletedAt == null }
 
+    override suspend fun getAllActive(): List<BudgetEntity> =
+        backing.value.values.filter { it.deletedAt == null }.sortedBy { it.id }
+
     override suspend fun findActive(categoryId: String, yearMonth: String): BudgetEntity? =
         backing.value.values.firstOrNull {
             it.categoryId == categoryId && it.yearMonth == yearMonth && it.deletedAt == null

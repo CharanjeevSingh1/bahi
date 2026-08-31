@@ -19,6 +19,16 @@ interface BudgetDao {
     fun observeForMonth(yearMonth: String): Flow<List<BudgetEntity>>
 
     /**
+     * Every live budget, regardless of month. `BudgetRepository` has no
+     * equivalent -- every screen wants one month -- so this exists only for
+     * the sync convergence suite's `dump()` (docs/sync-design.md §10.1),
+     * which has to compare *all* of a device's budgets against the other
+     * device's, not one month at a time.
+     */
+    @Query("SELECT * FROM budgets WHERE deleted_at IS NULL ORDER BY id ASC")
+    suspend fun getAllActive(): List<BudgetEntity>
+
+    /**
      * Every budget for [yearMonth] with what has been spent against it,
      * aggregated by SQLite. Not a list of budgets the caller then folds
      * transactions into: §3 of docs/budgets-design.md depends on this being

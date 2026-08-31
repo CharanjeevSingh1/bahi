@@ -28,6 +28,29 @@ import javax.inject.Inject
  */
 interface SyncApplier {
     suspend fun apply(ops: List<SyncOp>, localDeviceId: String)
+
+    /**
+     * The second of the two moments docs/sync-design.md §4.1 names for a
+     * shadow write -- and the one slice 5c's engine built but never called.
+     * [apply] covers the first (a *pulled* op becomes the new base); this
+     * covers "this device's own edit is what the far side now has", which
+     * only the engine's push step knows happened, and only once the push is
+     * actually acknowledged.
+     *
+     * Found while building the two-device harness (slice 6): without this,
+     * `dirtyRows` -- which compares `local_revision` against
+     * `sync_shadow.remote_revision`, not the `remote_revision` *column* that
+     * [TransactionRepository.markSynced] and its three siblings update on the
+     * row itself -- never sees a device's own acknowledged push as synced.
+     * The row's `remote_revision` column advances, `pending_operation`
+     * clears, and `local_revision` still exceeds the shadow's stale (or
+     * absent) `remote_revision`, so the row is pushed again next cycle,
+     * forever, on every device that has ever pushed anything.
+     *
+     * [payload] is `null` for an acknowledged deletion, matching every other
+     * shadow write's convention for a tombstoned base.
+     */
+    suspend fun recordPushed(table: SyncTable, rowId: String, remoteRevision: Long, payload: JsonObject?)
 }
 
 /**
@@ -265,6 +288,17 @@ class RoomSyncApplier @Inject constructor(
             )
         }
         recordShadowAndConflicts(SyncTable.CATEGORY_RULES, rowId, op, decision)
+    }
+
+    override suspend fun recordPushed(table: SyncTable, rowId: String, remoteRevision: Long, payload: JsonObject?) {
+        database.syncShadowDao().record(
+            SyncShadowEntity(
+                tableName = table.tableName,
+                rowId = rowId,
+                remoteRevision = remoteRevision,
+                payload = payload?.toString(),
+            ),
+        )
     }
 
     private fun remoteSide(op: SyncOp) = MergeSideInput(op.payload, op.updatedAt, op.deviceId)

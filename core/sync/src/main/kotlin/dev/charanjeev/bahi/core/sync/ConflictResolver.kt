@@ -111,8 +111,20 @@ class DefaultConflictResolver @Inject constructor() : ConflictResolver {
         val changedFields = editedPayload.keys.filterTo(mutableSetOf()) { field ->
             base == null || editedPayload.getValue(field) != base[field]
         }
-        val isRuleGuessOnly = changedFields == setOf(CATEGORY_ID)
-        return if (isRuleGuessOnly) {
+        // Found while building slice 6's two-device harness (scenario 5,
+        // §10.2): an empty changedFields means the "edited" side has not
+        // actually touched this row since the shared base -- it is §5.2's
+        // second row (this side unchanged, the other side changed), not a
+        // concurrent edit at all, and belongs with the rule-guess case below
+        // rather than with a genuine hand edit. Treating it as a genuine
+        // edit made a causally-later delete lose to a row that was never
+        // touched after the point the delete already accounts for --
+        // `aEditsAndSyncs_thenBDeletesAfterPulling_deleteWins` and
+        // `categoryDeleteLeavesTransactionsLive_...`'s restore step both hit
+        // this before the fix: a delete that had already been pulled and
+        // fast-forwarded elsewhere came back to life on the very next sync.
+        val deletionWins = changedFields.isEmpty() || changedFields == setOf(CATEGORY_ID)
+        return if (deletionWins) {
             MergeResult(payload = null, conflicts = emptyList())
         } else {
             MergeResult(payload = editedPayload, conflicts = emptyList())

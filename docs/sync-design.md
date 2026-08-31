@@ -512,11 +512,114 @@ anything failing: the day some other code writes a shadow to keep it fresh, the
 base stops meaning "what the remote last saw" and every merge that consults it is
 quietly answering a different question.
 
+**Corrected while building slice 6: moment 2 did not exist.** `SyncEngine.push`
+called `markSynced` on each repository -- which clears `pending_operation` and
+sets the row's own `remote_revision` column -- and nothing else. No call
+anywhere wrote `sync_shadow` on push acknowledgement; the only writer was
+`RoomSyncApplier`'s apply path, i.e. moment 1 alone. Since `dirtyRows` judges a
+row dirty by comparing `local_revision` against `sync_shadow.remote_revision`
+(§4.3, §5a) -- not against the `remote_revision` *column* `markSynced`
+updates -- a device that had only ever pushed, never applied, kept `dirtyRows`
+returning that row forever: `local_revision` had advanced, the shadow never
+had. The two-device harness's simplest possible scenario (one edit, one
+device, sync to quiescence) hit this immediately -- quiescence was never
+reached. Fixed by adding `SyncApplier.recordPushed(table, rowId,
+remoteRevision, payload)`, called from `SyncEngine.push` for every row whose
+`markSynced` guard actually succeeded (a guard failure means the row moved
+under the push and has not settled at this revision, so recording it as agreed
+would be recording a lie -- the same reasoning `markSynced`'s own guard uses).
+One second-order effect worth stating rather than leaving implicit: writing
+"what I just pushed" as my own shadow immediately, before the peer has pulled
+it, means a device treats its own pending edit as settled the moment it is
+sent. In a genuine two-sided conflict on one field, this makes the resolver's
+policy get evaluated on only *one* of the two devices in practice -- whichever
+device has *not yet* pushed its own conflicting edit when the peer's arrives
+computes the real merge; the other device, having already moved its own
+shadow forward, sees its own value as "unchanged since base" and simply
+fast-forwards to whatever the first device resolves to. Convergence still
+holds (both devices end up applying the same one decision), but it means a
+policy that is not commutative between the two sides -- `REMOTE_WINS` on a
+field, tried deliberately while verifying this suite -- does not reproduce as
+a convergence failure the way asymmetric-policy intuition suggests, because
+the "other side" of the comparison never actually gets evaluated twice.
+
 Room cannot enforce that a shadow's `remote_revision` matches its row's, because
 `sync_shadow` names its parent table in a *column* and SQLite has no polymorphic
 foreign key. So the revision is an explicit parameter of every write rather than
 something inferred, and the DAO offers no way to write a shadow without stating
 one.
+
+#### Named assumption: both devices run identical field policies
+
+The paragraph above is a correctness finding, not just an implementation
+curiosity, and it is worth stating as its own assumption because everything
+downstream of it — the field-coverage test, the convergence suite, the D3
+decision to ship the engine without a transport — is built on top of it without
+saying so.
+
+**The assumption.** `resolveField` and `fieldPoliciesFor` (`FieldPolicies.kt`)
+are pure functions of `SyncTable` and field name, compiled into the app. There
+is no policy identifier on the wire — `SyncOp` and `OpBatch` carry
+`OP_FORMAT_VERSION` for the *shape* of an op, but nothing names which
+*policy table* produced or should consume one. The design has always assumed,
+implicitly, that the two devices doing a merge agree on what a policy for a
+given field is, because in every build so far there has only ever been one
+policy table to agree with.
+
+**Why the paragraph above matters here.** Because push acknowledgement writes a
+device's own shadow before the peer has pulled, a genuine two-sided conflict on
+one field is, in practice, evaluated by whichever device has *not yet* pushed
+its own conflicting edit when the peer's arrives — the other side never
+consults its own policy for that field at all, it just fast-forwards to the
+first device's answer. That means **resolver symmetry is untested by
+construction**: nothing in this codebase's convergence suite (§10) can catch
+two devices disagreeing about a field's policy, because the suite runs one
+build against itself and every merge in it is, structurally, only ever decided
+by one side.
+
+**The failure mode this creates: version skew.** Device A is on an older build
+whose policy table says `REMOTE_WINS` for some field; device B has upgraded to
+a newer build that changed that field to `USER_PROMPT`. Both fields are still
+named `amount_minor` in the payload — `OpBatch.isReadable` has nothing to say
+here, because the op's *shape* did not change, only what a receiving device
+does with a tie on one of its fields. Whichever device evaluates the merge
+(by the paragraph above, the one that has not yet pushed its own conflicting
+edit) applies *its own* policy, unaware the other side would have decided
+differently. The two devices still converge on whatever that one side decided
+— convergence only requires that both sides end up applying the same op, not
+that both sides would have chosen it — but "converges" and "resolves the way
+the user of either device would expect" are not the same claim, and this is a
+case where they can quietly separate: the newer device's user configured (or
+inherited) `USER_PROMPT` expecting to see a conflict recorded in `sync_conflicts`
+and reversible per §5.6, and instead gets a silent `REMOTE_WINS` because the
+older device happened to be the one holding the unpushed edit when the merge
+ran.
+
+**Does anything detect it? No, and here is why that is accepted for now.**
+There is no policy version and no policy hash carried on `SyncOp` or
+`OpBatch`, so a device has no way to know its peer's policy table differs from
+its own, let alone refuse or flag a merge because of it. This is accepted
+rather than fixed for the same reason `OP_FORMAT_VERSION` exists as a single
+top-level integer rather than one per table or per field: this is a
+single-developer portfolio project with one build in the field at a time — the
+"two app versions syncing" scenario is real in principle (an app update that
+does not land on both devices simultaneously) but does not yet have a shipped
+case to design against, and a per-field policy version would be machinery
+built for a skew scenario nobody has hit. What makes this different from an
+ordinary "not built yet" gap is that it is silent: `OpBatch.isReadable`
+degrades visibly (a batch from the future is skipped, not misapplied), but a
+policy disagreement on a field both devices already know about produces no
+skipped batch and no log line — the merge simply runs to completion, on
+whichever side evaluates it, using that side's table. If this project ever
+carries two policy tables at once — a staged field-policy migration, or a
+public release where update adoption cannot be assumed synchronous — the fix
+belongs in the same family as `OP_FORMAT_VERSION`: a policy table version
+(or, more precisely, a hash of the effective policy map for the table in
+question) carried on the op, checked by the receiving device, and treated the
+same way an unreadable future batch is — skipped and surfaced, not guessed at.
+Until then, this is a documented assumption, not a solved problem: it holds
+because there is exactly one policy table in existence, and it stops holding
+the moment there are two.
 
 #### The first sync, when there is no shadow for anything
 
@@ -871,6 +974,25 @@ twice.
 Rule-driven changes are excluded from this: a category set by
 `applyRuleCategory` is not a user edit and does not resurrect a deleted row.
 The resolver can tell, because a rule's write touches exactly one field.
+
+**Corrected while building slice 6.** `resolveDeletionVsEdit`'s rule-guess
+check (`changedFields == setOf(CATEGORY_ID)`) has an unhandled third case:
+`changedFields` empty. That is not a rule guess and it is not a genuine edit
+either -- it means the "edited" side has not touched the row *at all* since
+the shared base, which is §5.2's second row (this side unchanged, the other
+changed), not a delete-versus-edit conflict. The code before this fix treated
+"unchanged" and "genuinely edited" identically (anything that wasn't exactly
+`{category_id}` kept the edited payload), so a row a device had already
+fast-forwarded to some earlier state, with no further local edit, resurrected
+itself the next time that same device's own untouched copy was compared
+against a delete. Two of the two-device harness's scripted scenarios hit this
+directly: an edit that syncs and is later followed by a *causally-after*
+delete on the other device (§10.2 scenario 5) came back to life, and deleting
+a category with a live transaction in it, then restoring the category,
+resurrected the category on the peer that had never touched it. Fixed by
+splitting the check: `changedFields.isEmpty() || changedFields ==
+setOf(CATEGORY_ID)` both let the deletion win; only a genuinely non-empty,
+non-rule-guess set of changed fields keeps the edited payload.
 
 ### 5.4 `categoryLockedByUser`, and the fourth enforcement layer
 
@@ -1693,6 +1815,10 @@ sections were the ones that did this.
   largest unfixed risk in M4b and the strongest argument for option A.
 - **A lost shadow degrades every merge to two-way.** §4.1, mitigated by making
   it loud.
+- **Resolver symmetry is untested by construction, and field policies carry no
+  version.** §4.1's named assumption. Convergence holds under version skew
+  between two policy tables, but "converges" and "resolves the way the user
+  expected" can silently separate, and nothing on the wire would detect it.
 - **Nothing here handles a second currency or a second account**, because
   nothing in the app does yet. Sync is not the place to introduce either, but it
   is the place where getting them wrong later becomes expensive, because the
@@ -1811,9 +1937,26 @@ M4a — slices 1–8. Each compiles and passes `checkModuleBoundaries` on its ow
    (`:core:sync`, `InMemoryTransport` plus recording fakes) cover the two
    halves. Not yet built: the two-device harness itself (slice 6) — nothing
    has run two `SyncEngine`s against one transport and asserted convergence.
-6. **The convergence suite** (§10.1, §10.2). The two-device harness and all
-   fourteen scripted scenarios. Also the §6.2 re-measurement of the budgets
-   transient under sync-driven writes, with its run count.
+6. **The convergence suite** (§10.1, §10.2). **Harness, all fourteen scripted
+   scenarios and the §10.3 property test are done** (`core/sync/src/androidTest/
+   .../convergence/`); the CI-vs-nightly seed-count split and the §6.2 budgets-
+   transient re-measurement are not -- see below. Two real bugs surfaced by
+   building the harness, both pre-existing in already-committed code and both
+   fixed in this slice rather than deferred: the missing push-acknowledgement
+   shadow write (§4.1's correction) and `resolveDeletionVsEdit`'s missing
+   "unchanged, not edited" case (§5.3's correction). Deliberately breaking the
+   Lamport rebase found in slice 5c (reverting `SyncApplier.decide` to a plain
+   `+ 1`) failed 41 of 50 property-test seeds, each with a concrete dropped
+   edit and a reproducible seed number; deliberately making one field's policy
+   asymmetric (`amount_minor` to `REMOTE_WINS`) did **not** reproduce as a
+   convergence failure, for the reason recorded in this slice's §4.1
+   correction -- worth knowing before trusting an asymmetric policy change as
+   "probably caught by CI" the way the Lamport regression demonstrably would
+   be. Pulled forward from slice 7 at the assigning task's request, because
+   the property test is the piece that makes the README's convergence claim
+   checkable rather than merely designed; slice 7 still owes the 50-seed/
+   1,000-seed CI/nightly split (this slice's property test runs 50 seeds
+   every time, with no nightly tier yet) and the §6.2 re-measurement.
 7. **The property test and the horizon** (§10.3, §7). Generator, seed corpus,
    nightly job; tombstone horizon and the full-reconciliation path.
 8. **Sync UI** in `:feature:settings` (§5.6). Sync status from `SyncStatus`

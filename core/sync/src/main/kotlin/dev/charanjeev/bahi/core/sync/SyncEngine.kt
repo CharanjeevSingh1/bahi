@@ -90,10 +90,35 @@ class SyncEngine(
         // Acknowledging is guarded per row (docs/sync-design.md §4.3): a row
         // that changed again between the read above and this call stays
         // dirty for the next cycle rather than losing that edit.
-        for (row in transactionRows) transactionRepository.markSynced(row.rowId, row.localRevision, row.localRevision)
-        for (row in categoryRows) categoryRepository.markSynced(row.rowId, row.localRevision, row.localRevision)
-        for (row in budgetRows) budgetRepository.markSynced(row.rowId, row.localRevision, row.localRevision)
-        for (row in ruleRows) categoryRuleRepository.markSynced(row.rowId, row.localRevision, row.localRevision)
+        //
+        // recordPushed is the other half, found while building slice 6's
+        // two-device harness: markSynced only clears this row's own
+        // pending_operation/remote_revision columns, but dirtyRows judges
+        // "dirty" against sync_shadow.remote_revision, which nothing wrote
+        // for a row this device pushed. Skipping it when markSynced returns
+        // false is the same guard for the same reason -- a row that moved
+        // under the push has not actually settled at this revision, so
+        // recording it as the agreed base would be recording a lie.
+        for (row in transactionRows) {
+            if (transactionRepository.markSynced(row.rowId, row.localRevision, row.localRevision)) {
+                applier.recordPushed(SyncTable.TRANSACTIONS, row.rowId, row.localRevision, row.payload)
+            }
+        }
+        for (row in categoryRows) {
+            if (categoryRepository.markSynced(row.rowId, row.localRevision, row.localRevision)) {
+                applier.recordPushed(SyncTable.CATEGORIES, row.rowId, row.localRevision, row.payload)
+            }
+        }
+        for (row in budgetRows) {
+            if (budgetRepository.markSynced(row.rowId, row.localRevision, row.localRevision)) {
+                applier.recordPushed(SyncTable.BUDGETS, row.rowId, row.localRevision, row.payload)
+            }
+        }
+        for (row in ruleRows) {
+            if (categoryRuleRepository.markSynced(row.rowId, row.localRevision, row.localRevision)) {
+                applier.recordPushed(SyncTable.CATEGORY_RULES, row.rowId, row.localRevision, row.payload)
+            }
+        }
     }
 
     private fun toOp(table: SyncTable, row: DirtyRow) = SyncOp(
