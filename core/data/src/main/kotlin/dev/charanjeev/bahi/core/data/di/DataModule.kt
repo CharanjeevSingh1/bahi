@@ -11,9 +11,11 @@ import dev.charanjeev.bahi.core.common.BahiDispatcher
 import dev.charanjeev.bahi.core.data.repository.BudgetRepository
 import dev.charanjeev.bahi.core.data.repository.CategoryRepository
 import dev.charanjeev.bahi.core.data.repository.CategoryRuleRepository
+import dev.charanjeev.bahi.core.data.repository.InsightsRepository
 import dev.charanjeev.bahi.core.data.repository.OfflineFirstBudgetRepository
 import dev.charanjeev.bahi.core.data.repository.OfflineFirstCategoryRepository
 import dev.charanjeev.bahi.core.data.repository.OfflineFirstCategoryRuleRepository
+import dev.charanjeev.bahi.core.data.repository.OfflineFirstInsightsRepository
 import dev.charanjeev.bahi.core.data.repository.OfflineFirstTransactionRepository
 import dev.charanjeev.bahi.core.data.repository.RoomSyncApplier
 import dev.charanjeev.bahi.core.data.repository.RoomSyncConflictRepository
@@ -55,6 +57,12 @@ interface DataModule {
     fun bindBudgetRepository(
         implementation: OfflineFirstBudgetRepository,
     ): BudgetRepository
+
+    @Binds
+    @Singleton
+    fun bindInsightsRepository(
+        implementation: OfflineFirstInsightsRepository,
+    ): InsightsRepository
 
     @Binds
     @Singleton

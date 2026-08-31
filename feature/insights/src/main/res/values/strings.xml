@@ -2,13 +2,34 @@
 <resources>
     <string name="insights_title">Insights</string>
     <string name="insights_settings_content_description">Settings</string>
+    <string name="insights_previous_month">Previous month</string>
+    <string name="insights_next_month">Next month</string>
 
-    <!-- Names what the screen will hold rather than promising a date. A user
-         who reads this should be able to tell an unbuilt screen from a broken
-         one, and should know what to do now so the numbers are worth reading
-         when it arrives. -->
-    <string name="insights_placeholder_title">Nothing to chart yet</string>
-    <string name="insights_placeholder_body">This screen will break a month down by category, set it against the months before it, and show which budgets you overshoot and by how much. None of that is built — this is a placeholder, not a screen that failed to load.</string>
-    <string name="insights_placeholder_prerequisite">All of it is counted by category, so any transaction without one will be missing from the numbers. Rules are what give them one.</string>
-    <string name="insights_placeholder_action">Set up categorisation rules</string>
+    <!-- Not "nothing this month": the app has never recorded a transaction
+         at all, in any month, which is the one state a chart can't honestly
+         be drawn for. -->
+    <string name="insights_no_history_title">Nothing to chart yet</string>
+    <string name="insights_no_history_body">Add a transaction or import a statement, and this screen will break your spending down by category, set it against the months before it, and show which budgets you overshoot.</string>
+
+    <string name="insights_category_breakdown_title">Spending by category</string>
+    <!-- States exactly what the query computed: expense transactions only.
+         Income and transfers are excluded by sign, not by category id, so
+         this caption is the whole truth about what's on the chart. -->
+    <string name="insights_category_breakdown_caption">Expense transactions this month only — income and transfers aren\'t spending.</string>
+    <string name="insights_no_spend">Nothing spent in %1$s.</string>
+    <!-- Rounding a real but tiny share to "0%" reads as no spend at all;
+         this says small without claiming a precision the chart doesn't have. -->
+    <string name="insights_less_than_one_percent">&lt;1%</string>
+    <string name="insights_unknown_category">Unknown category</string>
+    <string name="insights_uncategorised_prompt">Some of this is uncategorised spending. Rules are what give it a category.</string>
+    <string name="insights_uncategorised_action">Set up rules</string>
+
+    <string name="insights_trend_title">Spending over time</string>
+    <string name="insights_trend_caption">Expense transactions only, by month.</string>
+    <string name="insights_trend_no_comparison">Not enough history yet to compare — this is the earliest month on record.</string>
+
+    <string name="insights_over_budget_title">Over budget this month</string>
+    <string name="insights_over_budget_no_budgets">No budgets set for this month.</string>
+    <string name="insights_over_budget_none">No budgets over their limit this month.</string>
+    <string name="insights_over_by">%1$s — %2$s over budget</string>
 </resources>
