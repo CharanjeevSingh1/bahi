@@ -69,6 +69,7 @@
     <string name="budgets_previous_month">Previous month</string>
     <string name="budgets_next_month">Next month</string>
     <string name="budgets_rules_action">Rules</string>
+    <string name="budgets_settings_content_description">Settings</string>
     <string name="budgets_edit">Edit</string>
     <string name="budgets_delete_content_description">Delete budget</string>
     <string name="budgets_unknown_category">Unknown category</string>

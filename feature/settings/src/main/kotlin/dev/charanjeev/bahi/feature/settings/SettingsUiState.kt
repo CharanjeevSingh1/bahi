@@ -1,0 +1,67 @@
+package dev.charanjeev.bahi.feature.settings
+
+import dev.charanjeev.bahi.core.data.repository.RestoreOutcome
+import dev.charanjeev.bahi.core.model.ConflictValue
+import dev.charanjeev.bahi.core.model.SyncTable
+import kotlinx.collections.immutable.ImmutableList
+import kotlinx.datetime.Instant
+
+/**
+ * A sealed interface rather than a data class with nullable fields, matching
+ * RulesUiState: Loading and Empty are genuinely different answers to "what do
+ * I draw", and a `conflicts: List?` that is null in one case and empty in the
+ * other makes them the caller's problem to tell apart.
+ */
+sealed interface SettingsUiState {
+
+    /**
+     * Every state carries the last restore/dismiss outcome, matching
+     * BudgetsUiState's `month`: a restore that empties the list is still a
+     * restore the user needs to be told about, and putting the message only
+     * on [Success] would lose it the instant the last conflict clears.
+     */
+    val restoreMessage: RestoreMessage?
+
+    data object Loading : SettingsUiState {
+        override val restoreMessage: RestoreMessage? = null
+    }
+
+    /** No unacknowledged conflicts. Not the same as "sync has never run" -- there is currently no way to tell those apart; see SettingsViewModel's doc. */
+    data class Empty(override val restoreMessage: RestoreMessage? = null) : SettingsUiState
+
+    data class Success(
+        val conflicts: ImmutableList<ConflictListItem>,
+        override val restoreMessage: RestoreMessage? = null,
+    ) : SettingsUiState
+}
+
+/**
+ * One row of the conflict list. [field] and the two values stay in their raw
+ * form -- a column name and a decoded [ConflictValue] -- rather than being
+ * formatted here: every other screen's copy lives in strings.xml and is
+ * resolved by the Composable through `stringResource`, and a field label is
+ * copy same as any other.
+ */
+data class ConflictListItem(
+    val id: String,
+    val table: SyncTable,
+    val field: String,
+    val chosenValue: ConflictValue,
+    val discardedValue: ConflictValue,
+    val reason: String,
+    val resolvedAt: Instant,
+)
+
+/** What the last restore/dismiss attempt did, so the screen can say so once and then forget it. */
+data class RestoreMessage(val conflictId: String, val outcome: RestoreOutcome)
+
+internal object SettingsTestTags {
+    const val LOADING = "settings:loading"
+    const val EMPTY = "settings:empty"
+    const val LIST = "settings:list"
+    const val CONFLICTS_COUNT = "settings:conflictsCount"
+
+    fun row(id: String) = "settings:row:$id"
+    fun restore(id: String) = "settings:restore:$id"
+    fun dismiss(id: String) = "settings:dismiss:$id"
+}

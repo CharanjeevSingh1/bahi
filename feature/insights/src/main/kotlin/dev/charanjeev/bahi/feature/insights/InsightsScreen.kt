@@ -7,9 +7,13 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -30,8 +34,8 @@ import androidx.compose.ui.unit.dp
  * one -- [InsightsScreen] is already stateless and previewable.
  */
 @Composable
-fun InsightsRoute(onSetUpRules: () -> Unit = {}) {
-    InsightsScreen(onSetUpRules = onSetUpRules)
+fun InsightsRoute(onSetUpRules: () -> Unit = {}, onOpenSettings: () -> Unit = {}) {
+    InsightsScreen(onSetUpRules = onSetUpRules, onOpenSettings = onOpenSettings)
 }
 
 /**
@@ -51,10 +55,23 @@ fun InsightsRoute(onSetUpRules: () -> Unit = {}) {
 internal fun InsightsScreen(
     modifier: Modifier = Modifier,
     onSetUpRules: () -> Unit = {},
+    onOpenSettings: () -> Unit = {},
 ) {
     Scaffold(
         modifier = modifier,
-        topBar = { TopAppBar(title = { Text(stringResource(R.string.insights_title)) }) },
+        topBar = {
+            TopAppBar(
+                title = { Text(stringResource(R.string.insights_title)) },
+                actions = {
+                    IconButton(onClick = onOpenSettings, modifier = Modifier.testTag(InsightsTestTags.SETTINGS_ACTION)) {
+                        Icon(
+                            imageVector = Icons.Default.Settings,
+                            contentDescription = stringResource(R.string.insights_settings_content_description),
+                        )
+                    }
+                },
+            )
+        },
     ) { contentPadding ->
         Column(
             modifier = Modifier
@@ -103,4 +120,5 @@ internal fun InsightsScreen(
 internal object InsightsTestTags {
     const val PLACEHOLDER = "insights:placeholder"
     const val RULES_ACTION = "insights:rules_action"
+    const val SETTINGS_ACTION = "insights:settings_action"
 }

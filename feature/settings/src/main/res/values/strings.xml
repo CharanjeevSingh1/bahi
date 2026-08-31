@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_title">Settings</string>
+    <string name="settings_back_content_description">Back</string>
+
+    <string name="settings_sync_section">Sync</string>
+    <plurals name="settings_conflicts_count">
+        <item quantity="one">%1$d conflict resolved — review</item>
+        <item quantity="other">%1$d conflicts resolved — review</item>
+    </plurals>
+    <string name="settings_conflicts_none">No conflicts to review</string>
+    <string name="settings_conflicts_none_body">When two devices edit the same thing while both were offline, whichever one loses the tie lands here — reversible, until you dismiss it.</string>
+
+    <string name="settings_conflict_chosen">Kept</string>
+    <string name="settings_conflict_discarded">Discarded</string>
+    <string name="settings_conflict_restore">Restore</string>
+    <string name="settings_conflict_dismiss">Dismiss</string>
+    <string name="settings_conflict_reason">Why: %1$s</string>
+
+    <string name="settings_restore_succeeded">Restored</string>
+    <string name="settings_restore_row_gone">Can\'t restore — that row no longer exists</string>
+    <string name="settings_restore_value_changed">Can\'t restore — this has been edited again since</string>
+    <string name="settings_restore_not_found">This conflict is no longer on the list</string>
+
+    <string name="settings_value_none">(none)</string>
+    <string name="settings_value_yes">Yes</string>
+    <string name="settings_value_no">No</string>
+
+    <string name="settings_field_amount_minor">Amount</string>
+    <string name="settings_field_currency_code">Currency</string>
+    <string name="settings_field_date">Date</string>
+    <string name="settings_field_description">Description</string>
+    <string name="settings_field_merchant">Merchant</string>
+    <string name="settings_field_category_id">Category</string>
+    <string name="settings_field_account_id">Account</string>
+    <string name="settings_field_source">Source</string>
+    <string name="settings_field_notes">Notes</string>
+    <string name="settings_field_category_locked_by_user">Category locked</string>
+    <string name="settings_field_import_batch_id">Import batch</string>
+    <string name="settings_field_name">Name</string>
+    <string name="settings_field_parent_id">Parent category</string>
+    <string name="settings_field_color_argb">Colour</string>
+    <string name="settings_field_icon_key">Icon</string>
+    <string name="settings_field_is_system_defined">System category</string>
+    <string name="settings_field_year_month">Month</string>
+    <string name="settings_field_limit_minor">Budget limit</string>
+    <string name="settings_field_merchant_contains">Match text</string>
+    <string name="settings_field_priority">Priority</string>
+
+    <string name="settings_table_transactions">Transaction</string>
+    <string name="settings_table_categories">Category</string>
+    <string name="settings_table_budgets">Budget</string>
+    <string name="settings_table_category_rules">Rule</string>
+</resources>

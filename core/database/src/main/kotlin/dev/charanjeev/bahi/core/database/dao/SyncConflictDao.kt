@@ -41,6 +41,10 @@ interface SyncConflictDao {
     @Insert
     suspend fun insert(conflict: SyncConflictEntity)
 
+    /** For the restore path (slice 8): one conflict, by the id the list screen is holding. */
+    @Query("SELECT * FROM sync_conflicts WHERE id = :id")
+    suspend fun getById(id: String): SyncConflictEntity?
+
     @Query(
         """
         DELETE FROM sync_conflicts

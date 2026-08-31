@@ -12,8 +12,8 @@ const val InsightsRoute = "insights"
  * it is a tab now, and the app module wires [onSetUpRules] to the rules
  * screen without either feature knowing about the other.
  */
-fun NavGraphBuilder.insightsScreen(onSetUpRules: () -> Unit = {}) {
+fun NavGraphBuilder.insightsScreen(onSetUpRules: () -> Unit = {}, onOpenSettings: () -> Unit = {}) {
     composable(route = InsightsRoute) {
-        InsightsScreen(onSetUpRules = onSetUpRules)
+        InsightsScreen(onSetUpRules = onSetUpRules, onOpenSettings = onOpenSettings)
     }
 }

@@ -81,6 +81,7 @@ internal object BudgetsTestTags {
     const val UNCATEGORISED_CARD = "budgets:uncategorised"
     const val NOTHING_COUNTED_NOTE = "budgets:nothingCounted"
     const val RULES_ACTION = "budgets:rules"
+    const val SETTINGS_ACTION = "budgets:settings"
     const val DELETE_DIALOG = "budgets:deleteDialog"
 
     fun row(budgetId: String) = "budgets:row:$budgetId"

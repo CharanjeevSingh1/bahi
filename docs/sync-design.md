@@ -1149,20 +1149,31 @@ to be named.
 
 - The supersede check inside `SyncConflictDao.record`, and the horizon sweep.
   Both exist from slice 3b.
-- The count on the Settings sync row, and the conflict list — slice 8.
-- **The restore path** — slice 8, and the one that makes `discarded_value` a
-  column rather than decoration. A discarded value nothing can put back is a log
-  entry, not a reversal, and this section's entire argument is that the merge
-  rules need not be *right* if they are reversible.
+- The count on the Settings sync row, and the conflict list — slice 8, **done**:
+  `SyncConflictRepository.observeConflicts`/`observeUnacknowledgedCount`,
+  `:feature:settings`'s `SettingsScreen`.
+- **The restore path** — slice 8, **done**, and the one that makes
+  `discarded_value` a column rather than decoration. A discarded value nothing
+  can put back is a log entry, not a reversal, and this section's entire
+  argument is that the merge rules need not be *right* if they are reversible.
+  `SyncConflictRepository.restore` reads the row fresh, compares its live field
+  value against `chosen_value`, and refuses -- `RestoreOutcome.VALUE_CHANGED_SINCE`,
+  surfaced in the screen rather than swallowed -- if something has edited that
+  field again since the conflict resolved; restoring anyway would silently
+  overwrite a newer value with one that is now at least two edits stale, the
+  same cost superseding already names above. `ROW_GONE` covers the row being
+  missing or tombstoned. A successful restore acknowledges the conflict (list
+  (1) above) rather than deleting it, so it still ages out on the ordinary
+  horizon sweep instead of vanishing with no trace it happened.
 
-So until slice 8 there is no user-facing reader, which is the same shape of risk
-as the `h1:` prefix in slice 2: a marker that is written but never branched on is
-not load-bearing. What makes it acceptable here is that the asymmetry runs the
-other way — a discarded value cannot be reconstructed after the fact, while a
-screen can be built at any time, so recording first and reading later is the only
-order that works at all. Same argument csv-import-design §11.1 makes for
-`import_batch_id` and budgets-design §4.1 for putting sync columns on tables
-before sync exists.
+For the period before slice 8 landed, there was no user-facing reader, which was
+the same shape of risk as the `h1:` prefix in slice 2: a marker that is written
+but never branched on is not load-bearing. What made it acceptable was that the
+asymmetry ran the other way — a discarded value cannot be reconstructed after
+the fact, while a screen can be built at any time, so recording first and
+reading later was the only order that worked at all. Same argument
+csv-import-design §11.1 makes for `import_batch_id` and budgets-design §4.1 for
+putting sync columns on tables before sync exists.
 
 **Three things delete a row. Nothing else does.**
 
@@ -2077,11 +2088,30 @@ M4a — slices 1–8. Each compiles and passes `checkModuleBoundaries` on its ow
    named in slice 6 as owed was not picked up here either -- closed out
    afterward, as a standalone item, once that gap was noticed; §6.2 has the
    result.
-8. **Sync UI** in `:feature:settings` (§5.6). Sync status from `SyncStatus`
-   (which already exists and is already the right shape), the conflict list, and
-   restoring a discarded value. Gives that module its first real screen. Note
-   CLAUDE.md's screenshot rule: this is a new screen, so it needs its set
-   generated in the same commit.
+8. **Sync UI** in `:feature:settings` (§5.6). **Done.** The count on the
+   Settings row, the conflict list and the restore path -- `SyncConflict`/
+   `ConflictValue` (`:core:model`), `SyncConflictRepository`/`RestoreOutcome`
+   (`:core:data`, `SyncConflictDao.getById` added for the read the restore
+   path needs), `SettingsViewModel`/`SettingsScreen` (`:feature:settings`,
+   the module's first real screen). One correction from this section's
+   original plan: this milestone's own `SyncStatus` (Idle/Running/Failed,
+   `:core:model`) turned out to be the wrong shape after all -- it is
+   `SyncEngine`'s run-state, and nothing in the app ever calls
+   `SyncEngine.sync` (no caller exists before M4b's transport), so it would
+   read Idle forever and be decorative rather than informative. The count
+   this row actually shows is `observeUnacknowledgedCount`, which has real
+   data behind it regardless of whether anything has ever synced.
+   `SettingsScreen` is reached from a top-bar action on all three tabs
+   (`onOpenSettings`, wired in `BahiNavHost`) rather than a fourth tab, per
+   `TopLevelDestination`'s existing note. Screenshots: `settings-empty.png`
+   (what the shipped app actually shows, since nothing produces a conflict
+   yet) and `settings-conflicts.png` (two seeded conflicts, captured against
+   a real running build with the database hand-seeded to exercise the state
+   -- restoring one on-device confirmed the write lands: `category_id`
+   changed, `local_revision` bumped, the conflict acknowledged). One
+   deliberate simplification, not attempted here: `category_id`'s value
+   renders as the raw id, not the category's name -- resolving it needs a
+   join this slice's scope didn't extend to.
 
 M4b — slice 9. **Deferred, not next** (§2, D3): it is a milestone's worth of
 work on its own, none of the hard part lives in it, and M4a is complete and
