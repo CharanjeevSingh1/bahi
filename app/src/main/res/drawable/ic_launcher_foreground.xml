@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The bahi khata: a bound ledger, cloth spine at the left, three ruled
+     lines cut through the cover as gaps so the background green shows
+     through them. Kept inside the 66dp safe-zone circle centred on the
+     108dp canvas so round/squircle/teardrop masks don't clip it; the
+     widest corner (73,79 and 35,29) sits about 31.4dp from centre (54,54). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#7A5C2E"
+        android:pathData="M35,29 L41,29 L41,79 L35,79 Z" />
+    <path
+        android:fillColor="#E5C79A"
+        android:fillType="evenOdd"
+        android:pathData="M41,29 L73,29 L73,79 L41,79 Z
+                           M47,39 L67,39 L67,42 L47,42 Z
+                           M47,51 L67,51 L67,54 L47,54 Z
+                           M47,63 L67,63 L67,66 L47,66 Z" />
+</vector>
