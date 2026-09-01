@@ -129,6 +129,31 @@ class DefaultCsvImporterTest {
     }
 
     @Test
+    fun `previouslyDeletedSkipped is read from the repository too, and kept out of duplicatesSkipped`() = runTest {
+        // docs/sync-design.md §6.1: a hash collision against a tombstoned row
+        // (the user deleted this transaction before, and this import isn't
+        // bringing it back) used to be indistinguishable from an ordinary
+        // duplicate. Both counts come from the repository's answer, same as
+        // duplicatesSkipped above, and they don't overlap.
+        val csv = """
+            Date,Description,Amount
+            2026-01-01,Coffee Shop,-450.00
+            2026-01-02,Salary,50000.00
+            2026-01-03,Ride Share,-320.50
+        """.trimIndent()
+        repository.importAllReturnValue = 1
+        repository.previouslyDeletedSkippedReturnValue = 1
+
+        val result = importer.import(csv, singleAmountMapping(), accountId = "acct-1")
+
+        assertThat(result.imported).hasSize(3)
+        assertThat(result.previouslyDeletedSkipped).isEqualTo(1)
+        // 1, not 2: one of the two un-inserted rows is accounted for by
+        // previouslyDeletedSkipped, so duplicatesSkipped must not double-count it.
+        assertThat(result.duplicatesSkipped).isEqualTo(1)
+    }
+
+    @Test
     fun `debit and credit columns resolve to correctly signed amounts`() = runTest {
         val csv = """
             Date,Description,Withdrawal,Deposit

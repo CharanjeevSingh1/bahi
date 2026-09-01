@@ -107,17 +107,18 @@ internal fun SettingsScreen(
                 style = MaterialTheme.typography.titleMedium,
                 modifier = Modifier.padding(16.dp),
             )
+            if (!uiState.syncConfigured) {
+                NotConfiguredRow(modifier = Modifier.testTag(SettingsTestTags.NOT_CONFIGURED))
+            }
             when (uiState) {
-                SettingsUiState.Loading -> CircularProgressIndicator(
+                is SettingsUiState.Loading -> CircularProgressIndicator(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(32.dp)
                         .testTag(SettingsTestTags.LOADING),
                 )
 
-                is SettingsUiState.Empty -> EmptyConflicts(
-                    modifier = Modifier.testTag(SettingsTestTags.EMPTY),
-                )
+                is SettingsUiState.Empty -> EmptyConflicts(modifier = Modifier.testTag(SettingsTestTags.EMPTY))
 
                 is SettingsUiState.Success -> ConflictList(
                     uiState = uiState,
@@ -195,6 +196,33 @@ private fun ConflictRow(
             }
         }
     }
+}
+
+/**
+ * Shown above whatever the conflicts section renders, in every state
+ * including [SettingsUiState.Loading] -- D12's "visible, disabled, with an
+ * explanation" answer (docs/sync-design.md §8.5) to what a reviewer without a
+ * configured build should see: not a hidden feature, not a fake demo, a real
+ * row saying plainly that this build has no transport wired up.
+ */
+@Composable
+private fun NotConfiguredRow(modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+    ) {
+        Text(
+            text = stringResource(R.string.settings_sync_not_configured_title),
+            style = MaterialTheme.typography.bodyLarge,
+        )
+        Text(
+            text = stringResource(R.string.settings_sync_not_configured_body),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+    HorizontalDivider()
 }
 
 @Composable

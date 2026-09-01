@@ -22,16 +22,33 @@ sealed interface SettingsUiState {
      */
     val restoreMessage: RestoreMessage?
 
-    data object Loading : SettingsUiState {
+    /**
+     * Whether this build has `sync.properties` at all (docs/sync-design.md
+     * §8.5, D12, slice 9a). Carried on every state, including [Loading]: it
+     * comes from `SyncConfiguration`, read once and synchronously when the
+     * ViewModel is constructed, not from a Flow -- there is no "still finding
+     * out" state for it, so baking a fixed default into [Loading] the way
+     * `restoreMessage` defaults to null would make a correctly-configured
+     * build show the wrong row for a frame before self-correcting, which is
+     * exactly the class of momentary-wrong-then-quiet bug the rest of this
+     * app refuses to ship (docs/budgets-design.md §2.1's `YearMonth`).
+     */
+    val syncConfigured: Boolean
+
+    data class Loading(override val syncConfigured: Boolean) : SettingsUiState {
         override val restoreMessage: RestoreMessage? = null
     }
 
     /** No unacknowledged conflicts. Not the same as "sync has never run" -- there is currently no way to tell those apart; see SettingsViewModel's doc. */
-    data class Empty(override val restoreMessage: RestoreMessage? = null) : SettingsUiState
+    data class Empty(
+        override val syncConfigured: Boolean = true,
+        override val restoreMessage: RestoreMessage? = null,
+    ) : SettingsUiState
 
     data class Success(
         val conflicts: ImmutableList<ConflictListItem>,
         override val restoreMessage: RestoreMessage? = null,
+        override val syncConfigured: Boolean = true,
     ) : SettingsUiState
 }
 
@@ -60,6 +77,7 @@ internal object SettingsTestTags {
     const val EMPTY = "settings:empty"
     const val LIST = "settings:list"
     const val CONFLICTS_COUNT = "settings:conflictsCount"
+    const val NOT_CONFIGURED = "settings:notConfigured"
 
     fun row(id: String) = "settings:row:$id"
     fun restore(id: String) = "settings:restore:$id"

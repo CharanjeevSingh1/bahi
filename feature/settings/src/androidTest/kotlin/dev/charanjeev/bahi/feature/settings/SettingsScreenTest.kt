@@ -43,9 +43,24 @@ class SettingsScreenTest {
 
     @Test
     fun loadingState_showsLoadingIndicator() {
-        composeTestRule.setContent { SettingsScreen(uiState = SettingsUiState.Loading) }
+        composeTestRule.setContent { SettingsScreen(uiState = SettingsUiState.Loading(syncConfigured = true)) }
 
         composeTestRule.onNodeWithTag(SettingsTestTags.LOADING).assertIsDisplayed()
+    }
+
+    @Test
+    fun notConfigured_showsExplanationRowAboveWhateverStateFollows() {
+        composeTestRule.setContent { SettingsScreen(uiState = SettingsUiState.Empty(syncConfigured = false)) }
+
+        composeTestRule.onNodeWithTag(SettingsTestTags.NOT_CONFIGURED).assertIsDisplayed()
+        composeTestRule.onNodeWithText(string(R.string.settings_sync_not_configured_title)).assertIsDisplayed()
+    }
+
+    @Test
+    fun configured_hidesTheNotConfiguredRow() {
+        composeTestRule.setContent { SettingsScreen(uiState = SettingsUiState.Empty(syncConfigured = true)) }
+
+        composeTestRule.onNodeWithTag(SettingsTestTags.NOT_CONFIGURED).assertDoesNotExist()
     }
 
     @Test

@@ -2630,18 +2630,43 @@ questions into decisions (D9, D12, D13).
    sub-slices rather than one, each independently reviewable and, where
    possible, independently shippable:
 
-   - **9a — The disabled state and the setup path** (§8.5, D12).
-     `DisabledSyncTransport`, `SyncModule`'s gating on `sync.properties`, the
-     Settings "not configured" row and its `SettingsScreenTest` coverage, and
-     `docs/sync-setup.md`. Ships with no OAuth code at all and is fully
-     testable in CI — it's the one M4b slice that only needs the *absence* of
-     configuration to be correct.
-   - **9b — The import-result line** (§6.1). `existingRowsByHash` replacing
-     `countExistingHashes`, the tombstoned/live split in `importBatch`'s
-     quota, `ImportResult.previouslyDeletedSkipped`, and the import screen's
-     new line. No dependency on the rest of M4b — could ship on its own, ahead
-     of everything else here, and is grouped with M4b only because the
-     scenario that motivates it (§6.1) is a cross-device one.
+   - **9a — The disabled state and the setup path** (§8.5, D12). **Done.**
+     `SyncConfiguration` (`:core:sync`) is the seam: `:app`'s build script
+     turns whether `sync.properties` exists into `BuildConfig.SYNC_CONFIGURED`
+     (library modules here don't generate one, so `:app` is the only place
+     that can), and `AppSyncModule` binds it. `DisabledSyncTransport` is bound
+     unconditionally in `SyncModule` — there is only the one `SyncTransport`
+     implementation to choose between until 9e, configured or not.
+     `SettingsUiState.syncConfigured` carries the answer on every state,
+     `Loading` included, rather than defaulting it and risking a
+     correctly-configured build showing the wrong row for one frame; the
+     Settings screen renders a "not set up on this build" row above whatever
+     the conflicts section shows. `SettingsScreenTest` covers both the row's
+     presence and its absence, and `docs/sync-setup.md` has the setup path.
+     Ships with no OAuth code at all, exactly as scoped. Verified against a
+     running debug build, not just the test suite: `settings-empty.png` and
+     `settings-conflicts.png` both changed the moment this landed, because
+     the default build (no `sync.properties`) is the common case and both
+     screenshots predate the row — both recaptured against the app running
+     on-device, the second with a conflict hand-seeded directly into
+     `sync_conflicts` the same way slice 8's original capture did.
+   - **9b — The import-result line** (§6.1). **Done.** `existingRowsByHash`
+     replaces `countExistingHashes`, returning `ExistingHashRow` (hash, id,
+     `deleted_at`) instead of a bare per-hash count; `importBatch` now
+     returns `ImportBatchOutcome` and tags each quota match `LIVE` or
+     `TOMBSTONED` as it consumes it, with an insert-time id collision folded
+     into `duplicatesSkipped` (it can only be a live-id collision, since the
+     quota step already claimed every tombstoned match) so the three
+     buckets — inserted, `duplicatesSkipped`, `previouslyDeletedSkipped` —
+     never leave a row uncounted. The split threads all the way up through
+     `ImportBatchResult` and `ImportResult` to the import screen's new line,
+     shown only when the count is nonzero, exactly as designed above. No
+     dependency on the rest of M4b, confirmed while building it — the fix
+     touches `:core:database`, `:core:data`, `:core:importer` and
+     `:feature:import` only, with `TransactionDaoTest` covering the live/
+     tombstoned split against real Room and `DefaultCsvImporterTest` covering
+     that the importer trusts the repository's counts rather than
+     re-deriving them.
    - **9c — Encryption** (§8.4, D9). The AES-256-GCM envelope, PBKDF2 key
      derivation, the `AndroidKeyStore`-wrapped cached key, the passphrase-entry
      UI for setup and for pairing a new device, and the two pieces of UI copy

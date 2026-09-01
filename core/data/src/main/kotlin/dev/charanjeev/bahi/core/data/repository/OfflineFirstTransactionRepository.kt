@@ -106,8 +106,13 @@ class OfflineFirstTransactionRepository @Inject constructor(
             val entities = withContentDerivedIds(
                 transactions.map { toEntity(it, importBatchId = batchId) },
             )
-            val insertedIds = transactionDao.importBatch(entities)
-            ImportBatchResult(batchId, insertedIds)
+            val outcome = transactionDao.importBatch(entities)
+            ImportBatchResult(
+                batchId = batchId,
+                insertedIds = outcome.insertedIds,
+                duplicatesSkipped = outcome.duplicatesSkipped,
+                previouslyDeletedSkipped = outcome.previouslyDeletedSkipped,
+            )
         }
 
     /**

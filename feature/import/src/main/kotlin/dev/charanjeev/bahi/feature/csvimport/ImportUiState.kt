@@ -47,19 +47,28 @@ sealed interface ImportUiState {
      * hand-edited row can make the two diverge (TransactionDao.update's
      * doc). Null vs. non-null is also what gates the button from firing
      * twice.
+     *
+     * [previouslyDeletedSkipped] is [duplicatesSkipped]'s sibling, not a
+     * variant of it (docs/sync-design.md §6.1, slice 9b): a hash match
+     * against a row still on the ledger versus one against a tombstone --
+     * "this was already there" versus "you deleted this one already, and
+     * this import didn't bring it back." [ImportResult]'s own doc has the
+     * full reasoning for keeping the two apart.
      */
     data class Result(
         val batchId: String,
         val newCount: Int,
         val duplicatesSkipped: Int,
+        val previouslyDeletedSkipped: Int,
         val failedRowCount: Int,
         val undoneCount: Int? = null,
     ) : ImportUiState {
         companion object {
             fun from(result: ImportResult) = Result(
                 batchId = result.batchId,
-                newCount = result.imported.size - result.duplicatesSkipped,
+                newCount = result.imported.size - result.duplicatesSkipped - result.previouslyDeletedSkipped,
                 duplicatesSkipped = result.duplicatesSkipped,
+                previouslyDeletedSkipped = result.previouslyDeletedSkipped,
                 failedRowCount = result.failedRows.size,
             )
         }

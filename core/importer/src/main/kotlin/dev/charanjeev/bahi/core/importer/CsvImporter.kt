@@ -159,15 +159,28 @@ data class PreviewRow(
  * only the ones that ended up newly written to the database -- some of
  * these may have been recognised as duplicates and skipped by
  * [dev.charanjeev.bahi.core.data.repository.TransactionRepository.importAll],
- * which is what [duplicatesSkipped] counts. `imported.size - duplicatesSkipped`
+ * which is what [duplicatesSkipped] and [previouslyDeletedSkipped] count
+ * between them. `imported.size - duplicatesSkipped - previouslyDeletedSkipped`
  * is the number actually new.
+ *
+ * The two are kept apart rather than folded into one count
+ * (docs/sync-design.md §6.1, slice 9b): [duplicatesSkipped] is a hash match
+ * against a row still on the ledger -- ordinary re-import noise -- and
+ * [previouslyDeletedSkipped] is a hash match against a tombstone, which means
+ * the user deleted this exact transaction before and it is not coming back
+ * from this import. Reporting both as "duplicate" made re-importing a
+ * statement to recover something you'd deleted look like it worked when it
+ * silently did nothing.
  *
  * Which specific rows those are *is* now knowable --
  * [dev.charanjeev.bahi.core.data.repository.ImportBatchResult.insertedIds]
  * names them, and auto-categorisation depends on that, since running rules
  * over a de-duplicated row would report work against a row this import never
- * created. [ImportResult] still doesn't surface the distinction because
- * nothing displaying it needs to: the screen shows counts and offers undo.
+ * created. [ImportResult] still doesn't surface which rows were skipped, only
+ * how many and why: nothing displaying it needs the rows themselves, and no
+ * restore affordance rides along with either count -- see the import
+ * screen's own doc on why guessing at intent here would be worse than not
+ * offering one.
  *
  * [batchId] is what makes undo well-defined: every row `importAll` actually
  * wrote carries it. [autoCategorisedCount] is how many of those rules then
@@ -181,6 +194,7 @@ data class ImportResult(
     val failedRows: List<FailedRow>,
     val batchId: String,
     val autoCategorisedCount: Int = 0,
+    val previouslyDeletedSkipped: Int = 0,
 )
 
 data class FailedRow(val lineNumber: Int, val raw: String, val reason: String)

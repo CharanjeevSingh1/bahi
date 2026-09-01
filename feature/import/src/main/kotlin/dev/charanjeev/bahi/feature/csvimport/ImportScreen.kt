@@ -231,6 +231,9 @@ private fun ResultContent(state: ImportUiState.Result, onUndoImport: () -> Unit,
         if (state.duplicatesSkipped > 0) {
             Text(stringResource(R.string.import_result_duplicates, state.duplicatesSkipped))
         }
+        if (state.previouslyDeletedSkipped > 0) {
+            Text(stringResource(R.string.import_result_previously_deleted, state.previouslyDeletedSkipped))
+        }
         if (state.failedRowCount > 0) {
             Text(stringResource(R.string.import_result_failed, state.failedRowCount))
         }

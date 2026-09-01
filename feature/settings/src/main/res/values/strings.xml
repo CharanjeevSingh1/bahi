@@ -4,6 +4,8 @@
     <string name="settings_back_content_description">Back</string>
 
     <string name="settings_sync_section">Sync</string>
+    <string name="settings_sync_not_configured_title">Not set up on this build</string>
+    <string name="settings_sync_not_configured_body">This build has no sync backend configured, so nothing leaves this device. See docs/sync-setup.md.</string>
     <plurals name="settings_conflicts_count">
         <item quantity="one">%1$d conflict resolved — review</item>
         <item quantity="other">%1$d conflicts resolved — review</item>

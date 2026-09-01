@@ -26,8 +26,12 @@ class FakeTransactionRepository : TransactionRepository {
     override suspend fun update(transaction: Transaction) = Unit
     override suspend fun delete(id: String) = Unit
     override suspend fun undoDelete(id: String) = Unit
-    override suspend fun importAll(transactions: List<Transaction>): ImportBatchResult =
-        ImportBatchResult(batchId = "unused", insertedIds = transactions.map { it.id })
+    override suspend fun importAll(transactions: List<Transaction>): ImportBatchResult = ImportBatchResult(
+        batchId = "unused",
+        insertedIds = transactions.map { it.id },
+        duplicatesSkipped = 0,
+        previouslyDeletedSkipped = 0,
+    )
 
     override suspend fun undoImport(batchId: String): Int {
         undoneBatchIds += batchId

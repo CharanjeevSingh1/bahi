@@ -1,6 +1,7 @@
 package dev.charanjeev.bahi.core.data.repository
 
 import dev.charanjeev.bahi.core.database.dao.CategorySpendRow
+import dev.charanjeev.bahi.core.database.dao.ExistingHashRow
 import dev.charanjeev.bahi.core.database.dao.MonthlySpendRow
 import dev.charanjeev.bahi.core.database.dao.RowRevision
 import dev.charanjeev.bahi.core.database.dao.TransactionDao
@@ -94,12 +95,10 @@ class FakeTransactionDao(
     override fun observeEarliestTransactionDate(): Flow<String?> =
         backing.map { entities -> entities.values.filter { it.deletedAt == null }.minOfOrNull { it.date } }
 
-    override suspend fun countExistingHashes(hashes: List<String>): Map<String, Int> =
+    override suspend fun existingRowsByHash(hashes: List<String>): List<ExistingHashRow> =
         backing.value.values
-            .map { it.contentHash }
-            .filter { it in hashes }
-            .groupingBy { it }
-            .eachCount()
+            .filter { it.contentHash in hashes }
+            .map { ExistingHashRow(it.contentHash, it.id, it.deletedAt) }
 
     /**
      * The real query's lock condition is `category_locked_by_user = 0` in the

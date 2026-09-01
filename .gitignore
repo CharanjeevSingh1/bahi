@@ -2,6 +2,7 @@
 .gradle/
 .kotlin/
 local.properties
+sync.properties
 .idea/
 .DS_Store
 build/

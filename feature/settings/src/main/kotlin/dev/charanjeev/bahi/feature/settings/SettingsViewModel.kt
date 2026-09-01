@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.charanjeev.bahi.core.data.repository.SyncConflictRepository
+import dev.charanjeev.bahi.core.sync.SyncConfiguration
 import javax.inject.Inject
 import kotlinx.collections.immutable.toPersistentList
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -28,16 +29,23 @@ import kotlinx.coroutines.launch
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
     private val conflictRepository: SyncConflictRepository,
+    syncConfiguration: SyncConfiguration,
 ) : ViewModel() {
 
     private val restoreMessage = MutableStateFlow<RestoreMessage?>(null)
+
+    // Read once: whether sync.properties existed at build time can't change for
+    // the life of this process, so there is nothing to observe here -- see
+    // SettingsUiState.syncConfigured's doc for why it still has to reach every
+    // state, Loading included.
+    private val syncConfigured = syncConfiguration.isConfigured
 
     val uiState: StateFlow<SettingsUiState> = combine(
         conflictRepository.observeConflicts(),
         restoreMessage,
     ) { conflicts, message ->
         if (conflicts.isEmpty()) {
-            SettingsUiState.Empty(restoreMessage = message)
+            SettingsUiState.Empty(syncConfigured = syncConfigured, restoreMessage = message)
         } else {
             SettingsUiState.Success(
                 conflicts = conflicts.map {
@@ -52,12 +60,13 @@ class SettingsViewModel @Inject constructor(
                     )
                 }.toPersistentList(),
                 restoreMessage = message,
+                syncConfigured = syncConfigured,
             )
         }
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5_000),
-        initialValue = SettingsUiState.Loading,
+        initialValue = SettingsUiState.Loading(syncConfigured = syncConfigured),
     )
 
     fun onRestoreRequested(conflictId: String) {

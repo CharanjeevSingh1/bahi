@@ -20,8 +20,9 @@ class SettingsViewModelTest {
     val mainDispatcherRule = MainDispatcherRule()
 
     private val repository = FakeSyncConflictRepository()
+    private val syncConfiguration = FakeSyncConfiguration()
 
-    private fun viewModel() = SettingsViewModel(repository)
+    private fun viewModel() = SettingsViewModel(repository, syncConfiguration)
 
     private fun conflict(
         id: String = "c1",
@@ -42,7 +43,17 @@ class SettingsViewModelTest {
 
     @Test
     fun `starts in loading state`() = runTest {
-        assertThat(viewModel().uiState.value).isEqualTo(SettingsUiState.Loading)
+        assertThat(viewModel().uiState.value).isEqualTo(SettingsUiState.Loading(syncConfigured = true))
+    }
+
+    @Test
+    fun `carries syncConfigured through every state, not just once it loads`() = runTest {
+        val viewModel = SettingsViewModel(repository, FakeSyncConfiguration(isConfigured = false))
+
+        viewModel.uiState.test {
+            assertThat(awaitItem().syncConfigured).isFalse()
+            assertThat(awaitItem().syncConfigured).isFalse() // Empty, once conflicts load
+        }
     }
 
     @Test

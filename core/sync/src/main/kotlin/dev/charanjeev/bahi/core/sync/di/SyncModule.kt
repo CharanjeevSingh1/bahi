@@ -8,6 +8,8 @@ import dev.charanjeev.bahi.core.data.repository.RemoteMerge
 import dev.charanjeev.bahi.core.sync.ConflictResolver
 import dev.charanjeev.bahi.core.sync.ConflictResolverRemoteMerge
 import dev.charanjeev.bahi.core.sync.DefaultConflictResolver
+import dev.charanjeev.bahi.core.sync.DisabledSyncTransport
+import dev.charanjeev.bahi.core.sync.SyncTransport
 import javax.inject.Singleton
 
 @Module
@@ -26,4 +28,13 @@ interface SyncModule {
     @Binds
     @Singleton
     fun bindRemoteMerge(implementation: ConflictResolverRemoteMerge): RemoteMerge
+
+    /**
+     * Bound unconditionally -- there is only one `SyncTransport`
+     * implementation to choose between so far, configured or not.
+     * [DisabledSyncTransport]'s own doc has the reasoning.
+     */
+    @Binds
+    @Singleton
+    fun bindSyncTransport(implementation: DisabledSyncTransport): SyncTransport
 }
