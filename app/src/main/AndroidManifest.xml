@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
 
@@ -11,6 +12,27 @@
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.Bahi">
+
+        <!--
+          WorkManager's default initializer would build its own WorkManager
+          singleton with a plain WorkerFactory that has no idea how to
+          construct a Hilt-injected SyncWorker (docs/sync-design.md, section
+          13, slice 9g). BahiApplication supplies one instead via
+          Configuration.Provider, which requires manual initialization to be
+          the only initialization; this removal is what makes that true
+          rather than leaving two WorkManager instances arguing over the
+          same database.
+        -->
+        <provider
+            android:name="androidx.startup.InitializationProvider"
+            android:authorities="${applicationId}.androidx-startup"
+            android:exported="false"
+            tools:node="merge">
+            <meta-data
+                android:name="androidx.work.WorkManagerInitializer"
+                android:value="androidx.startup.StartupInitializer"
+                tools:node="remove" />
+        </provider>
 
         <activity
             android:name=".MainActivity"

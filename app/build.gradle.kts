@@ -47,6 +47,14 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.navigation.compose)
 
+    // BahiApplication is the only place that implements Configuration.Provider
+    // (docs/sync-design.md §8.7, §13 slice 9g) -- it needs both artifacts on
+    // its own classpath even though :core:sync (SyncWorker) already depends
+    // on them, because a HiltWorkerFactory has to be handed to WorkManager
+    // from application code, not from a library module.
+    implementation(libs.androidx.work.runtime.ktx)
+    implementation(libs.androidx.hilt.work)
+
     testImplementation(projects.core.testing)
 
     androidTestImplementation(projects.core.testing)

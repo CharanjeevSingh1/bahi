@@ -156,6 +156,14 @@ internal fun SettingsScreen(
                 if (driveConnection != null) {
                     DriveRow(state = driveConnection, onConnectClicked = onConnectDriveClicked)
                 }
+                val lastSyncDisplay = when (uiState) {
+                    is SettingsUiState.Empty -> uiState.lastSyncDisplay
+                    is SettingsUiState.Success -> uiState.lastSyncDisplay
+                    is SettingsUiState.Loading -> null
+                }
+                if (lastSyncDisplay != null) {
+                    LastSyncRow(display = lastSyncDisplay)
+                }
             }
             when (uiState) {
                 is SettingsUiState.Loading -> CircularProgressIndicator(
@@ -343,6 +351,39 @@ private fun DriveRow(state: DriveConnectionState, onConnectClicked: () -> Unit, 
             }
         }
     }
+    HorizontalDivider()
+}
+
+/**
+ * The signal docs/sync-design.md §8.7 asks for specifically because the
+ * conflict count above can be zero whether or not sync is healthy: "Last
+ * synced 4 minutes ago" as a quiet fact, "Last synced 6 days ago" ([LastSyncDisplay.DaysAgo.isStale])
+ * as a visible warning, without a notification either way. No row at all
+ * would also be wrong here -- "never" is itself informative on a build that
+ * has been configured for a while.
+ */
+@Composable
+private fun LastSyncRow(display: LastSyncDisplay, modifier: Modifier = Modifier) {
+    val text = when (display) {
+        LastSyncDisplay.Never -> stringResource(R.string.settings_last_synced_never)
+        LastSyncDisplay.JustNow -> stringResource(R.string.settings_last_synced_just_now)
+        is LastSyncDisplay.MinutesAgo -> pluralStringResource(R.plurals.settings_last_synced_minutes, display.minutes, display.minutes)
+        is LastSyncDisplay.HoursAgo -> pluralStringResource(R.plurals.settings_last_synced_hours, display.hours, display.hours)
+        is LastSyncDisplay.DaysAgo -> {
+            val base = pluralStringResource(R.plurals.settings_last_synced_days, display.days, display.days)
+            if (display.isStale) base + stringResource(R.string.settings_last_synced_stale_suffix) else base
+        }
+    }
+    val isStale = display is LastSyncDisplay.DaysAgo && display.isStale
+    Text(
+        text = text,
+        style = MaterialTheme.typography.bodySmall,
+        color = if (isStale) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 12.dp)
+            .testTag(SettingsTestTags.LAST_SYNC_ROW),
+    )
     HorizontalDivider()
 }
 

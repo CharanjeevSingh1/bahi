@@ -208,6 +208,34 @@ class SettingsScreenTest {
     }
 
     @Test
+    fun neverSynced_showsTheNeverCopy() {
+        composeTestRule.setContent {
+            SettingsScreen(uiState = SettingsUiState.Empty(lastSyncDisplay = LastSyncDisplay.Never))
+        }
+
+        composeTestRule.onNodeWithText(string(R.string.settings_last_synced_never)).assertIsDisplayed()
+    }
+
+    @Test
+    fun staleLastSync_appendsTheWarningSuffix() {
+        composeTestRule.setContent {
+            SettingsScreen(uiState = SettingsUiState.Empty(lastSyncDisplay = LastSyncDisplay.DaysAgo(days = 6, isStale = true)))
+        }
+
+        val expected = context.resources.getQuantityString(R.plurals.settings_last_synced_days, 6, 6) + string(R.string.settings_last_synced_stale_suffix)
+        composeTestRule.onNodeWithText(expected).assertIsDisplayed()
+    }
+
+    @Test
+    fun notConfigured_hidesTheLastSyncRow() {
+        composeTestRule.setContent {
+            SettingsScreen(uiState = SettingsUiState.Empty(syncConfigured = false, lastSyncDisplay = LastSyncDisplay.Never))
+        }
+
+        composeTestRule.onNodeWithTag(SettingsTestTags.LAST_SYNC_ROW).assertDoesNotExist()
+    }
+
+    @Test
     fun tappingConnectInvokesTheCallback() {
         var clicked = false
         composeTestRule.setContent {

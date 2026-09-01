@@ -23,15 +23,57 @@ import dev.charanjeev.bahi.core.model.SyncTable
  * across many [sync] calls on the same instance.
  *
  * [deviceId] identifies this device to every op it produces
- * ([SyncOp.deviceId]) and is neither persisted nor generated here -- that is
- * a slice-8/M4b concern (docs/sync-design.md §8.5's `sync.properties`).
+ * ([SyncOp.deviceId]) and is neither persisted nor generated here --
+ * [DeviceIdentity] owns that, and [SyncRunner] (slice 9g) is the only caller
+ * that resolves one and passes it in.
  *
- * The pull cursor and push sequence live only in memory, not in
- * `UserPreferencesDataSource.lastSyncCursor`: that column has to become a
- * per-device map before it can hold this (§8.3), and that change belongs to
- * M4b's transport, not to an engine still only ever exercised against
- * [InMemoryTransport]. A fresh [SyncEngine] per process is exactly what
- * §10.1's two-device harness constructs.
+ * **The pull cursor is seeded and read back, not persisted, by this class.**
+ * [initialCursor] seeds it (empty for an install that has never synced) and
+ * [cursorSnapshot] reads it back after a [sync] call; round-tripping it
+ * through `UserPreferencesDataSource.syncCursor` (§8.3's per-device map)
+ * across process death is [SyncRunner]'s job, not this one's -- this class
+ * still only knows "in memory since construction," the same as before, it
+ * just no longer assumes construction and process start are the same event.
+ * A fresh [SyncEngine] seeded with an empty cursor is exactly what §10.1's
+ * two-device harness constructs, and exactly what a fresh install's first
+ * sync looks like either way.
+ *
+ * **The push sequence has its own seam, seeded and persisted differently
+ * from the pull cursor.** [initialPushSeq] seeds [nextPushSeq] the same
+ * shape [initialCursor] seeds [cursor] -- [SyncRunner] reads it back from
+ * `UserPreferencesDataSource.pushSeq` -- but persistence itself cannot wait
+ * for [cursorSnapshot]'s "read back once the whole cycle finishes" pattern
+ * the way the pull cursor does. Re-pulling a batch this device already
+ * applied is a no-op (§10.4's idempotence watermark, keyed on each row's own
+ * revision, not on which batch carried it); reusing a push sequence number
+ * is not -- a peer whose cursor for this device already covers that number
+ * would filter the new batch out by `seq > cursor[deviceId]` before a single
+ * op inside it is ever inspected, silently, with nothing to reconcile
+ * against later. [persistPushSeq] is called with the reserved number before
+ * [push] ever calls [SyncTransport.push], so a crash between the two just
+ * burns that number -- harmless, since nothing here or in
+ * `SyncTransportContractTest` requires push sequences to be contiguous, only
+ * monotonic and unique per device -- rather than risking the far worse
+ * alternative of persisting after a push that already reached the transport
+ * and racing a peer that pulls in between.
+ *
+ * **Seeding still has to survive an install that predates this counter.**
+ * [SyncRunner] does not seed [initialPushSeq] from `pushSeq` alone: an
+ * install already running the cursor-persistence fix above has been writing
+ * `cursor[deviceId] = batch.seq` into its own persisted cursor on every push
+ * for as long as it has been pushing, before `pushSeq` existed to record the
+ * same fact directly. Trusting `pushSeq` alone would read null on that
+ * install's first run under this fix and hand out 1 again, reusing every
+ * number it already sent under the old, unpersisted counter -- the exact bug
+ * this seam exists to close, reintroduced by its own migration gap.
+ * [SyncRunner] rebases the seed as `max(pushSeq, cursor[deviceId]) + 1`,
+ * closing it the same way slice 5c's Lamport rebase closed the equivalent
+ * gap for `local_revision`: a value already recorded elsewhere for a
+ * different reason turns out to be exactly the floor a fresh counter needs
+ * to respect. A genuinely new device id -- the ordinary shape of a reinstall,
+ * [DeviceIdentity]'s doc -- has no entry in any peer's cursor yet, so seeding
+ * it at 1 is correct, not the same hazard: the rebase only ever raises the
+ * floor for an id a peer could already be holding a watermark for.
  */
 class SyncEngine(
     private val transport: SyncTransport,
@@ -42,10 +84,16 @@ class SyncEngine(
     private val budgetRepository: BudgetRepository,
     private val categoryRuleRepository: CategoryRuleRepository,
     private val deviceId: String,
+    initialCursor: Map<String, Long> = emptyMap(),
+    initialPushSeq: Long = 0L,
+    private val persistPushSeq: suspend (Long) -> Unit = {},
 ) {
 
-    private val cursor = mutableMapOf<String, Long>()
-    private var nextPushSeq = 1L
+    private val cursor = initialCursor.toMutableMap()
+    private var nextPushSeq = initialPushSeq + 1
+
+    /** Read after [sync] so [SyncRunner] can persist it -- see this class's own doc for why persisting it is not this class's job. */
+    val cursorSnapshot: Map<String, Long> get() = cursor.toMap()
 
     /**
      * One full cycle: pull whatever is new and apply it, then push whatever
@@ -120,13 +168,19 @@ class SyncEngine(
             ruleRows.map { toOp(SyncTable.CATEGORY_RULES, it) }
         if (ops.isEmpty()) return
 
+        // Reserved and persisted before the batch ever reaches the transport
+        // -- see this class's own doc for why that order, not the reverse,
+        // is what keeps a crash from ever reusing this number.
+        val seq = nextPushSeq
+        nextPushSeq += 1
+        persistPushSeq(seq)
+
         // Parent tables first, matching SyncTable's own declared order and
         // the reason it is declared that way (§4.2): the far side applies
         // this same batch in one transaction too, and a child row must never
         // land ahead of the parent it references.
-        val batch = OpBatch(deviceId = deviceId, seq = nextPushSeq, ops = ops)
+        val batch = OpBatch(deviceId = deviceId, seq = seq, ops = ops)
         transport.push(batch)
-        nextPushSeq += 1
         // This device's own pushes are batches it never needs to pull back.
         cursor[deviceId] = batch.seq
 

@@ -17,7 +17,7 @@ internal class DriveAccessToken(private val driveAuthorization: DriveAuthorizati
     suspend operator fun invoke(): String = when (val outcome = driveAuthorization.currentAccessToken()) {
         is AuthorizationOutcome.Authorized -> outcome.accessToken
         is AuthorizationOutcome.NeedsReauthorization ->
-            throw DriveTransportException("Drive access needs to be reauthorized", retryable = false)
+            throw DriveTransportException("Drive access needs to be reauthorized", retryable = false, needsReauthorization = true)
         is AuthorizationOutcome.Failed ->
             throw DriveTransportException(outcome.message, retryable = outcome.retryable)
     }

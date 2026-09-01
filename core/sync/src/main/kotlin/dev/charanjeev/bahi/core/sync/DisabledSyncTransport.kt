@@ -5,20 +5,22 @@ import dev.charanjeev.bahi.core.model.RemoteSnapshot
 import javax.inject.Inject
 
 /**
- * The only [SyncTransport] this app's Hilt graph ever constructs so far.
- * `DriveTransport` exists now (docs/sync-design.md §13, slice 9e) but is
- * deliberately not bound here yet -- nothing calls `SyncEngine.sync`
- * anywhere in the app until slice 9g, so a conditional binding today would
- * be reachable by nothing; making [dev.charanjeev.bahi.core.sync.di.
- * SyncModule]'s binding conditional on [SyncConfiguration.isConfigured] is
- * left for 9g, wired and manually verified together with the code that
- * first actually calls it. Until then this stays bound unconditionally.
+ * What every build without `sync.properties` gets (docs/sync-design.md §13,
+ * slice 9a, D12) -- and, since slice 9g,
+ * [dev.charanjeev.bahi.core.sync.di.SyncTransportModule] now really does
+ * choose between this and [dev.charanjeev.bahi.core.sync.drive.DriveTransport]
+ * at runtime on [SyncConfiguration.isConfigured], the conditional binding
+ * this class's doc used to describe as deferred.
  *
- * Every method throws rather than no-ops. Nothing in the app calls
- * `SyncEngine.sync` yet (§13's note on slice 8), so a real call reaching this
- * class would mean a caller was wired ahead of a transport able to answer
- * it -- a bug to surface loudly during development, not one to hide behind
- * silently-empty results that would look like "sync ran and found nothing."
+ * Every method throws rather than no-ops. [SyncRunner] is `SyncEngine`'s only
+ * caller (slice 9g), and it never runs against this transport --
+ * [dev.charanjeev.bahi.core.sync.di.SyncTransportModule] only ever hands it
+ * [DriveTransport] when [SyncConfiguration.isConfigured] is true, and
+ * [dev.charanjeev.bahi.core.sync.work.DefaultSyncScheduler] never schedules
+ * anything otherwise -- so a real call reaching this class would mean both of
+ * those guards were bypassed, a bug worth surfacing loudly during
+ * development rather than hiding behind a silently-empty result that would
+ * look like "sync ran and found nothing."
  */
 class DisabledSyncTransport @Inject constructor() : SyncTransport {
 

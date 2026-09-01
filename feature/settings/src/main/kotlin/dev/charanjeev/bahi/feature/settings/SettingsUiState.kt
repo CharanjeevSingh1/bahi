@@ -40,11 +40,16 @@ sealed interface SettingsUiState {
         override val restoreMessage: RestoreMessage? = null
     }
 
-    /** No unacknowledged conflicts. Not the same as "sync has never run" -- there is currently no way to tell those apart; see SettingsViewModel's doc. */
+    /**
+     * No unacknowledged conflicts. Not the same as "sync has never run" for
+     * *this* field -- [lastSyncDisplay] is what answers that now (slice 9g);
+     * before it, there was no way to tell the two apart at all.
+     */
     data class Empty(
         override val syncConfigured: Boolean = true,
         override val restoreMessage: RestoreMessage? = null,
         val driveConnection: DriveConnectionState = DriveConnectionState.NOT_CONNECTED,
+        val lastSyncDisplay: LastSyncDisplay = LastSyncDisplay.Never,
     ) : SettingsUiState
 
     data class Success(
@@ -52,6 +57,7 @@ sealed interface SettingsUiState {
         override val restoreMessage: RestoreMessage? = null,
         override val syncConfigured: Boolean = true,
         val driveConnection: DriveConnectionState = DriveConnectionState.NOT_CONNECTED,
+        val lastSyncDisplay: LastSyncDisplay = LastSyncDisplay.Never,
     ) : SettingsUiState
 }
 
@@ -84,6 +90,7 @@ internal object SettingsTestTags {
     const val ENCRYPTION_ROW = "settings:encryptionRow"
     const val DRIVE_ROW = "settings:driveRow"
     const val DRIVE_CONNECT_BUTTON = "settings:driveConnectButton"
+    const val LAST_SYNC_ROW = "settings:lastSyncRow"
 
     fun row(id: String) = "settings:row:$id"
     fun restore(id: String) = "settings:restore:$id"

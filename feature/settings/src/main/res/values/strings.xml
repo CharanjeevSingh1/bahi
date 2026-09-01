@@ -15,6 +15,22 @@
     <string name="settings_drive_connect">Connect</string>
     <string name="settings_drive_reconnect">Reconnect</string>
 
+    <string name="settings_last_synced_never">Never synced yet</string>
+    <string name="settings_last_synced_just_now">Last synced just now</string>
+    <plurals name="settings_last_synced_minutes">
+        <item quantity="one">Last synced %1$d minute ago</item>
+        <item quantity="other">Last synced %1$d minutes ago</item>
+    </plurals>
+    <plurals name="settings_last_synced_hours">
+        <item quantity="one">Last synced %1$d hour ago</item>
+        <item quantity="other">Last synced %1$d hours ago</item>
+    </plurals>
+    <plurals name="settings_last_synced_days">
+        <item quantity="one">Last synced %1$d day ago</item>
+        <item quantity="other">Last synced %1$d days ago</item>
+    </plurals>
+    <string name="settings_last_synced_stale_suffix"> — check your connection</string>
+
     <string name="passphrase_title">Sync encryption</string>
     <string name="passphrase_setup_disclosure">Every transaction — amount, date, description, merchant, category, notes — plus your budgets and categorisation rules go into your own Google Drive, not a server anyone else runs. Encrypting them means only someone who knows this passphrase can read that copy, not Google and not anyone who takes over your Google account.</string>
     <string name="passphrase_pair_body">Enter the pairing code shown on the device you already set up, then type the same passphrase you used there.</string>

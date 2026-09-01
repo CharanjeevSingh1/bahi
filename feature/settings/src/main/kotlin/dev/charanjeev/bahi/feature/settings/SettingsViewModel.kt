@@ -7,8 +7,10 @@ import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.charanjeev.bahi.core.data.repository.SyncConflictRepository
 import dev.charanjeev.bahi.core.sync.SyncConfiguration
+import dev.charanjeev.bahi.core.sync.SyncStatusRepository
 import dev.charanjeev.bahi.core.sync.oauth.ConsentRequest
 import dev.charanjeev.bahi.core.sync.oauth.DriveAuthorization
+import dev.charanjeev.bahi.core.sync.work.SyncScheduler
 import javax.inject.Inject
 import kotlinx.collections.immutable.toPersistentList
 import kotlinx.coroutines.channels.Channel
@@ -19,24 +21,28 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.datetime.Clock
 
 /**
- * The Settings screen's only real content so far (docs/sync-design.md §5.6,
- * slice 8): what a merge policy decided and discarded, and the restore path
- * that makes those decisions reversible.
+ * The Settings screen's real content (docs/sync-design.md §5.6 slice 8,
+ * §8.7 slice 9g): what a merge policy decided and discarded with a restore
+ * path, and -- now that [dev.charanjeev.bahi.core.sync.SyncRunner] is
+ * `SyncEngine`'s first real caller -- when sync last actually succeeded.
  *
- * There is no "sync is running" state here, deliberately -- `SyncEngine`
- * (`:core:sync`) has no caller anywhere in the app (M4a stops before M4b's
- * transport), so a status row backed by [dev.charanjeev.bahi.core.model.SyncStatus]
- * would always read Idle and would be decorative rather than informative.
- * This screen shows the one thing that has real data behind it right now:
- * conflicts a merge already resolved.
+ * There is still no live "sync is running right now" state on this screen:
+ * [dev.charanjeev.bahi.core.model.SyncStatus.Running] exists and
+ * [SyncStatusRepository] carries it, but §8.7 only ever asked for a
+ * last-successful-sync signal here, not a spinner, and this screen sticks to
+ * that rather than inventing a second surface nothing designed for.
  */
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
     private val conflictRepository: SyncConflictRepository,
     private val driveAuthorization: DriveAuthorization,
     syncConfiguration: SyncConfiguration,
+    private val syncStatusRepository: SyncStatusRepository,
+    private val syncScheduler: SyncScheduler,
+    private val clock: Clock,
 ) : ViewModel() {
 
     private val restoreMessage = MutableStateFlow<RestoreMessage?>(null)
@@ -54,13 +60,28 @@ class SettingsViewModel @Inject constructor(
     // state, Loading included.
     private val syncConfigured = syncConfiguration.isConfigured
 
+    init {
+        // §8.7: opening Settings is one of the two moments (with app
+        // foreground) worth nudging sync early rather than waiting up to 4
+        // hours for the next periodic tick. A no-op on an unconfigured build
+        // or if one is already in flight -- SyncScheduler owns both guards.
+        syncScheduler.requestExpeditedSync()
+    }
+
     val uiState: StateFlow<SettingsUiState> = combine(
         conflictRepository.observeConflicts(),
         restoreMessage,
         driveAuthorization.connectionState,
-    ) { conflicts, message, driveConnection ->
+        syncStatusRepository.lastSuccessfulSyncAt,
+    ) { conflicts, message, driveConnection, lastSuccessfulSyncAt ->
+        val lastSyncDisplay = lastSyncDisplay(clock.now(), lastSuccessfulSyncAt)
         if (conflicts.isEmpty()) {
-            SettingsUiState.Empty(syncConfigured = syncConfigured, restoreMessage = message, driveConnection = driveConnection)
+            SettingsUiState.Empty(
+                syncConfigured = syncConfigured,
+                restoreMessage = message,
+                driveConnection = driveConnection,
+                lastSyncDisplay = lastSyncDisplay,
+            )
         } else {
             SettingsUiState.Success(
                 conflicts = conflicts.map {
@@ -77,6 +98,7 @@ class SettingsViewModel @Inject constructor(
                 restoreMessage = message,
                 syncConfigured = syncConfigured,
                 driveConnection = driveConnection,
+                lastSyncDisplay = lastSyncDisplay,
             )
         }
     }.stateIn(

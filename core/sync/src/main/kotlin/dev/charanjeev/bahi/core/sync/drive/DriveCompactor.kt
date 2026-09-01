@@ -26,18 +26,26 @@ private const val ELECTION_WAIT_MILLIS = 30_000L
  * deletes what it folded, closing the multi-compactor race §8.3's M4b design
  * pass worked through rather than shipping as a live risk.
  *
- * **Not wired to any caller yet.** Like [DriveTransport] before slice 9g
- * binds it into [dev.charanjeev.bahi.core.sync.di.SyncModule], this class is
- * complete and tested against `InMemoryFakeDrive` but nothing in the app
- * constructs one: the periodic trigger that would call [electIfNeeded] and
- * [compact] repeatedly is slice 9g's job, and [deviceId] has nowhere real to
- * come from until whatever wires that trigger also solves device identity --
- * the same gap [dev.charanjeev.bahi.core.sync.SyncEngine]'s own `deviceId`
- * doc names as a slice-8/M4b concern still unresolved. The Settings takeover
- * affordance D13 also calls for is, for the same reason, [isStale] and
- * [takeOver] existing and tested here rather than a wired button in
- * `:feature:settings` -- see this class's `docs/sync-design.md` §13 slice 9f
- * entry for the full reasoning.
+ * **Wired by [dev.charanjeev.bahi.core.sync.SyncRunner], not by Hilt.** This
+ * class has a plain constructor, not `@Inject`, the same choice
+ * [dev.charanjeev.bahi.core.sync.SyncEngine] makes and for the same reason:
+ * [deviceId] is not known until [dev.charanjeev.bahi.core.sync.DeviceIdentity]
+ * resolves it inside a `run`, so nothing about this class can be part of the
+ * static Hilt graph. `SyncRunner` constructs one after every successful sync
+ * cycle, but only when `SyncConfiguration.isConfigured` -- election only
+ * means something against a real shared backend (§8.3), never
+ * `InMemoryTransport` or `DisabledSyncTransport`. Calling [electIfNeeded]
+ * then [compact] every cycle, unconditionally once configured, is what makes
+ * this "the periodic trigger... slice 9g's job" real: cheap after the first
+ * election (a single `list` call), the same repeated-but-usually-free shape
+ * `SyncEngine`'s own per-cycle horizon check already has.
+ *
+ * The Settings takeover affordance D13 also calls for is still not wired to
+ * a button: [isStale] and [takeOver] exist and are tested, but
+ * `:feature:settings` needs its own `DriveCompactor` instance to offer one,
+ * and nothing about `SyncRunner`'s internal instance is reachable from
+ * there. Left for whoever picks that up next -- the device-identity blocker
+ * this paragraph used to name is gone as of slice 9g.
  */
 class DriveCompactor(
     driveAuthorization: DriveAuthorization,

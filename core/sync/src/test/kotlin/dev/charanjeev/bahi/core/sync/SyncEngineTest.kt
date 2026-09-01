@@ -1,33 +1,13 @@
 package dev.charanjeev.bahi.core.sync
 
 import com.google.common.truth.Truth.assertThat
-import dev.charanjeev.bahi.core.data.repository.BudgetRepository
-import dev.charanjeev.bahi.core.data.repository.CategoryRepository
-import dev.charanjeev.bahi.core.data.repository.CategoryRuleRepository
 import dev.charanjeev.bahi.core.data.repository.DirtyRow
-import dev.charanjeev.bahi.core.data.repository.ImportBatchResult
-import dev.charanjeev.bahi.core.data.repository.SyncApplier
-import dev.charanjeev.bahi.core.data.repository.TombstoneReaper
-import dev.charanjeev.bahi.core.data.repository.TransactionRepository
-import dev.charanjeev.bahi.core.model.Budget
-import dev.charanjeev.bahi.core.model.Category
-import dev.charanjeev.bahi.core.model.CategoryRule
-import dev.charanjeev.bahi.core.model.MonthlyBudgets
-import dev.charanjeev.bahi.core.model.Money
 import dev.charanjeev.bahi.core.model.OP_FORMAT_VERSION
 import dev.charanjeev.bahi.core.model.OpBatch
 import dev.charanjeev.bahi.core.model.RemoteSnapshot
-import dev.charanjeev.bahi.core.model.RuleApplicationPreview
-import dev.charanjeev.bahi.core.model.SnapshotRow
 import dev.charanjeev.bahi.core.model.SyncOp
 import dev.charanjeev.bahi.core.model.SyncTable
-import dev.charanjeev.bahi.core.model.Transaction
-import dev.charanjeev.bahi.core.model.TransactionFilter
-import dev.charanjeev.bahi.core.model.YearMonth
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.runTest
-import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import org.junit.Test
@@ -278,6 +258,108 @@ class SyncEngineTest {
         assertThat(applier.calls.flatMap { it.first }.map { it.rowId }).containsExactly("z")
     }
 
+    /**
+     * `SyncRunner` (slice 9g's cursor-persistence fix) seeds a fresh engine
+     * from `UserPreferencesDataSource.syncCursor` instead of an empty map --
+     * this is the engine-level half of that: a cursor handed in through the
+     * constructor has to behave exactly like one built up in memory over
+     * prior `sync()` calls, or persisting it would be pointless.
+     */
+    @Test
+    fun `a cursor seeded through the constructor is honoured on the first pull`() = runTest {
+        val transport = InMemoryTransport()
+        transport.push(OpBatch("device-b", seq = 1, ops = listOf(op(rowId = "x", remoteRevision = 1))))
+        val applier = FakeSyncApplier()
+        val engine = SyncEngine(
+            transport, applier, FakeTombstoneReaper(),
+            FakeTransactionRepository(), FakeCategoryRepository(), FakeBudgetRepository(), FakeCategoryRuleRepository(),
+            deviceId = "device-a",
+            initialCursor = mapOf("device-b" to 1L), // as if a prior, now-dead process already pulled seq 1
+        )
+
+        engine.sync()
+
+        assertThat(applier.calls).isEmpty()
+        assertThat(engine.cursorSnapshot).containsEntry("device-b", 1L)
+    }
+
+    /**
+     * §7: a persisted cursor is exactly as capable of being behind the
+     * horizon as one built up in memory -- the engine has no way to tell the
+     * two apart, so this is a property of `reconcileIfBehindHorizon`, not
+     * something a caller needs to special-case for a cursor it read back
+     * from `UserPreferencesDataSource` rather than accumulated itself.
+     */
+    @Test
+    fun `a cursor seeded through the constructor still reconciles if it is behind the horizon`() = runTest {
+        val transport = InMemoryTransport()
+        transport.push(OpBatch("device-b", seq = 1, ops = listOf(op(rowId = "x", remoteRevision = 1))))
+        transport.push(OpBatch("device-b", seq = 2, ops = listOf(op(rowId = "y", remoteRevision = 2))))
+        transport.compact()
+        val applier = FakeSyncApplier()
+        val engine = SyncEngine(
+            transport, applier, FakeTombstoneReaper(),
+            FakeTransactionRepository(), FakeCategoryRepository(), FakeBudgetRepository(), FakeCategoryRuleRepository(),
+            deviceId = "device-a",
+            initialCursor = mapOf("device-b" to 1L), // persisted before device-b's batch 2 was folded into the snapshot
+        )
+
+        engine.sync()
+
+        assertThat(applier.reconcileCalls).hasSize(1)
+        assertThat(applier.reconcileCalls.single().first.rows.map { it.rowId }).containsExactly("x", "y")
+    }
+
+    /**
+     * `SyncRunner` (slice 9g's push-sequence fix) seeds a fresh engine from
+     * `UserPreferencesDataSource.pushSeq` -- rebased against the cursor, see
+     * `SyncRunnerTest` -- instead of always starting at 1. This is the
+     * engine-level half: a seed handed in through the constructor has to
+     * produce the next number, not the first one, or persisting it would be
+     * pointless.
+     */
+    @Test
+    fun `a push sequence seeded through the constructor numbers the next batch, not the first one`() = runTest {
+        val transport = InMemoryTransport()
+        val transactions = FakeTransactionRepository(dirty = listOf(DirtyRow("t1", localRevision = 1, updatedAt = 100, payload = payload())))
+        val engine = SyncEngine(
+            transport, FakeSyncApplier(), FakeTombstoneReaper(),
+            transactions, FakeCategoryRepository(), FakeBudgetRepository(), FakeCategoryRuleRepository(),
+            deviceId = "device-a",
+            initialPushSeq = 4L, // as if a prior, now-dead process already pushed seq 1-4
+        )
+
+        engine.sync()
+
+        assertThat(transport.pull(emptyMap()).single().seq).isEqualTo(5L)
+    }
+
+    /**
+     * The property `persistPushSeq` exists for (`SyncEngine`'s own doc):
+     * reusing a push sequence number is silent data loss for whichever peer
+     * already pulled past it, unlike re-pulling a batch this device already
+     * applied, which the revision watermark just no-ops. Persisting the
+     * reserved number has to happen before the risky network call, not
+     * after, or the crash window it closes reopens -- this proves the
+     * ordering directly rather than trusting that a passing happy-path test
+     * implies it.
+     */
+    @Test
+    fun `the reserved push sequence is persisted before the transport call, even when that call then fails`() = runTest {
+        val persisted = mutableListOf<Long>()
+        val transactions = FakeTransactionRepository(dirty = listOf(DirtyRow("t1", localRevision = 1, updatedAt = 100, payload = payload())))
+        val engine = SyncEngine(
+            AlwaysFailsToPushTransport(), FakeSyncApplier(), FakeTombstoneReaper(),
+            transactions, FakeCategoryRepository(), FakeBudgetRepository(), FakeCategoryRuleRepository(),
+            deviceId = "device-a",
+            persistPushSeq = { persisted += it },
+        )
+
+        runCatching { engine.sync() }
+
+        assertThat(persisted).containsExactly(1L)
+    }
+
     private fun op(rowId: String, remoteRevision: Long) = SyncOp(
         table = SyncTable.TRANSACTIONS.tableName,
         rowId = rowId,
@@ -288,97 +370,9 @@ class SyncEngineTest {
     )
 }
 
-private class FakeSyncApplier : SyncApplier {
-    val calls = mutableListOf<Pair<List<SyncOp>, String>>()
-    val recordedPushes = mutableListOf<PushedShadow>()
-    val reconcileCalls = mutableListOf<Pair<RemoteSnapshot, String>>()
-
-    override suspend fun apply(ops: List<SyncOp>, localDeviceId: String) {
-        calls += ops to localDeviceId
-    }
-
-    override suspend fun recordPushed(table: SyncTable, rowId: String, remoteRevision: Long, payload: JsonObject?) {
-        recordedPushes += PushedShadow(table, rowId, remoteRevision, payload)
-    }
-
-    override suspend fun reconcile(snapshot: RemoteSnapshot, localDeviceId: String) {
-        reconcileCalls += snapshot to localDeviceId
-    }
-}
-
-private data class PushedShadow(val table: SyncTable, val rowId: String, val remoteRevision: Long, val payload: JsonObject?)
-
-private class FakeTombstoneReaper : TombstoneReaper {
-    var reapCount = 0
-        private set
-
-    override suspend fun reap() {
-        reapCount += 1
-    }
-}
-
-/** Records exactly the two calls [SyncEngine] makes: reading what is dirty, and acknowledging what was pushed. */
-private class FakeTransactionRepository(
-    private val dirty: List<DirtyRow> = emptyList(),
-    private val markSyncedResult: Boolean = true,
-) : TransactionRepository {
-    val markSyncedCalls = mutableListOf<Triple<String, Long, Long>>()
-    override fun observeTransactions(filter: TransactionFilter): Flow<List<Transaction>> = MutableStateFlow(emptyList())
-    override fun observeTransaction(id: String): Flow<Transaction?> = MutableStateFlow(null)
-    override suspend fun upsert(transaction: Transaction): Unit = error("not used")
-    override suspend fun update(transaction: Transaction): Unit = error("not used")
-    override suspend fun delete(id: String): Unit = error("not used")
-    override suspend fun undoDelete(id: String): Unit = error("not used")
-    override suspend fun importAll(transactions: List<Transaction>): ImportBatchResult = error("not used")
-    override suspend fun undoImport(batchId: String): Int = error("not used")
-    override suspend fun applyRuleCategories(assignments: Map<String, String>): Int = error("not used")
-    override suspend fun dirtyRows(limit: Int): List<DirtyRow> = dirty
-    override suspend fun markSynced(rowId: String, remoteRevision: Long, expectedLocalRevision: Long): Boolean {
-        markSyncedCalls += Triple(rowId, remoteRevision, expectedLocalRevision)
-        return markSyncedResult
-    }
-}
-
-private class FakeCategoryRepository(private val dirty: List<DirtyRow> = emptyList()) : CategoryRepository {
-    val markSyncedCalls = mutableListOf<Triple<String, Long, Long>>()
-    override fun observeCategories(): Flow<List<Category>> = MutableStateFlow(emptyList())
-    override suspend fun upsert(category: Category): Unit = error("not used")
-    override suspend fun delete(id: String): Unit = error("not used")
-    override suspend fun seedSystemCategoriesIfNeeded(): Unit = error("not used")
-    override suspend fun dirtyRows(limit: Int): List<DirtyRow> = dirty
-    override suspend fun markSynced(rowId: String, remoteRevision: Long, expectedLocalRevision: Long): Boolean {
-        markSyncedCalls += Triple(rowId, remoteRevision, expectedLocalRevision)
-        return true
-    }
-}
-
-private class FakeBudgetRepository(private val dirty: List<DirtyRow> = emptyList()) : BudgetRepository {
-    val markSyncedCalls = mutableListOf<Triple<String, Long, Long>>()
-    override fun observeBudgets(month: YearMonth): Flow<List<Budget>> = MutableStateFlow(emptyList())
-    override fun observeMonthlyBudgets(month: YearMonth): Flow<MonthlyBudgets> =
-        MutableStateFlow(MonthlyBudgets(month, emptyList(), Money(0)))
-    override suspend fun upsert(budget: Budget): Unit = error("not used")
-    override suspend fun delete(id: String): Unit = error("not used")
-    override suspend fun dirtyRows(limit: Int): List<DirtyRow> = dirty
-    override suspend fun markSynced(rowId: String, remoteRevision: Long, expectedLocalRevision: Long): Boolean {
-        markSyncedCalls += Triple(rowId, remoteRevision, expectedLocalRevision)
-        return true
-    }
-}
-
-private class FakeCategoryRuleRepository(private val dirty: List<DirtyRow> = emptyList()) : CategoryRuleRepository {
-    val markSyncedCalls = mutableListOf<Triple<String, Long, Long>>()
-    override fun observeRules(): Flow<List<CategoryRule>> = MutableStateFlow(emptyList())
-    override suspend fun rules(): List<CategoryRule> = emptyList()
-    override suspend fun upsert(rule: CategoryRule): Unit = error("not used")
-    override suspend fun delete(id: String): Unit = error("not used")
-    override suspend fun reorder(orderedIds: List<String>): Unit = error("not used")
-    override suspend fun previewApplyToExisting(rule: CategoryRule): RuleApplicationPreview = error("not used")
-    override suspend fun previewRecategoriseUncategorised(): RuleApplicationPreview = error("not used")
-    override suspend fun apply(preview: RuleApplicationPreview): Int = error("not used")
-    override suspend fun dirtyRows(limit: Int): List<DirtyRow> = dirty
-    override suspend fun markSynced(rowId: String, remoteRevision: Long, expectedLocalRevision: Long): Boolean {
-        markSyncedCalls += Triple(rowId, remoteRevision, expectedLocalRevision)
-        return true
-    }
+/** A transport that always fails the risky call [SyncEngine.persistPushSeq] exists to run ahead of. */
+private class AlwaysFailsToPushTransport : SyncTransport {
+    override suspend fun push(batch: OpBatch): Unit = error("push always fails")
+    override suspend fun pull(after: Map<String, Long>): List<OpBatch> = emptyList()
+    override suspend fun snapshot(): RemoteSnapshot = RemoteSnapshot(horizon = emptyMap(), rows = emptyList())
 }

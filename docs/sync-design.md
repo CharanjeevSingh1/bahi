@@ -1645,7 +1645,9 @@ Shape:
 `UserPreferencesDataSource.lastSyncCursor` is a single `String?` today. It has to
 become a per-device map (`{deviceId: seq}`), because "everything after cursor X"
 is not expressible as one number across independently-appending writers. That is
-a DataStore key change, not a schema change.
+a DataStore key change, not a schema change. **Done, as of slice 9g's
+cursor-persistence follow-up (§13):** `syncCursor` now holds exactly this,
+JSON-encoded under the same `last_sync_cursor` key.
 
 **The biggest unfixed risk in M4b, named rather than buried:** compaction has no
 compare-and-swap. Two devices compacting at the same time can each write a
@@ -3052,13 +3054,165 @@ questions into decisions (D9, D12, D13).
      where the Settings screen should pick this up; `DriveCompactor`'s own
      class doc names this gap in the same place a reviewer reading the code
      would look for it.
-   - **9g — The periodic worker** (§8.7). `PeriodicWorkRequest` at the 4-hour
-     cadence, the foreground/Settings-open expedited trigger, the
+   - **9g — The periodic worker** (§8.7). **Done.** `PeriodicWorkRequest` at
+     the 4-hour cadence, the foreground/Settings-open expedited trigger, the
      transient/terminal failure split, and the last-successful-sync display on
      the Settings row. **This is the slice that gives `SyncEngine` its first
-     caller anywhere in the app** — everything before it in this list can be
+     caller anywhere in the app** — everything before it in this list could be
      built and unit-tested without sync ever actually running end to end on a
-     device.
+     device; this slice is where that stops being true, which is also why it
+     surfaced three things nothing before it could.
+
+     **Device identity, finally answered.** `DeviceIdentity`
+     (`core/sync/DeviceIdentity.kt`) is a random `UUID`, not a hardware id,
+     get-or-created once and persisted in `UserPreferencesDataSource` the
+     same way the encryption key material already is. `allowBackup="false"`
+     means it does not survive a reinstall, which is the correct answer, not
+     a gap: a reinstalled app is, correctly, a new device to `SyncEngine` and
+     `DriveCompactor` both, the same as it is a new OAuth consent and a new
+     encryption key. An orphaned `DriveCompactor` claim from the old id is
+     not a new failure mode this has to handle — it is exactly the
+     "elected device is simply gone" case `isStale`/`takeOver` (9f) already
+     resolve, under a different cause.
+
+     **The `SyncModule` binding, made conditional.** `SyncTransportModule`
+     (new, in the same file) replaces the old unconditional `@Binds
+     bindSyncTransport` with a `@Provides` that picks `DriveTransport` or
+     `DisabledSyncTransport` behind `Provider<T>` on
+     `SyncConfiguration.isConfigured` — `Provider`, not the transport itself,
+     so the losing branch is never constructed. `DisabledSyncTransport`'s own
+     doc is updated to match: its "every method throws" contract is now only
+     ever reachable if both this gate and `SyncScheduler`'s own configured
+     check were somehow bypassed.
+
+     **`SyncStatus`, no longer decorative.** `SyncStatusRepository`
+     (`core/sync/SyncStatusRepository.kt`) is what `SyncRunner` reports
+     through: `Running`/`Idle` in memory only (correct to reset on process
+     death), `Failed`/`NeedsReauthorization` driven by
+     `DriveTransportException.retryable`/`.needsReauthorization` — the second
+     field is new on that class, needed because `DriveAccessToken` and
+     `DriveApi` both threw the same `retryable = false` shape for two
+     different reasons (revoked consent vs. an ordinary non-retryable HTTP
+     status) and nothing distinguished them before now. `:feature:settings`
+     does not render `SyncStatus` directly — see the next paragraph — but it
+     is real, tested (`SyncRunnerTest`), and driving something for the first
+     time since M4a.
+
+     **What the user sees is a timestamp, not a status.** Per §8.7's own
+     scope ("a last-successful-sync timestamp," not a spinner),
+     `SettingsViewModel` combines `SyncStatusRepository.lastSuccessfulSyncAt`
+     into a new `LastSyncDisplay` (`:feature:settings`, its own file):
+     Never/JustNow/MinutesAgo/HoursAgo/DaysAgo, the last carrying `isStale`.
+     Three days, not one, is the staleness threshold — reasoned in that
+     file's doc: one bad day of connectivity absorbed, not flagged, while a
+     genuinely broken sync still surfaces well before "6 days," this
+     section's own example of obviously too long to have stayed quiet.
+     `SettingsViewModel` also requests an expedited sync in `init`, and
+     `MainActivity.onStart` does the same for the foreground trigger —
+     single-activity architecture (CLAUDE.md) means this Activity's own
+     lifecycle already is the app's foreground signal, so no
+     `ProcessLifecycleOwner` observer was needed.
+
+     **A cursor-reset regression, found and fixed while building this, not
+     designed for up front.** `SyncEngine`'s own doc has always said its pull
+     cursor and push sequence "live only in memory... across many `sync`
+     calls on the same instance." The first draft of `SyncRunner.run`
+     constructed a fresh `SyncEngine` on every call, which is a fresh, empty
+     cursor every time — every periodic tick would have re-pulled every
+     peer's entire history rather than incrementally. `SyncRunner.engineFor`
+     now caches one `SyncEngine` per process instead — closing the regression
+     9g itself introduced, but not yet the pre-existing gap `SyncEngine`'s doc
+     already named (`lastSyncCursor` becoming a real persisted per-device map,
+     §8.3): WorkManager does not keep a process alive between periodic
+     executions, so on a real device most 4-hour ticks still started a fresh
+     process and therefore a fresh cursor anyway. That gap is closed as a
+     follow-up in the same slice, next paragraph.
+
+     **The pre-existing gap, closed.** `UserPreferencesDataSource.syncCursor`
+     is now that persisted per-device map — `last_sync_cursor`'s DataStore key
+     unchanged, its type widened from a single unused `String?` to a
+     JSON-encoded `{deviceId: seq}` (kotlinx.serialization, already a
+     dependency of both modules; no new one added). `SyncEngine` takes an
+     `initialCursor` constructor parameter and exposes `cursorSnapshot` to
+     read it back — it still does not persist anything itself, that stays
+     `SyncRunner`'s job, argued in both classes' docs. `SyncRunner.engineFor`
+     seeds the cached engine from `syncCursor` once, and `run` writes
+     `cursorSnapshot` back after every cycle that completes its pull, so a
+     process that dies between ticks loses nothing this device already
+     pulled. Verified against two `SyncRunner`s over one persisted
+     `UserPreferencesDataSource` file with the first's `DataStore` scope
+     cancelled before the second is built — `DeviceIdentityTest`'s
+     process-restart stand-in, reused rather than invented fresh
+     (`SyncRunnerTest`) — and the reconciliation question a persisted cursor
+     raises that an in-memory one never had to answer: is a cursor read back
+     from DataStore, rather than accumulated by the engine itself, still
+     correctly caught by §7's behind-the-horizon check? Yes, by construction —
+     `reconcileIfBehindHorizon` only ever reads `cursor[peerId]`, with no way
+     to tell where an entry came from — but that answer went into
+     `SyncEngineTest` as a seeded-cursor case rather than staying assumed. A
+     reinstall wipes `syncCursor` in the same `DataStore` write that wipes
+     `deviceId` (`allowBackup="false"`), so a reinstalled device starts both
+     at once, correctly, with nothing left over to reconcile against.
+
+     **The push sequence, closed too — a worse failure than the cursor's, so
+     a different fix.** `SyncEngine`'s push sequence (`nextPushSeq`) had no
+     equivalent seam and reset to 1 on every process restart. Re-pulling a
+     batch this device already applied is harmless — §10.4's idempotence
+     watermark is keyed on each row's own revision, not on which batch or
+     seq carried it, so a duplicate or reordered delivery is a no-op, checked
+     directly rather than assumed. A reused push sequence number is not
+     forgivable the same way: it is filtered out by `SyncTransport.pull`'s
+     own `seq > cursor[deviceId]` gate before a single op inside it is ever
+     inspected, so a peer already past this device's pre-restart sequence
+     would silently never see it — no error, no conflict record, nothing to
+     reconcile against later. `UserPreferencesDataSource.pushSeq` is the new
+     persisted counter, but seeding `SyncEngine`'s `initialPushSeq` from it
+     alone would reopen the exact bug for every install already running the
+     cursor fix above: `push()` has always written `cursor[deviceId] =
+     batch.seq` into the now-persisted cursor, so an upgrading install's own
+     device already has a high watermark recorded there that predates
+     `pushSeq` entirely. `SyncRunner.engineFor` rebases the seed as
+     `max(pushSeq, cursor[deviceId]) + 1` — the same shape as slice 5c's
+     Lamport rebase for `local_revision`, a value already recorded elsewhere
+     for a different reason turning out to be exactly the floor a fresh
+     counter has to respect. A genuinely new device id (an ordinary
+     reinstall) has no entry in any peer's cursor yet, so seeding it at 1 is
+     still correct — the rebase only ever raises the floor for an id a peer
+     could already be holding a watermark for. And because persisting after
+     the fact reopens its own crash window (a push that reaches the transport
+     just before the process dies, with the number never recorded), `push()`
+     now calls a `persistPushSeq` hook — `UserPreferencesDataSource::setPushSeq`,
+     wired in `SyncRunner` — with the reserved number *before* calling
+     `SyncTransport.push`, not after: a crash between the two just burns that
+     number, which every `SyncTransportContractTest` case already treats as
+     fine, since nothing requires push sequences to be contiguous, only
+     monotonic and unique per device. Verified the same way as the cursor —
+     two `SyncRunner`s over one persisted file, the first's `DataStore` scope
+     cancelled before the second is built — asserting the transport actually
+     received both pushes under distinct sequence numbers, plus a dedicated
+     case for the upgrade rebase and one proving `persistPushSeq` runs before
+     the transport call even when that call then fails (`SyncEngineTest`,
+     `SyncRunnerTest`).
+
+     **Has a real sync run end to end on a device? No — named plainly rather
+     than implied by silence.** Every path this slice adds is proven against
+     fakes (`SyncRunnerTest`) and, one layer down, against `InMemoryFakeDrive`
+     (`DriveCompactorTest`, `DriveTransportTest`, both pre-existing) — the
+     same boundary §10.5 already drew for `DriveTransport` itself. What would
+     make it real is exactly what `DriveTransportContractTest`'s `driveTest`
+     task needs and this environment does not have: a Google Cloud project,
+     an OAuth client registered against a real keystore's SHA-1, and two
+     genuine devices or emulators signed in to it (docs/sync-setup.md). Until
+     someone runs that manual plan, `SyncWorker` executing on a device is
+     unverified beyond "WorkManager accepted the request and Hilt could
+     construct the worker" — worth distinguishing from "sync happened,"
+     because the two are not the same claim. `settings-conflicts.png` and
+     `settings-empty.png` were checked against this slice's UI change and
+     found unaffected: both were captured against a build with no
+     `sync.properties`, where the row this slice adds is gated off exactly
+     like `EncryptionRow`/`DriveRow` already are, so neither is stale. 9h is
+     still where a screenshot showing the configured branch, captured against
+     genuine output, belongs.
    - **9h — The conflict screen's first real render** (§8.8). The
      `category_id`-to-category-name join this document now treats as required
      rather than deferred, and recapturing `settings-conflicts.png` against

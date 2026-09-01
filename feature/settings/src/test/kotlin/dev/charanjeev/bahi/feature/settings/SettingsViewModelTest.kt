@@ -9,6 +9,7 @@ import dev.charanjeev.bahi.core.model.SyncTable
 import dev.charanjeev.bahi.core.sync.oauth.AuthorizationOutcome
 import dev.charanjeev.bahi.core.sync.oauth.ConsentRequest
 import dev.charanjeev.bahi.core.sync.oauth.DriveConnectionState
+import dev.charanjeev.bahi.core.testing.FixedClock
 import dev.charanjeev.bahi.core.testing.MainDispatcherRule
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
@@ -25,8 +26,13 @@ class SettingsViewModelTest {
     private val repository = FakeSyncConflictRepository()
     private val syncConfiguration = FakeSyncConfiguration()
     private val driveAuthorization = FakeDriveAuthorization()
+    private val syncStatusRepository = FakeSyncStatusRepository()
+    private val syncScheduler = FakeSyncScheduler()
+    private val clock = FixedClock(Instant.fromEpochMilliseconds(10_000_000))
 
-    private fun viewModel() = SettingsViewModel(repository, driveAuthorization, syncConfiguration)
+    private fun viewModel() = SettingsViewModel(
+        repository, driveAuthorization, syncConfiguration, syncStatusRepository, syncScheduler, clock,
+    )
 
     private fun conflict(
         id: String = "c1",
@@ -52,7 +58,9 @@ class SettingsViewModelTest {
 
     @Test
     fun `carries syncConfigured through every state, not just once it loads`() = runTest {
-        val viewModel = SettingsViewModel(repository, driveAuthorization, FakeSyncConfiguration(isConfigured = false))
+        val viewModel = SettingsViewModel(
+            repository, driveAuthorization, FakeSyncConfiguration(isConfigured = false), syncStatusRepository, syncScheduler, clock,
+        )
 
         viewModel.uiState.test {
             assertThat(awaitItem().syncConfigured).isFalse()
@@ -169,7 +177,7 @@ class SettingsViewModelTest {
     @Test
     fun `carries driveConnection through every state that has one`() = runTest {
         val driveAuth = FakeDriveAuthorization(initialState = DriveConnectionState.NEEDS_REAUTHORIZATION)
-        val viewModel = SettingsViewModel(repository, driveAuth, syncConfiguration)
+        val viewModel = SettingsViewModel(repository, driveAuth, syncConfiguration, syncStatusRepository, syncScheduler, clock)
 
         viewModel.uiState.test {
             skipItems(1) // Loading -- no driveConnection to carry
@@ -210,5 +218,25 @@ class SettingsViewModelTest {
             assertThat(afterComplete.driveConnection).isEqualTo(DriveConnectionState.CONNECTED)
         }
         assertThat(driveAuthorization.completeAuthorizationCalls).isEqualTo(1)
+    }
+
+    @Test
+    fun `requests an expedited sync as soon as the screen is opened`() = runTest {
+        viewModel()
+
+        assertThat(syncScheduler.expeditedSyncRequests).isEqualTo(1)
+    }
+
+    @Test
+    fun `carries the last-synced display through every state that has one`() = runTest {
+        val fiveMinutesAgo = Instant.fromEpochMilliseconds(clock.now().toEpochMilliseconds() - 5 * 60_000)
+        val statusRepository = FakeSyncStatusRepository(lastSuccessfulSyncAt = fiveMinutesAgo)
+        val viewModel = SettingsViewModel(repository, driveAuthorization, syncConfiguration, statusRepository, syncScheduler, clock)
+
+        viewModel.uiState.test {
+            skipItems(1) // Loading -- no lastSyncDisplay to carry
+            val empty = awaitItem() as SettingsUiState.Empty
+            assertThat(empty.lastSyncDisplay).isEqualTo(LastSyncDisplay.MinutesAgo(5))
+        }
     }
 }
