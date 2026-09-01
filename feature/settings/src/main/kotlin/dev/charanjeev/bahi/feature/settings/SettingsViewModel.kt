@@ -5,7 +5,11 @@ import android.content.Intent
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dev.charanjeev.bahi.core.data.repository.CategoryRepository
 import dev.charanjeev.bahi.core.data.repository.SyncConflictRepository
+import dev.charanjeev.bahi.core.model.Category
+import dev.charanjeev.bahi.core.model.ConflictValue
+import dev.charanjeev.bahi.core.model.SyncTable
 import dev.charanjeev.bahi.core.sync.SyncConfiguration
 import dev.charanjeev.bahi.core.sync.SyncStatusRepository
 import dev.charanjeev.bahi.core.sync.oauth.ConsentRequest
@@ -42,6 +46,7 @@ class SettingsViewModel @Inject constructor(
     syncConfiguration: SyncConfiguration,
     private val syncStatusRepository: SyncStatusRepository,
     private val syncScheduler: SyncScheduler,
+    private val categoryRepository: CategoryRepository,
     private val clock: Clock,
 ) : ViewModel() {
 
@@ -73,7 +78,8 @@ class SettingsViewModel @Inject constructor(
         restoreMessage,
         driveAuthorization.connectionState,
         syncStatusRepository.lastSuccessfulSyncAt,
-    ) { conflicts, message, driveConnection, lastSuccessfulSyncAt ->
+        categoryRepository.observeCategories(),
+    ) { conflicts, message, driveConnection, lastSuccessfulSyncAt, categories ->
         val lastSyncDisplay = lastSyncDisplay(clock.now(), lastSuccessfulSyncAt)
         if (conflicts.isEmpty()) {
             SettingsUiState.Empty(
@@ -83,14 +89,15 @@ class SettingsViewModel @Inject constructor(
                 lastSyncDisplay = lastSyncDisplay,
             )
         } else {
+            val categoriesById = categories.associateBy { it.id }
             SettingsUiState.Success(
                 conflicts = conflicts.map {
                     ConflictListItem(
                         id = it.id,
                         table = it.table,
                         field = it.field,
-                        chosenValue = it.chosenValue,
-                        discardedValue = it.discardedValue,
+                        chosenValue = resolveIfCategoryReference(it.table, it.field, it.chosenValue, categoriesById),
+                        discardedValue = resolveIfCategoryReference(it.table, it.field, it.discardedValue, categoriesById),
                         reason = it.reason,
                         resolvedAt = it.resolvedAt,
                     )
@@ -138,5 +145,42 @@ class SettingsViewModel @Inject constructor(
     /** The Activity Result callback for a launched consent [PendingIntent], forwarded here. */
     fun onAuthorizationResult(resultCode: Int, data: Intent?) {
         viewModelScope.launch { driveAuthorization.completeAuthorization(resultCode, data) }
+    }
+}
+
+/**
+ * `category_id` names a category on every table it appears on
+ * (transactions, budgets, category_rules); `parent_id` does the same but
+ * only on categories itself -- no other field in `FieldPolicies.kt` points
+ * at another table's row the way these two do (docs/sync-design.md §11,
+ * §8.8). `import_batch_id` and `account_id` are id-*shaped* too, but
+ * neither names a row in a table this screen could join against -- there is
+ * no import-batch table (§1.1) and no accounts table at all yet -- so they
+ * stay exactly as the resolver recorded them.
+ */
+private fun isCategoryReference(table: SyncTable, field: String): Boolean =
+    field == "category_id" || (table == SyncTable.CATEGORIES && field == "parent_id")
+
+/**
+ * [categoriesById] is built from [CategoryRepository.observeCategories],
+ * which already filters `deleted_at IS NULL` -- so a soft-deleted or
+ * reaped category is simply absent from it, and the `?:` below is that
+ * absence read as "gone" rather than a tombstone check of its own. Falling
+ * back to the id itself, not a placeholder like "Unknown category", is
+ * deliberate even though the rule and budget screens use a placeholder for
+ * the same situation: a conflict row is a record of what was chosen and
+ * discarded, and the id is still the one piece of evidence a user could go
+ * looking for if a placeholder swallowed it.
+ */
+private fun resolveIfCategoryReference(
+    table: SyncTable,
+    field: String,
+    value: ConflictValue,
+    categoriesById: Map<String, Category>,
+): ConflictValue {
+    if (!isCategoryReference(table, field)) return value
+    return when (value) {
+        is ConflictValue.Text -> ConflictValue.Text(categoriesById[value.value]?.name ?: value.value)
+        ConflictValue.None, is ConflictValue.Number, is ConflictValue.Flag -> value
     }
 }

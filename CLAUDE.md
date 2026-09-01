@@ -6,7 +6,7 @@ Project context for Claude Code. Read this before making changes.
 
 Bahi — an offline-first personal finance tracker for Android. It is a **portfolio project**: the code is read by hiring managers, so clarity and correctness matter more than feature count. A reviewer should be able to open any file and understand why it is written the way it is.
 
-Current state: **M4a complete**. M0 scaffolding, M1 transactions, M2 CSV import, M3 budgets and rule-based auto-categorisation, M4a row-level sync — engine, resolver, two-device convergence suite, tombstone horizon, and the Settings screen that surfaces a conflict and restores a discarded value. No network yet: that's M4b. See the Roadmap in README.md.
+Current state: **M4b complete**. M0 scaffolding, M1 transactions, M2 CSV import, M3 budgets and rule-based auto-categorisation, M4a row-level sync (engine, resolver, two-device convergence suite, tombstone horizon), M4b the Drive transport (OAuth, end-to-end encryption, compaction, the periodic worker that gives `SyncEngine` its first real caller) and the Settings screen that surfaces a real conflict and restores a discarded value. M5 insights (`:feature:insights`) also shipped; baseline profile and Macrobenchmark are the only pieces of M5 still open. See the Roadmap in README.md. Sync itself has only ever run against an in-memory fake Drive — no real Drive account has exercised this app (`docs/sync-design.md` §13 slice 9h, `docs/sync-setup.md`).
 
 ## Stack
 
@@ -70,7 +70,7 @@ Run Gradle quietly and read only what failed: ./gradlew <tasks> --quiet 2>&1 | t
 
 ## Things that are intentionally not done yet
 
-`:core:importer` (M2) and `:core:sync` (M4a) are both fully implemented now — this note is stale as of M4a and left here only so its history is visible; do not treat either as a stub. What is genuinely not built: **M4b**, the Drive transport that carries `:core:sync`'s operations between devices (OAuth, quota, key management, real compaction) — `SyncEngine` has no caller anywhere in the app until it exists, so sync does not run yet, only proves it would converge. Do not implement M4b unless the task explicitly says to.
+`:core:importer` (M2) and `:core:sync` (M4a and M4b both) are fully implemented now — this note is stale as of M4b and left here only so its history is visible; do not treat any of them as a stub. What is genuinely not built: the baseline profile and Macrobenchmark startup numbers named for M5, and a real Drive account has never exercised sync end to end (everything is proven against an in-memory fake Drive — `docs/sync-design.md` §10.5, §13 slice 9h). Running `docs/sync-setup.md`'s manual plan against a real Google Cloud project would close that gap; nothing else in M4b is waiting on it.
 
 # Build speed. 
 - Don't run ./gradlew clean unless you suspect stale state .

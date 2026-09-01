@@ -203,6 +203,11 @@ slice 9 below is a sketch of what the transport will have to do, not a queued
 piece of work. Everything M4a builds is transport-agnostic by construction, so
 deferring it costs nothing but the ability to actually sync two phones.
 
+**Superseded.** M4b was taken up on the `m4b-transport` branch and is done as
+of slice 9h (§13) — the sketch below became the queued piece of work this
+paragraph said it wasn't. Left as written for the history of the decision;
+§13's slice 9 entry and the README roadmap carry the current status.
+
 ---
 
 ## 3. Identity: the problem that comes before conflict resolution
@@ -2468,26 +2473,33 @@ sections were the ones that did this.
   this) and not closed; the ordering argument that closes the ordinary case
   does not extend to it.
 - **A `category_id` conflict renders as an unusable id for a user-created
-  category.** §13 slice 8. The Settings screen shows `ConflictValue.Text`
-  verbatim -- fine for the seeded system categories (`"food"`,
-  `"entertainment"`), whose ids are readable slugs, but every other
-  user-created entity in this app (a transaction, a rule, a budget) gets its
-  id from `UUID.randomUUID()`, and there is no reason a category-creation
-  screen would do otherwise once one exists. The row would read `Kept:
-  7f3a9c21-...`, which tells the user nothing. `docs/screenshots/settings-conflicts.png`
-  is a flattering case precisely because it only exercises a seeded
-  category -- it is not evidence this is fine in general. Closing it needs a
-  join against `categories` (by id, filtered `deleted_at IS NULL` else
-  fall back to the id itself, the same way `RuleListItem`/`BudgetRow`
-  already resolve a category for display) at the point `SettingsViewModel`
-  builds `ConflictListItem`, not attempted in slice 8.
+  category.** §13 slice 8. **Closed in M4b slice 9h**, kept here for the
+  history: the Settings screen showed `ConflictValue.Text` verbatim -- fine
+  for the seeded system categories (`"food"`, `"entertainment"`), whose ids
+  are readable slugs, but every other user-created entity in this app (a
+  transaction, a rule, a budget) gets its id from `UUID.randomUUID()`, and
+  there was no reason a category-creation screen would do otherwise once one
+  existed. The row would have read `Kept: 7f3a9c21-...`, which tells the user
+  nothing. `docs/screenshots/settings-conflicts.png` was a flattering case
+  precisely because it only exercised a seeded category -- it was not
+  evidence this was fine in general. Slice 9h's fix is exactly the join
+  sketched here: `SettingsViewModel` now resolves `category_id` (on every
+  table it appears on) and `parent_id` (on `CATEGORIES` only) against
+  `CategoryRepository.observeCategories()`, falling back to the raw id when
+  the category is absent -- soft-deleted, reaped, or a lost shadow all look
+  the same: not in that flow, since it already filters `deleted_at IS NULL`.
 - **The Settings conflict screen's populated state has no live data path.**
-  §5.6. `sync_conflicts` is written only by `SyncApplier`'s resolver-driven
-  path, and nothing calls `SyncEngine` until M4b's transport exists — so every
-  row that has ever populated that screen came from a fake. The release build
-  can't be hand-seeded either (debug-signed, but not `isDebuggable`). M4b
-  inherits this directly: the first conflict a real two-device sync produces
-  is also this screen's first render against non-fake data.
+  §5.6. **Closed in M4b slice 9g/9h**, kept here for the history: `sync_conflicts`
+  was written only by `SyncApplier`'s resolver-driven path, and nothing
+  called `SyncEngine` until M4b's transport existed -- so every row that had
+  ever populated that screen came from a fake. The release build can't be
+  hand-seeded either (debug-signed, but not `isDebuggable`). Slice 9g gave
+  `SyncEngine` its first real caller; slice 9h is the render this bullet
+  predicted -- proven end to end in `ConvergenceScenariosTest`
+  (§13, slice 9h) against the real `SyncConflictRepository`, and against the
+  real `SettingsScreen` by hand-seeding a running debug build with a
+  genuinely-produced row rather than a fabricated one (§8.8's own note on
+  what "genuine" means without a real Drive account).
 - **Single-elected-compactor narrows the compaction race to one moment and does
   not close it.** §8.3, D13. Two devices can still both believe they won the
   first-compactor election if their claim-then-verify listings diverge in that
@@ -2693,16 +2705,20 @@ M4a — slices 1–8. Each compiles and passes `checkModuleBoundaries` on its ow
    version of that gap -- the screenshot's own category ids are the seeded
    system slugs, which is a flattering case, not the general one.
 
-M4b — slice 9. **Deferred, not next** (§2, D3): it is a milestone's worth of
-work on its own, none of the hard part lives in it, and M4a is complete and
-provable without it. Sketched here so M4a's interfaces are shaped for it, and
-sketched in more detail below than the M4a pass had reason to go into,
-because this document's M4b design pass (2026-09-01) is what turned §8's open
-questions into decisions (D9, D12, D13).
+M4b — slice 9. Sketched below in more detail than the M4a pass had reason to
+go into, because this document's M4b design pass (2026-09-01) is what turned
+§8's open questions into decisions (D9, D12, D13). At the time that pass was
+written, M4b was **deferred, not next** (§2, D3): a milestone's worth of work
+on its own, none of the hard part living in it, with M4a already complete and
+provable without it. **That call stood only briefly.** M4b was taken up on
+the `m4b-transport` branch and all nine sub-slices below are now done -- kept
+as "deferred, not next" in the paragraph above for the history of the
+decision, not as a current status.
 
-9. **The Drive transport** (§8). **Deferred, not next** (§2, D3). Nine
-   sub-slices rather than one, each independently reviewable and, where
-   possible, independently shippable:
+9. **The Drive transport** (§8). **Done, all nine sub-slices** (see each
+   one's own status below), on the `m4b-transport` branch -- sketched
+   originally as deferred (§2, D3), taken up later than this document
+   assumed when it was first written.
 
    - **9a — The disabled state and the setup path** (§8.5, D12). **Done.**
      `SyncConfiguration` (`:core:sync`) is the seam: `:app`'s build script
@@ -3213,12 +3229,106 @@ questions into decisions (D9, D12, D13).
      like `EncryptionRow`/`DriveRow` already are, so neither is stale. 9h is
      still where a screenshot showing the configured branch, captured against
      genuine output, belongs.
-   - **9h — The conflict screen's first real render** (§8.8). The
-     `category_id`-to-category-name join this document now treats as required
-     rather than deferred, and recapturing `settings-conflicts.png` against
-     genuine two-device output once 9g makes that possible. Deliberately
-     last: it depends on everything else in this list being wired together
-     and running.
+   - **9h — The conflict screen's first real render** (§8.8). **Done.**
+
+     **The join, and why it stops at two fields.** `SettingsViewModel` now
+     takes a `CategoryRepository` and folds `observeCategories()` into the
+     same `combine` that already builds `ConflictListItem`s, the same shape
+     `RulesViewModel`/`BudgetsViewModel` already use (`categories.associateBy
+     { it.id }`, then a lookup per row). Two fields get resolved: `category_id`,
+     on every table it appears on (`transactions`, `budgets`,
+     `category_rules`), and `parent_id`, but only on `CATEGORIES` -- checked
+     against `FieldPolicies.kt` rather than assumed, and nothing else in any
+     table's field-policy map names another table's row the way these two do.
+     `import_batch_id` and `account_id` are id-*shaped* but not id-*valued* in
+     the same sense: there is no import-batch table to join against (§1.1),
+     and no accounts table exists at all yet (§11's "nothing here handles a
+     second account"), so both stay exactly as the resolver recorded them --
+     joining against nothing would be worse than not joining. The fallback on
+     a miss is the raw id itself, not a placeholder like "Unknown category"
+     -- deliberately different from `RuleListItem`/`BudgetRow`'s placeholder
+     for the same absence, because a conflict row is evidence of what was
+     chosen and discarded, and the id is the one thing left for a user to go
+     looking for if a placeholder swallowed it. `observeCategories()` already
+     filters `deleted_at IS NULL`, so a soft-deleted or horizon-reaped
+     category is simply absent from the map -- the fallback needs no
+     tombstone check of its own, the same "absence of a match, not absence of
+     a value" shape §1.2's uncategorised-spend fix already used.
+
+     **Restore is untouched, confirmed rather than assumed.**
+     `SyncConflictRepository.restore` reads the conflict fresh from
+     `SyncConflictDao.getById` and compares the *stored* `chosen_value` JSON
+     against the row's live field value -- it never sees a `ConflictListItem`
+     or anything `SettingsViewModel` resolved for display. The name-vs-id
+     question is entirely a `:feature:settings` presentation concern; nothing
+     about `RestoreOutcome.VALUE_CHANGED_SINCE`'s comparison changes because
+     the screen now shows a name instead of a UUID.
+
+     **The end-to-end proof, and the seam it can't cross.** A new
+     `ConvergenceScenariosTest` scenario (16) runs the same two-real-`SyncEngine`,
+     two-real-Room-database harness as scenario 7, but with two user-created
+     categories (`UUID.randomUUID()` ids, not the seeded-looking `cat-a`/
+     `cat-b` slugs scenario 7 uses -- §11 names that exact substitution as
+     the flattering case `settings-conflicts.png` was captured against) both
+     locked onto the same transaction concurrently. After `syncToQuiescence`,
+     it reads the result through `SyncTestDevice.conflictRepository` -- a
+     real `RoomSyncConflictRepository`, the same class `SyncModule` binds in
+     production, not the raw `SyncConflictEntity` scenario 7 reads -- and
+     confirms the decoded `SyncConflict` carries the two real UUIDs as
+     `ConflictValue.Text`, with `field = "category_id"` and a reason
+     containing "locked". That is as far as one test can go: `:feature:settings`
+     cannot be reached from `:core:sync`'s androidTest (a feature depends on
+     `:core:sync`, never the reverse), and `:feature:settings` cannot depend
+     on `:core:database` to build a real `RoomSyncConflictRepository` itself
+     (rule 4) -- both directions CLAUDE.md forbids. `SettingsViewModelTest`'s
+     `category_id`/`parent_id` tests prove the other half: given a
+     `SyncConflict` of the exact shape scenario 16 just proved a genuine merge
+     produces, fed through the `SyncConflictRepository` interface (the same
+     interface production wires to the class scenario 16 exercises directly),
+     `SettingsViewModel` resolves it to a name. The two tests meet at that
+     interface, which is the same seam the production Hilt binding crosses --
+     nothing here is proven more weakly than the app itself is wired.
+
+     **The screenshot, re-earned rather than re-labelled.** Two categories
+     were created with real `UUID` ids and real names ("Pet Care", "Hobbies")
+     through the same merge path scenario 16 proves -- run once, not
+     hand-typed -- and inserted into a running debug build's actual on-device
+     database (`run-as`/`sqlite3`, the same mechanism slice 8's and 9a's
+     screenshots were captured with, per their own notes above). The
+     Transactions screen and Settings screen were both captured from the
+     running app: `settings-conflicts.png` now shows `Kept: Hobbies` /
+     `Discarded: Pet Care`, not a UUID, and the seeded transaction that
+     carries the id reads "Hobbies" on the Transactions list too --
+     confirming the row is real data flowing through the app's ordinary
+     category-lookup path, not a Settings-screen-only fixture.
+     `settings-empty.png` needed no recapture: 9h changes nothing about the
+     empty state, and the check 9g's own note already ran (both screenshots
+     compared against the build before and after) still holds -- this
+     slice's diff is entirely inside `ConflictRow`'s value rendering.
+
+     **Correcting 9g's own anticipation.** The previous entry above guessed
+     9h's screenshot would show "the configured branch" -- `sync.properties`
+     present, `EncryptionRow`/`DriveRow` visible. That would need either a
+     fabricated "Connected" state this device never earned (dishonest, and
+     the opposite of what this rule exists to prevent) or a real Google Cloud
+     OAuth client (out of scope: no credentials exist in this environment,
+     same boundary §10.5 already drew). The honest choice is the one already
+     made for every prior Settings screenshot: the unconfigured branch, which
+     is what this build actually is. What 9h's screenshot proves is the
+     conflict row's content, not the Drive connection state -- those are
+     independent claims, and only the first one is this slice's job.
+
+     **Has sync ever run against a real Drive account? No, and it still
+     hasn't, stated plainly rather than left to be inferred from the rest of
+     this section.** Every claim in M4b, 9h included, is proven against
+     `InMemoryTransport`/`InMemoryFakeDrive` and, for this screenshot, a
+     database hand-seeded with a genuinely-computed row -- never against
+     Drive itself. `docs/sync-setup.md`'s manual plan is what would change
+     that, and nobody has run it in this environment. That does not make the
+     merge logic, the conflict recording, or the render any less real -- all
+     three are the actual shipped code, exercised end to end -- but "two
+     phones synced over Drive and one of them showed this screen" remains an
+     unproven claim, and M4b closes without anyone having tested it.
 
    Ordering within the list is not strict. 9a and 9b have no dependency on
    anything else and could go first, or ship standalone. 9c is independent of

@@ -2,9 +2,13 @@ package dev.charanjeev.bahi.core.sync.convergence
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.google.common.truth.Truth.assertThat
+import dev.charanjeev.bahi.core.model.ConflictValue
 import dev.charanjeev.bahi.core.model.Money
+import dev.charanjeev.bahi.core.model.SyncTable
 import dev.charanjeev.bahi.core.model.TransactionSource
 import dev.charanjeev.bahi.core.model.YearMonth
+import java.util.UUID
+import kotlinx.coroutines.flow.first
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -384,5 +388,67 @@ class ConvergenceScenariosTest {
         syncToQuiescence()
         assertConverged()
         assertThat(a.dump().transactions).isEmpty()
+    }
+
+    // --- 16: slice 9h -- a category_id conflict, decoded by the real repository ---
+
+    /**
+     * docs/sync-design.md §8.8/§13 slice 9h: the first place a genuine
+     * `category_id` [dev.charanjeev.bahi.core.model.SyncConflict] is decoded
+     * by the same [dev.charanjeev.bahi.core.data.repository.RoomSyncConflictRepository]
+     * production binds, rather than only read as [SyncTestDevice.unacknowledgedConflicts]'s
+     * raw entity the way scenario 7 above does. Both categories here are
+     * user-created -- `UUID` ids, the shape every category gets once there is
+     * a creation screen -- deliberately not the seeded-looking slugs
+     * (`cat-a`/`cat-b`) scenario 7 uses: §11 names that exact substitution as
+     * the flattering case `settings-conflicts.png` was captured against.
+     *
+     * `:feature:settings` cannot be reached from here -- a feature depends on
+     * `:core:sync`, never the reverse -- so this test's proof stops at the
+     * repository boundary: a genuine two-device merge really does produce
+     * the raw-id [ConflictValue.Text] shape §11 says renders unusably.
+     * `SettingsViewModelTest`'s `category_id`-conflict tests prove the other
+     * half, that feeding a [dev.charanjeev.bahi.core.model.SyncConflict] of
+     * this exact shape into `SettingsViewModel` (bound to the same
+     * `SyncConflictRepository` interface this test's [SyncTestDevice.conflictRepository]
+     * implements) renders the category's name. Nothing in this repo can
+     * exercise both halves in one `@Test` without a feature depending on
+     * `:core:database` or a `:core` module depending on a feature -- both
+     * forbidden by CLAUDE.md rule 4 -- so the seam is the repository
+     * interface, which is exactly the seam production's Hilt binding crosses
+     * too.
+     */
+    @Test
+    fun bothLockDifferentUserCreatedCategories_theRealRepositoryDecodesRawIds() = convergenceTest {
+        val groceries = category(UUID.randomUUID().toString(), "Groceries")
+        val takeout = category(UUID.randomUUID().toString(), "Takeout")
+        a.categoryRepository.upsert(groceries)
+        a.categoryRepository.upsert(takeout)
+        a.transactionRepository.upsert(tx("t1", at = a.clock.now()))
+        syncToQuiescence()
+
+        a.clock.advanceBy(1_000)
+        val onA = a.currentTransaction("t1")
+        a.transactionRepository.update(onA.copy(categoryId = groceries.id, categoryLockedByUser = true, updatedAt = a.clock.now()))
+
+        b.clock.advanceBy(5_000) // strictly later -- B's lock is the deterministic winner
+        val onB = b.currentTransaction("t1")
+        b.transactionRepository.update(onB.copy(categoryId = takeout.id, categoryLockedByUser = true, updatedAt = b.clock.now()))
+
+        syncToQuiescence()
+        assertConverged()
+        assertThat(a.dump().transactions.single().categoryId).isEqualTo(takeout.id)
+
+        val conflicts = a.conflictRepository.observeConflicts().first() + b.conflictRepository.observeConflicts().first()
+        assertThat(conflicts).hasSize(1)
+        val conflict = conflicts.single()
+        assertThat(conflict.table).isEqualTo(SyncTable.TRANSACTIONS)
+        assertThat(conflict.field).isEqualTo("category_id")
+        assertThat(conflict.reason).contains("locked")
+        // The raw category id -- a real UUID, not a seeded slug -- because
+        // resolving it to "Groceries"/"Takeout" is :feature:settings's job
+        // (SettingsViewModel's category join), not this repository's.
+        assertThat(conflict.chosenValue).isEqualTo(ConflictValue.Text(takeout.id))
+        assertThat(conflict.discardedValue).isEqualTo(ConflictValue.Text(groceries.id))
     }
 }
