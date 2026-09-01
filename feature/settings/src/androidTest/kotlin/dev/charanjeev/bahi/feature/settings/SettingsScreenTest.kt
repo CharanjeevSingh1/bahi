@@ -64,6 +64,34 @@ class SettingsScreenTest {
     }
 
     @Test
+    fun configured_showsTheEncryptionRow() {
+        composeTestRule.setContent { SettingsScreen(uiState = SettingsUiState.Empty(syncConfigured = true)) }
+
+        composeTestRule.onNodeWithTag(SettingsTestTags.ENCRYPTION_ROW).assertIsDisplayed()
+    }
+
+    @Test
+    fun notConfigured_hidesTheEncryptionRow() {
+        // Setting up encryption for a transport this build doesn't have would be
+        // a dead end -- same gate as NotConfiguredRow, opposite branch.
+        composeTestRule.setContent { SettingsScreen(uiState = SettingsUiState.Empty(syncConfigured = false)) }
+
+        composeTestRule.onNodeWithTag(SettingsTestTags.ENCRYPTION_ROW).assertDoesNotExist()
+    }
+
+    @Test
+    fun tappingTheEncryptionRowNavigates() {
+        var opened = false
+        composeTestRule.setContent {
+            SettingsScreen(uiState = SettingsUiState.Empty(syncConfigured = true), onOpenEncryptionSetup = { opened = true })
+        }
+
+        composeTestRule.onNodeWithTag(SettingsTestTags.ENCRYPTION_ROW).performClick()
+
+        assertThat(opened).isTrue()
+    }
+
+    @Test
     fun emptyState_explainsWhatAConflictIs() {
         composeTestRule.setContent { SettingsScreen(uiState = SettingsUiState.Empty()) }
 

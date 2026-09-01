@@ -1,5 +1,6 @@
 package dev.charanjeev.bahi.feature.settings
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -43,12 +44,14 @@ import dev.charanjeev.bahi.core.model.SyncTable
 fun SettingsRoute(
     viewModel: SettingsViewModel = hiltViewModel(),
     onNavigateBack: () -> Unit = {},
+    onOpenEncryptionSetup: () -> Unit = {},
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
     SettingsScreen(
         uiState = uiState,
         onNavigateBack = onNavigateBack,
+        onOpenEncryptionSetup = onOpenEncryptionSetup,
         onRestoreRequested = viewModel::onRestoreRequested,
         onDismissRequested = viewModel::onDismissRequested,
         onRestoreMessageShown = viewModel::onRestoreMessageShown,
@@ -62,6 +65,7 @@ internal fun SettingsScreen(
     uiState: SettingsUiState,
     modifier: Modifier = Modifier,
     onNavigateBack: () -> Unit = {},
+    onOpenEncryptionSetup: () -> Unit = {},
     onRestoreRequested: (String) -> Unit = {},
     onDismissRequested: (String) -> Unit = {},
     onRestoreMessageShown: () -> Unit = {},
@@ -109,6 +113,11 @@ internal fun SettingsScreen(
             )
             if (!uiState.syncConfigured) {
                 NotConfiguredRow(modifier = Modifier.testTag(SettingsTestTags.NOT_CONFIGURED))
+            } else {
+                EncryptionRow(
+                    onClick = onOpenEncryptionSetup,
+                    modifier = Modifier.testTag(SettingsTestTags.ENCRYPTION_ROW),
+                )
             }
             when (uiState) {
                 is SettingsUiState.Loading -> CircularProgressIndicator(
@@ -220,6 +229,29 @@ private fun NotConfiguredRow(modifier: Modifier = Modifier) {
             text = stringResource(R.string.settings_sync_not_configured_body),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+    HorizontalDivider()
+}
+
+/**
+ * Always reads "Encryption", never "Set up encryption" -- this row does not
+ * know whether a key already exists (docs/sync-design.md §8.4, D9, slice 9c),
+ * deliberately: [PassphraseScreen] is the single source of truth for that,
+ * checked the moment it opens, and duplicating the check here would be a
+ * second place for the two to drift.
+ */
+@Composable
+private fun EncryptionRow(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+    ) {
+        Text(
+            text = stringResource(R.string.settings_encryption_row),
+            style = MaterialTheme.typography.bodyLarge,
         )
     }
     HorizontalDivider()

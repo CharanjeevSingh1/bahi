@@ -14,6 +14,9 @@ const val SettingsRoute = "settings"
  */
 fun NavGraphBuilder.settingsScreen(navController: NavHostController) {
     composable(route = SettingsRoute) {
-        SettingsScreen(onNavigateBack = { navController.popBackStack() })
+        SettingsScreen(
+            onNavigateBack = { navController.popBackStack() },
+            onOpenEncryptionSetup = { navController.navigate(PassphraseRoute) },
+        )
     }
 }

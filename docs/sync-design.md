@@ -1760,10 +1760,25 @@ the sync toggle, in words a non-engineer reads once and understands:
   Not a server I run: I hold no copy, and there is no account of mine to
   compromise. That folder is hidden from the Drive UI and reachable only by an
   app holding the `drive.appdata` scope for that user.
-- **Who can read it.** Without app-layer encryption: the user, any app they
-  authorise for `drive.appdata`, and Google — who encrypt at rest but hold the
-  keys, so they can decrypt, and will if compelled. With app-layer encryption:
-  only someone holding the passphrase, which never leaves the device.
+- **Who can read it.** Not *"any app the user authorises for `drive.appdata`"*
+  — that was wrong when this section first said so, and it's worth fixing in
+  place rather than quietly. `appDataFolder` is scoped per OAuth client, not
+  per scope grant: a second app the user has separately authorised for
+  `drive.appdata` gets its own empty folder through that alias, not this
+  app's — Google's own Drive API guide states each app's app-data section is
+  invisible to every other app, not only to the user. It also isn't in the
+  Drive UI and isn't included in a Google Takeout export; the only ordinary
+  way to reach it is through Bahi itself. So the honest list, without
+  app-layer encryption, is shorter than this document first claimed but not
+  empty: **Google**, who encrypt at rest but hold the keys, and can decrypt if
+  compelled by legal process, by an internal support or abuse investigation,
+  or in the event of a defect in their own systems; and **anyone who takes
+  over the user's Google account outright** — a phished password, a stolen
+  session, a SIM-swapped recovery flow — since account control is sufficient
+  to complete the same OAuth consent Bahi itself uses and then read the
+  folder the same way a legitimate sign-in would. With app-layer encryption,
+  both of those get ciphertext instead of a ledger; only someone holding the
+  passphrase, which never leaves the device, gets the plaintext.
 - **Whose job encryption is.** Under (b) it is the provider's, and the honest
   form of that answer is *acceptable because it is the user's own account, not
   mine* — which is a real answer, and defensible, but only when the app says it
@@ -1777,6 +1792,16 @@ Adding it is cheaper than it sounds and needs **no new dependency**: AES-256-GCM
 with a key derived from a user passphrase via PBKDF2, both from `javax.crypto`.
 The payload envelope carries version, salt and nonce; ciphertext is the op batch.
 
+**Corrected while building 9c: no salt in the envelope.** That sentence
+predates the AndroidKeyStore-cached-key refinement two paragraphs below --
+a salt travelling on every envelope would only matter if every encryption
+re-derived the key from the passphrase, which is exactly what caching the
+derived key exists to avoid. The salt PBKDF2 actually uses lives once, in
+the persisted key material (`SyncEncryptionKeyStore`), not on the wire. What
+every envelope still needs, and does carry, is a fresh nonce -- GCM's
+security argument requires one per encryption under a given key, and the key
+is reused across many batches. `OpBatchCipher`'s doc has the full format.
+
 The costs are real:
 
 - The user must type the passphrase on every device. That is the same flow every
@@ -1787,11 +1812,57 @@ The costs are real:
   exact way in the UI: losing it costs you sync, not your ledger.
 - Debugging is harder; the remote becomes opaque blobs.
 
-**Recommendation: encrypt, in M4b's first slice, not later.** Retrofitting means
-re-encrypting everything already in Drive and re-pairing every device — the same
-"the cost of not having it compounds" argument csv-import-design §11.1 used for
-`importBatchId` and budgets-design §4.1 used for putting sync columns on tables
-before sync existed. D9.
+**The case for (b), argued rather than assumed away.** The corrected list
+above is the fair version of it: skip app-layer encryption, keep the
+disclosure, and say plainly that Google can read this if compelled and that a
+compromised Google account is a compromised ledger. That's a real, shippable
+position — real products take it, and this section already called it
+"defensible" above it. Three things keep it from being a strawman:
+
+1. **The cost lands immediately, not later.** Every other "pay now, it
+   compounds later" call in this repo — `importBatchId`, the sync columns
+   landing before sync existed — was free to the user: an extra column
+   nobody sees. This one is not. Every device gets a passphrase prompt at
+   setup, every additional device gets a second one with no shortcut (§8.4
+   below), and a forgotten passphrase permanently forfeits the synced copy.
+   The recommendation this section reaches borrows the same "cost compounds,
+   decide now" heuristic csv-import-design §11.1 and budgets-design §4.1 used
+   — but that heuristic was measuring engineering cost, which does compound
+   here exactly the way it did there; it says nothing about the user cost,
+   which is paid up front, on every install, encryption or not.
+2. **It's the step sync adoption is most likely to die on.** §1's whole case
+   for building sync is that a second device is useless without it; a setup
+   flow that asks for OAuth consent and then a second, unrecoverable,
+   must-be-remembered secret roughly doubles the friction of turning it on
+   at all. This document has no data — it's a portfolio app with no users —
+   that the disclosure-only version of (b) wouldn't clear that adoption bar
+   just as well on its own.
+3. **The strongest version of the old justification didn't hold.** "Any app
+   with the scope" was the most concrete, most alarming-sounding reason to
+   encrypt, and it was wrong (above). What's left — Google under compulsion,
+   and account takeover — is real, but it's the same pair of actors every
+   cloud-synced app on this phone already exposes the user to, Gmail
+   included, per this section's own comparison to bank statement PDFs
+   already sitting there. Singling out Bahi for a passphrase Gmail doesn't
+   ask for is a defensible choice, not an obviously correct one.
+
+None of that reverses the recommendation, but it changes why it's right.
+(1) and (2) are real costs and stay real no matter which option wins; (3)
+shrinks the threat model without emptying it — Google-under-compulsion and
+account-takeover are exactly the two actors a passphrase that never leaves
+the device is good at stopping. A subpoena or a phished password hands an
+attacker `appDataFolder` access, not a key, and the ciphertext sitting behind
+it is exactly as useless to them as it would have been if the "other apps"
+reasoning had been the correct one all along. And the asymmetry the
+`importBatchId` comparison misses cuts the other way, too: guessing wrong by
+shipping *without* encryption costs more than guessing wrong by shipping
+*with* it. Adding encryption later means re-encrypting a live corpus,
+re-pairing every device, and explaining to whichever users exist by then why
+the trust model just changed under them; over-building it now costs one
+avoidable setup step for however long the app never has that problem.
+
+**Recommendation: encrypt, in M4b's first slice, not later — (a), for the
+corrected reason above rather than the original one.** D9.
 
 **Decided, 2026-09-01 — (a).** M4a moved no data off the device, so D9 was
 correctly left open through that milestone (§14's entry said as much). This
@@ -2667,13 +2738,68 @@ questions into decisions (D9, D12, D13).
      tombstoned split against real Room and `DefaultCsvImporterTest` covering
      that the importer trusts the repository's counts rather than
      re-deriving them.
-   - **9c — Encryption** (§8.4, D9). The AES-256-GCM envelope, PBKDF2 key
-     derivation, the `AndroidKeyStore`-wrapped cached key, the passphrase-entry
-     UI for setup and for pairing a new device, and the two pieces of UI copy
-     this document commits to verbatim. Testable in CI entirely as a pure
-     byte-transform — no transport needed to test that ciphertext round-trips
-     and that a wrong passphrase fails loudly rather than producing garbage
-     that looks like a valid, corrupt op.
+   - **9c — Encryption** (§8.4, D9). **Done.** `OpBatchCipher` (AES-256-GCM,
+     `:core:sync`) encrypts/decrypts one `OpBatch` at a time against a
+     `SecretKey`, deliberately with no `SyncTransport` in the loop — see the
+     correction two paragraphs above §8.4's original sentence on why the
+     envelope carries no salt. `PassphraseKeyDerivation` (PBKDF2WithHmacSHA256,
+     210,000 iterations, OWASP's current floor) turns a passphrase and a salt
+     into that key. `KeyWrapper` is the seam over `AndroidKeyStore`
+     wrapping/unwrapping, exactly like `SyncConfiguration`'s seam over
+     `BuildConfig` in 9a — the real `AndroidKeyStoreKeyWrapper` is verified
+     on-device (`AndroidKeyStoreKeyWrapperTest`, real `AndroidKeyStore`, real
+     round-trip and real tamper failure), and everything built on top of it is
+     tested against `FakeKeyWrapper` instead. `SyncEncryptionKeyStore`
+     orchestrates: derive, wrap, persist to `DataStore` (via a new
+     `UserPreferencesDataSource.syncEncryptionKeyMaterial`, read as one
+     combined value so the three fields making it up can never be observed
+     half-written) and, on the way back, unwrap. `DataStoreModule`
+     (`:core:datastore`) is new — nothing had provided a `DataStore<Preferences>`
+     to Hilt before this, since `lastSyncCursor` has had no caller since M0
+     either (§8.3).
+
+     **What "pairing a new device" means without 9e.** `DriveTransport` does
+     not exist yet, so there is no channel for a second device to learn the
+     first device's salt automatically. `PairingCode` (base64 of the salt, not
+     secret the way the passphrase is) is the honest, fully-functional version
+     of that flow available today: `PassphraseScreen`'s setup path shows it
+     after setup completes, and a second device's pairing path takes it as
+     typed or pasted input alongside the passphrase. When 9e lands,
+     `DriveTransport` publishing this string unencrypted alongside the op log
+     replaces the manual copy — the seam (`SyncEncryptionKeyStore.pair`) does
+     not change shape, only what supplies its `salt` argument.
+
+     `PassphraseScreen`/`PassphraseViewModel`/`PassphraseUiState`
+     (`:feature:settings`) are the setup-and-pairing UI, reached from a new
+     "Encryption" row on Settings shown exactly when `syncConfigured` is —
+     the row does not itself know whether a key already exists, deliberately,
+     so there is exactly one place (`PassphraseViewModel`'s own `isSetUp`
+     check) that can be wrong about it. `PassphraseUiState.Loading` covers the
+     one genuinely async read this screen needs (unlike `syncConfigured`,
+     `isSetUp` has no synchronous answer), so an already-configured device
+     never flashes the entry form before landing on `Done`. The lost-passphrase
+     warning is the exact wording §8.4 commits to; the setup-time disclosure
+     paraphrases §8.4's threat-model bullets rather than quoting them verbatim
+     (only the lost-passphrase line was ever a verbatim commitment — the
+     bullets' commitment was to the reasoning, not the exact sentences).
+
+     Covered by `OpBatchCipherTest`, `PassphraseKeyDerivationTest`,
+     `PairingCodeTest` (all pure JVM, no transport, exactly the "testable in CI
+     as a pure byte-transform" claim this entry made before it was built — a
+     round trip, two different encryptions of the same batch producing
+     different envelopes, a wrong key failing loudly via
+     `WrongPassphraseException` rather than returning garbage, and a tampered
+     envelope failing the same way), `SyncEncryptionKeyStoreTest` (real
+     file-backed `DataStore`, `FakeKeyWrapper`), `AndroidKeyStoreKeyWrapperTest`
+     (androidTest, real `AndroidKeyStore`), `PassphraseViewModelTest`
+     (Turbine, `FakeSyncEncryptionKeyStore`), and `PassphraseScreenTest` plus
+     new `SettingsScreenTest` cases (androidTest, real Compose). Also verified
+     against a running debug build with `sync.properties` present: set up
+     encryption end to end, confirmed the real pairing code renders, force-
+     stopped and relaunched the app, and confirmed the same pairing code comes
+     back immediately from `Done` rather than the entry form — the one thing
+     no test suite here proves, since it depends on a real `AndroidKeyStore`
+     key surviving a real process death, not a fake standing in for one.
    - **9d — OAuth** (§8.6). The Authorization API integration, the
      `drive.appdata` consent flow, silent refresh, and
      `SyncStatus.NeedsReauthorization` with its Settings surfacing. The slice
@@ -2848,9 +2974,21 @@ could be sliced and estimated — not into a commitment about when.
 - **Options:** (a) AES-GCM with a passphrase-derived key, in M4b's first slice,
   no new dependency. (b) rely on the provider's at-rest encryption and say so
   plainly in the app. (c) defer and add later.
-- **Recommendation: (a).** §8.4. Retrofitting means re-encrypting everything
-  already uploaded and re-pairing every device — the same compounding-cost
-  argument this repo has now used twice.
+- **Recommendation: (a), argued against properly, not just asserted.** §8.4
+  now makes the case for (b) in full rather than only for (a) — the reasoning
+  in the original pass here ("any app the user authorises for `drive.appdata`
+  can read it") turned out to be factually wrong: `appDataFolder` is isolated
+  per OAuth client, so no other app reaches it regardless of scope, and it's
+  excluded from Takeout too. The corrected threat model is narrower — Google
+  under compulsion, and anyone who takes over the user's Google account
+  outright — and (a) still answers both of those correctly, so the
+  recommendation didn't reverse the way the ₹0-budget call in budgets-design
+  §2.1 did. What changed is the reason: not "other apps can read this," which
+  wasn't true, but "a subpoena or a phished password shouldn't be enough to
+  read this," which is. The compounding-cost comparison to `importBatchId`
+  also doesn't fully hold on its own — that cost was pure engineering and
+  free to the user; this one is paid by the user at setup, encryption or not
+  — so it isn't cited as the reason by itself here anymore.
 - **If wrong:** a passphrase the user must not lose, with no recovery. The
   mitigation is framing: it protects the synced copy, not the ledger — losing it
   costs sync, not data — and that has to be the literal wording in the UI. If

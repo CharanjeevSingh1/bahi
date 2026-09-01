@@ -8,8 +8,12 @@ import dev.charanjeev.bahi.core.data.repository.RemoteMerge
 import dev.charanjeev.bahi.core.sync.ConflictResolver
 import dev.charanjeev.bahi.core.sync.ConflictResolverRemoteMerge
 import dev.charanjeev.bahi.core.sync.DefaultConflictResolver
+import dev.charanjeev.bahi.core.sync.DefaultSyncEncryptionKeyStore
 import dev.charanjeev.bahi.core.sync.DisabledSyncTransport
+import dev.charanjeev.bahi.core.sync.SyncEncryptionKeyStore
 import dev.charanjeev.bahi.core.sync.SyncTransport
+import dev.charanjeev.bahi.core.sync.crypto.AndroidKeyStoreKeyWrapper
+import dev.charanjeev.bahi.core.sync.crypto.KeyWrapper
 import javax.inject.Singleton
 
 @Module
@@ -37,4 +41,13 @@ interface SyncModule {
     @Binds
     @Singleton
     fun bindSyncTransport(implementation: DisabledSyncTransport): SyncTransport
+
+    /** `AndroidKeyStore`-backed -- see [AndroidKeyStoreKeyWrapper]'s doc for why this is the only implementation and why it is verified on-device rather than by `testDebugUnitTest`. */
+    @Binds
+    @Singleton
+    fun bindKeyWrapper(implementation: AndroidKeyStoreKeyWrapper): KeyWrapper
+
+    @Binds
+    @Singleton
+    fun bindSyncEncryptionKeyStore(implementation: DefaultSyncEncryptionKeyStore): SyncEncryptionKeyStore
 }

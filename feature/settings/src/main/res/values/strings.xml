@@ -6,6 +6,23 @@
     <string name="settings_sync_section">Sync</string>
     <string name="settings_sync_not_configured_title">Not set up on this build</string>
     <string name="settings_sync_not_configured_body">This build has no sync backend configured, so nothing leaves this device. See docs/sync-setup.md.</string>
+    <string name="settings_encryption_row">Encryption</string>
+
+    <string name="passphrase_title">Sync encryption</string>
+    <string name="passphrase_setup_disclosure">Every transaction — amount, date, description, merchant, category, notes — plus your budgets and categorisation rules go into your own Google Drive, not a server anyone else runs. Encrypting them means only someone who knows this passphrase can read that copy, not Google and not anyone who takes over your Google account.</string>
+    <string name="passphrase_pair_body">Enter the pairing code shown on the device you already set up, then type the same passphrase you used there.</string>
+    <string name="passphrase_lost_warning">This passphrase protects your synced backup only. Losing it means starting sync over on a new passphrase — your transactions on this device are safe either way.</string>
+    <string name="passphrase_switch_to_pair">Pairing a second device instead?</string>
+    <string name="passphrase_switch_to_setup">Setting up the first device instead?</string>
+    <string name="passphrase_pairing_code_label">Pairing code</string>
+    <string name="passphrase_field_label">Passphrase</string>
+    <string name="passphrase_confirm_field_label">Confirm passphrase</string>
+    <string name="passphrase_submit_setup">Set up encryption</string>
+    <string name="passphrase_submit_pair">Pair this device</string>
+    <string name="passphrase_done_body">Encryption is set up on this device. Copy this pairing code and type the same passphrase on any other device you want to sync with.</string>
+    <string name="passphrase_error_too_short">Passphrase must be at least %1$d characters</string>
+    <string name="passphrase_error_mismatch">Passphrases don\'t match</string>
+    <string name="passphrase_error_pairing_code_invalid">That pairing code doesn\'t look right — check it against the one shown on the first device</string>
     <plurals name="settings_conflicts_count">
         <item quantity="one">%1$d conflict resolved — review</item>
         <item quantity="other">%1$d conflicts resolved — review</item>

@@ -78,6 +78,7 @@ internal object SettingsTestTags {
     const val LIST = "settings:list"
     const val CONFLICTS_COUNT = "settings:conflictsCount"
     const val NOT_CONFIGURED = "settings:notConfigured"
+    const val ENCRYPTION_ROW = "settings:encryptionRow"
 
     fun row(id: String) = "settings:row:$id"
     fun restore(id: String) = "settings:restore:$id"
