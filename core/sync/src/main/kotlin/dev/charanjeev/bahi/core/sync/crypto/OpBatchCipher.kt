@@ -1,6 +1,7 @@
 package dev.charanjeev.bahi.core.sync.crypto
 
 import dev.charanjeev.bahi.core.model.OpBatch
+import dev.charanjeev.bahi.core.model.RemoteSnapshot
 import java.security.GeneralSecurityException
 import java.security.SecureRandom
 import javax.crypto.AEADBadTagException
@@ -31,6 +32,18 @@ import kotlinx.serialization.json.Json
  * [OpBatch.version] is a top-level field rather than buried in [OpBatch.ops]:
  * a reader has to be able to tell an unreadable envelope apart *before*
  * attempting to decrypt it.
+ *
+ * **Widened in slice 9f to also seal a [RemoteSnapshot].** A compacted
+ * snapshot is the same financial data as the ops it was folded from -- §8.4's
+ * "your financial history is stored in your Google Drive" statement does not
+ * stop applying just because compaction merged the rows -- so it goes through
+ * the identical version-byte/nonce/ciphertext envelope, not a second format.
+ * The object keeps the name [OpBatchCipher] rather than being renamed: every
+ * existing citation of it, here and in docs/sync-design.md's dated slice
+ * write-ups, refers to the class that sealed an [OpBatch] at the time it was
+ * written, and this document treats those write-ups as an append-only log
+ * (see [OpBatch.version]'s own reasoning) rather than something to edit for a
+ * later widening.
  */
 object OpBatchCipher {
 
@@ -39,14 +52,8 @@ object OpBatchCipher {
     private const val GCM_TAG_LENGTH_BITS = 128
     private const val TRANSFORMATION = "AES/GCM/NoPadding"
 
-    fun encrypt(batch: OpBatch, key: SecretKey): ByteArray {
-        val nonce = ByteArray(NONCE_LENGTH_BYTES).also { SecureRandom().nextBytes(it) }
-        val cipher = Cipher.getInstance(TRANSFORMATION)
-        cipher.init(Cipher.ENCRYPT_MODE, key, GCMParameterSpec(GCM_TAG_LENGTH_BITS, nonce))
-        val plaintext = Json.encodeToString(OpBatch.serializer(), batch).encodeToByteArray()
-        val ciphertext = cipher.doFinal(plaintext)
-        return byteArrayOf(ENVELOPE_VERSION) + nonce + ciphertext
-    }
+    fun encrypt(batch: OpBatch, key: SecretKey): ByteArray =
+        seal(Json.encodeToString(OpBatch.serializer(), batch).encodeToByteArray(), key)
 
     /**
      * Throws [WrongPassphraseException] rather than returning a null or a
@@ -57,7 +64,26 @@ object OpBatchCipher {
      * the same way, for the same reason: GCM authenticates the whole
      * ciphertext, not just the key.
      */
-    fun decrypt(envelope: ByteArray, key: SecretKey): OpBatch {
+    fun decrypt(envelope: ByteArray, key: SecretKey): OpBatch =
+        Json.decodeFromString(OpBatch.serializer(), open(envelope, key).decodeToString())
+
+    /** Same envelope, same guarantees, over a [RemoteSnapshot] instead of an [OpBatch] -- see the class doc's "widened in slice 9f" note. */
+    fun encryptSnapshot(snapshot: RemoteSnapshot, key: SecretKey): ByteArray =
+        seal(Json.encodeToString(RemoteSnapshot.serializer(), snapshot).encodeToByteArray(), key)
+
+    /** See [decrypt] -- fails the same way, for the same reason. */
+    fun decryptSnapshot(envelope: ByteArray, key: SecretKey): RemoteSnapshot =
+        Json.decodeFromString(RemoteSnapshot.serializer(), open(envelope, key).decodeToString())
+
+    private fun seal(plaintext: ByteArray, key: SecretKey): ByteArray {
+        val nonce = ByteArray(NONCE_LENGTH_BYTES).also { SecureRandom().nextBytes(it) }
+        val cipher = Cipher.getInstance(TRANSFORMATION)
+        cipher.init(Cipher.ENCRYPT_MODE, key, GCMParameterSpec(GCM_TAG_LENGTH_BITS, nonce))
+        val ciphertext = cipher.doFinal(plaintext)
+        return byteArrayOf(ENVELOPE_VERSION) + nonce + ciphertext
+    }
+
+    private fun open(envelope: ByteArray, key: SecretKey): ByteArray {
         require(envelope.size > 1 + NONCE_LENGTH_BYTES) {
             "Envelope too short to hold a version byte, a nonce and any ciphertext"
         }
@@ -67,12 +93,11 @@ object OpBatchCipher {
         val ciphertext = envelope.copyOfRange(1 + NONCE_LENGTH_BYTES, envelope.size)
         val cipher = Cipher.getInstance(TRANSFORMATION)
         cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(GCM_TAG_LENGTH_BITS, nonce))
-        val plaintext = try {
+        return try {
             cipher.doFinal(ciphertext)
         } catch (cause: AEADBadTagException) {
             throw WrongPassphraseException(cause)
         }
-        return Json.decodeFromString(OpBatch.serializer(), plaintext.decodeToString())
     }
 }
 

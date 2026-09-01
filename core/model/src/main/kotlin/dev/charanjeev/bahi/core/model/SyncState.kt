@@ -30,9 +30,9 @@ sealed interface SyncStatus {
      * for this whole type: `SyncEngine` has no caller until 9g, so nothing
      * produces this value yet either. `:feature:settings`' Drive connection
      * row reads `DriveAuthorization.connectionState` directly rather than
-     * this, for the same reason slice 8 preferred `observeUnacknowledgedCount`
-     * over `SyncStatus` there: it is live from the moment a device first tries
-     * to authorize, not only once a sync cycle exists to update it.
+     * this, for the same reason slice 8's conflict count reads
+     * `observeUnacknowledgedCount` rather than this -- real data beats a
+     * status that would read one fixed value forever.
      */
     data object NeedsReauthorization : SyncStatus
 }

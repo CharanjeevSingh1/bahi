@@ -7,16 +7,11 @@ import dev.charanjeev.bahi.core.model.RemoteSnapshot
 import dev.charanjeev.bahi.core.sync.SyncEncryptionKeyStore
 import dev.charanjeev.bahi.core.sync.SyncTransport
 import dev.charanjeev.bahi.core.sync.crypto.OpBatchCipher
-import dev.charanjeev.bahi.core.sync.oauth.AuthorizationOutcome
 import dev.charanjeev.bahi.core.sync.oauth.DriveAuthorization
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
 import okhttp3.Call
-
-private const val KIND = "kind"
-private const val KIND_OPS = "ops"
-private const val KIND_SALT = "salt"
 
 /**
  * The real [SyncTransport] (docs/sync-design.md §8.3, §13 slice 9e): each
@@ -53,10 +48,10 @@ class DriveTransport @Inject constructor(
     @param:Dispatcher(BahiDispatcher.IO) private val ioDispatcher: CoroutineDispatcher,
 ) : SyncTransport {
 
-    private val api = DriveApi(callFactory, ::accessToken)
+    private val api = DriveApi(callFactory, DriveAccessToken(driveAuthorization)::invoke)
 
     override suspend fun push(batch: OpBatch): Unit = withContext(ioDispatcher) {
-        val key = requireKey()
+        val key = keyStore.requireSyncKey()
         val envelope = OpBatchCipher.encrypt(batch, key)
         api.create(
             name = "ops-${batch.deviceId}-${batch.seq}.json",
@@ -66,7 +61,7 @@ class DriveTransport @Inject constructor(
     }
 
     override suspend fun pull(after: Map<String, Long>): List<OpBatch> = withContext(ioDispatcher) {
-        val key = requireKey()
+        val key = keyStore.requireSyncKey()
         api.list(KIND, KIND_OPS)
             .filter { file ->
                 val deviceId = file.appProperties["deviceId"]
@@ -77,16 +72,25 @@ class DriveTransport @Inject constructor(
     }
 
     /**
-     * No writer of a compacted snapshot exists yet -- that is slice 9f's job,
-     * along with the wire format one should use, which isn't this slice's to
-     * invent ahead of the code that first writes one. Until then there is
-     * nothing an incremental [pull] could miss, so this always answers with
-     * [RemoteSnapshot]'s empty default, matching exactly what
-     * `SyncTransportContractTest`'s only check on this method already
-     * requires: "snapshot of a transport nothing has compacted has an empty
-     * horizon."
+     * The most recently written compacted snapshot, or [RemoteSnapshot]'s
+     * empty default if [DriveCompactor] (slice 9f) has never written one --
+     * satisfying `SyncTransportContractTest`'s "snapshot of a transport
+     * nothing has compacted has an empty horizon" the same way it always did,
+     * now because nothing tagged `snapshot` exists yet rather than because
+     * this method never looked.
+     *
+     * Picks the file with the highest `n` among every `kind=snapshot` file
+     * present. §8.3's original worry about that -- "`n` is assigned locally
+     * by whichever device compacts... two devices computing it from their own
+     * stale listings can produce values in either order or even collide" --
+     * is exactly what D13's single-elected-compactor decision closes: with
+     * only one device ever writing a snapshot, `n` increases in the order
+     * that device assigned it, and "highest `n`" stops being a guess and
+     * becomes the correct answer by construction.
      */
-    override suspend fun snapshot(): RemoteSnapshot = RemoteSnapshot(horizon = emptyMap(), rows = emptyList())
+    override suspend fun snapshot(): RemoteSnapshot = withContext(ioDispatcher) {
+        api.latestSnapshot(keyStore.requireSyncKey()) ?: RemoteSnapshot(horizon = emptyMap(), rows = emptyList())
+    }
 
     /** Publishes this device's salt in the clear, so a second device can find it instead of being told it by hand. */
     suspend fun publishSalt(salt: ByteArray): Unit = withContext(ioDispatcher) {
@@ -103,15 +107,4 @@ class DriveTransport @Inject constructor(
     suspend fun readPublishedSalt(): ByteArray? = withContext(ioDispatcher) {
         api.list(KIND, KIND_SALT).firstOrNull()?.let { api.get(it.id) }
     }
-
-    private suspend fun accessToken(): String = when (val outcome = driveAuthorization.currentAccessToken()) {
-        is AuthorizationOutcome.Authorized -> outcome.accessToken
-        is AuthorizationOutcome.NeedsReauthorization ->
-            throw DriveTransportException("Drive access needs to be reauthorized", retryable = false)
-        is AuthorizationOutcome.Failed ->
-            throw DriveTransportException(outcome.message, retryable = outcome.retryable)
-    }
-
-    private suspend fun requireKey() = keyStore.cachedKey()
-        ?: throw DriveTransportException("Sync encryption is not set up yet -- see PassphraseScreen", retryable = false)
 }

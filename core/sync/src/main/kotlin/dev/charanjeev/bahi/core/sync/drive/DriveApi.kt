@@ -16,8 +16,21 @@ private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
 private val OCTET_STREAM = "application/octet-stream".toMediaType()
 private val json = Json { ignoreUnknownKeys = true }
 
+/**
+ * [createdTime] is Drive's own metadata, RFC 3339 (`2026-01-01T12:00:00.000Z`)
+ * -- null only for a caller that never requested it in `fields=`, which none
+ * of [DriveApi]'s calls do anymore as of slice 9f: [DriveCompactor] needs it
+ * to judge an op file's age against the grace period and a snapshot file's
+ * age against the staleness check, and there is no cost to always asking for
+ * one more field on a request this class already makes.
+ */
 @Serializable
-internal data class DriveFile(val id: String, val name: String, val appProperties: Map<String, String> = emptyMap())
+internal data class DriveFile(
+    val id: String,
+    val name: String,
+    val appProperties: Map<String, String> = emptyMap(),
+    val createdTime: String? = null,
+)
 
 @Serializable
 private data class DriveFileList(val files: List<DriveFile> = emptyList(), val nextPageToken: String? = null)
@@ -71,7 +84,7 @@ internal class DriveApi(
                 append(FILES_URL)
                 append("?spaces=appDataFolder")
                 append("&q=").append(encode(query))
-                append("&fields=").append(encode("nextPageToken,files(id,name,appProperties)"))
+                append("&fields=").append(encode("nextPageToken,files(id,name,appProperties,createdTime)"))
                 append("&pageSize=1000")
                 pageToken?.let { append("&pageToken=").append(encode(it)) }
             }
@@ -97,7 +110,7 @@ internal class DriveApi(
         return json.decodeFromString<DriveFile>(response).id
     }
 
-    /** Permanently removes a file. No caller in this repo yet -- compaction (slice 9f) is the one this exists for. */
+    /** Permanently removes a file. [DriveCompactor] (slice 9f) is the only caller -- an op file folded into a snapshot, or a losing election claim. */
     suspend fun delete(fileId: String) {
         executeBytes(Request.Builder().url("$FILES_URL/$fileId").delete())
     }

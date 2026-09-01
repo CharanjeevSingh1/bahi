@@ -6,6 +6,8 @@ import dev.charanjeev.bahi.core.model.SyncOp
 import dev.charanjeev.bahi.core.sync.SyncTransport
 import dev.charanjeev.bahi.core.sync.SyncTransportContractTest
 import dev.charanjeev.bahi.core.sync.oauth.AuthorizationOutcome
+import java.time.Duration
+import java.time.Instant
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.runTest
 import okio.Buffer
@@ -93,8 +95,46 @@ class DriveTransportTest : SyncTransportContractTest() {
     }
 
     @Test
-    fun `snapshot is always empty -- no writer of one exists until compaction lands`() = runTest {
+    fun `snapshot is empty when nothing has ever compacted`() = runTest {
         assertThat(transport().snapshot().horizon).isEmpty()
+    }
+
+    /**
+     * The seam this class and [DriveCompactor] (slice 9f) meet at: this test
+     * never touches [DriveCompactor] directly (see [DriveCompactorTest] for
+     * that), it only proves the file [DriveCompactor] writes is exactly what
+     * [DriveTransport.snapshot] reads -- the two classes agree on the wire
+     * format ([dev.charanjeev.bahi.core.sync.crypto.OpBatchCipher]'s
+     * `encryptSnapshot`/`decryptSnapshot`) and the tag (`kind=snapshot`,
+     * `n=<seq>`) without one importing the other's internals.
+     */
+    @Test
+    fun `snapshot reflects what a DriveCompactor round actually wrote`() = runTest {
+        // Files are stamped at a fixed instant and DriveCompactor is handed a
+        // clock a day past it, rather than relying on real elapsed time, so
+        // this test doesn't depend on the compaction grace period racing the
+        // wall clock the test happens to run under.
+        val pushedAt = Instant.parse("2026-01-01T00:00:00Z")
+        val drive = InMemoryFakeDrive(clock = { pushedAt })
+        val keyStore = FakeSyncEncryptionKeyStore()
+        val auth = FakeDriveAuthorization()
+        val compactor = DriveCompactor(
+            auth,
+            keyStore,
+            FakeCallFactory(drive::handle),
+            deviceId = "device-a",
+            electionWaitMillis = 0L,
+            clock = { pushedAt.plus(Duration.ofDays(1)) },
+        )
+        compactor.electIfNeeded()
+        repeat(60) { i ->
+            DriveTransport(auth, keyStore, FakeCallFactory(drive::handle), Dispatchers.Unconfined).push(batch(seq = i + 1L))
+        }
+        compactor.compact()
+
+        val snapshot = transport(drive = drive, keyStore = keyStore).snapshot()
+
+        assertThat(snapshot.horizon).containsExactly("device-a", 60L)
     }
 
     @Test

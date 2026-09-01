@@ -2,6 +2,8 @@ package dev.charanjeev.bahi.core.sync.crypto
 
 import com.google.common.truth.Truth.assertThat
 import dev.charanjeev.bahi.core.model.OpBatch
+import dev.charanjeev.bahi.core.model.RemoteSnapshot
+import dev.charanjeev.bahi.core.model.SnapshotRow
 import dev.charanjeev.bahi.core.model.SyncOp
 import dev.charanjeev.bahi.core.model.SyncTable
 import kotlinx.serialization.json.JsonPrimitive
@@ -12,7 +14,8 @@ import org.junit.Test
 /**
  * The "pure byte-transform" half of slice 9c (docs/sync-design.md §13): no
  * `SyncTransport` involved, ciphertext round-trips through [OpBatchCipher]
- * alone.
+ * alone. The `snapshot()`-prefixed tests cover the widening slice 9f added --
+ * see [OpBatchCipher]'s class doc.
  */
 class OpBatchCipherTest {
 
@@ -81,6 +84,47 @@ class OpBatchCipherTest {
             OpBatchCipher.decrypt(envelope, key)
         }
     }
+
+    @Test
+    fun `a snapshot round-trips through encryptSnapshot then decryptSnapshot unchanged`() {
+        val snapshot = snapshot()
+
+        val envelope = OpBatchCipher.encryptSnapshot(snapshot, key)
+        val decrypted = OpBatchCipher.decryptSnapshot(envelope, key)
+
+        assertThat(decrypted).isEqualTo(snapshot)
+    }
+
+    @Test
+    fun `a snapshot envelope is not the plaintext either`() {
+        val envelope = OpBatchCipher.encryptSnapshot(snapshot(), key)
+
+        assertThat(envelope[0]).isEqualTo(OpBatchCipher.ENVELOPE_VERSION)
+        assertThat(String(envelope, Charsets.ISO_8859_1)).doesNotContain("row-1")
+    }
+
+    @Test
+    fun `decrypting a snapshot envelope with the wrong key fails loudly rather than returning garbage`() {
+        val envelope = OpBatchCipher.encryptSnapshot(snapshot(), key)
+        val wrongKey = PassphraseKeyDerivation.derive("a different passphrase entirely".toCharArray(), PassphraseKeyDerivation.newSalt())
+
+        assertThrows(WrongPassphraseException::class.java) {
+            OpBatchCipher.decryptSnapshot(envelope, wrongKey)
+        }
+    }
+
+    private fun snapshot() = RemoteSnapshot(
+        horizon = mapOf("device-a" to 5L),
+        rows = listOf(
+            SnapshotRow(
+                table = SyncTable.TRANSACTIONS.tableName,
+                rowId = "row-1",
+                remoteRevision = 5,
+                updatedAt = 1_000,
+                payload = buildJsonObject { put("amount_minor", JsonPrimitive(-500)) },
+            ),
+        ),
+    )
 
     private fun batch() = OpBatch(
         deviceId = "device-a",

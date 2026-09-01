@@ -25,8 +25,11 @@ enforces, because CI is precisely what cannot exercise these rows.
 | Two devices compacting within the election window (§8.3, D13) -- forced by racing two emulators against one throwaway account | — | — |
 | A device whose cursor predates the horizon takes the reconciliation path against real Drive data | — | — |
 
-Empty because none of this is built yet, except the first row, which is
-automated but has never been run against a real account by this repository's
-own history -- filled in as M4b's slices land and are actually exercised, the
-same way `docs/sync-design.md` §13's own slice list only marks a row "done"
-once it is checked, not once it is planned.
+Empty because none of these rows has ever actually been run against a real
+account by this repository's own history -- filled in as they're exercised,
+the same way `docs/sync-design.md` §13's own slice list only marks a row
+"done" once it is checked, not once it is planned. `DriveTransport` (slice
+9e) and `DriveCompactor` (slice 9f) are both built now, so every row down
+through "a device whose cursor predates the horizon..." has real code behind
+it to exercise -- the "--"s are honest about verification history, not about
+whether there is anything yet to verify.

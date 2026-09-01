@@ -2907,7 +2907,9 @@ questions into decisions (D9, D12, D13).
      writes one, would be guessing both sides of a contract that slice hasn't
      set yet. This still satisfies `SyncTransportContractTest`'s only check
      on this method (`snapshot of a transport nothing has compacted has an
-     empty horizon`) exactly.
+     empty horizon`) exactly. **No longer true as of 9f:** `snapshot()` now
+     reads the real `kind=snapshot` file `DriveCompactor` writes; see that
+     slice's entry.
 
      **`SyncModule` still binds `DisabledSyncTransport` unconditionally.**
      `DriveTransport` exists, fully implemented and tested, but nothing
@@ -2943,10 +2945,113 @@ questions into decisions (D9, D12, D13).
        has the full reasoning; docs/sync-setup.md has the developer-facing
        setup steps for both this and 9d's OAuth client (also corrected
        there — see that document).
-   - **9f — Compaction** (§8.3, D13). `compaction/owner.json` election, the
-     snapshot write-then-delete sequence, the grace period and threshold
-     trigger from §8.3's original mitigation list, and the Settings takeover
-     affordance for a lost elected device.
+   - **9f — Compaction** (§8.3, D13). **Done.** `DriveCompactor`
+     (`core/sync/drive/`): D13's single-elected-compactor, the snapshot
+     write-then-delete sequence, and the grace period and threshold trigger
+     from §8.3's original mitigation list. Tested entirely against
+     `InMemoryFakeDrive`, the same offline fake `DriveTransportTest` already
+     used — this is the piece that makes compaction's correctness checkable
+     by CI on every push rather than something only a manual `driveTest` run
+     against a real account could exercise, which is what made it worth
+     building this way rather than deferring it to a manual-only proof the
+     way `DriveTransportContractTest` had to be for the transport itself.
+
+     **Election.** `electIfNeeded()` implements D13's claim-then-verify: no
+     `owner.json`-equivalent (a single `kind=owner` file, `appProperties`
+     carrying `deviceId`/`claimedAt` rather than a JSON body — consistent with
+     how `DriveTransport` already tags `ops`/`salt` files, so `DriveCompactor`
+     never needs to download a file's content just to learn who claimed it)
+     means this device claims it, waits, then keeps only the
+     lexicographically-lowest `deviceId` among whatever now exists — the same
+     tiebreak shape §5.5's conflict resolver already uses, reused rather than
+     invented fresh. Once any owner file exists, every later call is a single
+     `list` and a string comparison: no wait, no write, which is what makes
+     election "once per install" true in code and not just in the design
+     prose. The wait itself (`electionWaitMillis`, default 30 000 like D13
+     specifies) is a constructor parameter, not a fixed constant — no test in
+     this repo can afford a real 30-second wait per case, and the number
+     being unable to change per call site would have meant either that or a
+     slow suite.
+
+     **"Election has to work when the elected device is simply gone" — it
+     does not, on purpose, and that is what `isStale`/`takeOver` are for.**
+     `electIfNeeded` alone never re-elects a live-but-abandoned owner file —
+     nothing about a device going quiet deletes its claim, so by design
+     nothing here notices on its own. D13's own answer to that case is the
+     manual Settings affordance, not automatic failover: `isStale()` answers
+     whether it looks abandoned (gated on `TOMBSTONE_HORIZON_DAYS`, "the same
+     horizon constant §7 already names," per D13), and `takeOver()` deletes
+     the current claim and re-runs the identical claim-then-verify dance a
+     first election uses. `DriveCompactorTest` proves this end to end: elect
+     device A, advance the fake clock 91 days, confirm device B's `takeOver`
+     succeeds and device A's own `electIfNeeded` now reports false — the
+     "gone device" scenario, entirely reproducible offline, on every CI run.
+
+     **`isStale` measures compaction, not the claim's age, and says why in
+     its own doc.** The literal question — "has this snapshot been compacted
+     recently" — is answered by the newest snapshot's age once one exists.
+     Before any snapshot exists, claim age alone can't tell a genuinely quiet
+     account (never enough ops to cross the threshold, not stale) from an
+     abandoned one apart, so that branch also requires an actual op-file
+     backlog past the threshold before it will call the case stale. Both
+     branches, and the "quiet account is never flagged" property specifically,
+     are their own tests.
+
+     **Compaction folds forward, not from scratch.** A second and later round
+     reads the previous snapshot (if any) via the new `DriveApi.latestSnapshot`
+     seam shared with `DriveTransport.snapshot()` — the two classes agree on
+     the file (`kind=snapshot`, highest `n`) and the envelope
+     (`OpBatchCipher.encryptSnapshot`/`decryptSnapshot`, this slice's widening
+     of 9c's cipher onto `RemoteSnapshot` as well as `OpBatch` — same
+     envelope format, same failure mode on a wrong key) without one importing
+     the other's internals — and merges newly-eligible op files onto it
+     newest-revision-wins, the same fold `InMemoryTransport.compact()`'s
+     test-only simulation already does for the in-memory case, extended here
+     to not discard history a prior round already compacted away.
+     `DriveCompactorTest` proves this directly: a first round crosses the
+     threshold and writes `snapshot-1`; a second round's snapshot still
+     contains every row the first one did, not just what the second round's
+     own ops touched.
+
+     **Grace period and threshold, both real gates, tested independently of
+     each other.** `DriveApi.list`/`listAll` now request `createdTime` in
+     their `fields=` param (a field they simply hadn't needed until this
+     slice) so `DriveCompactor` can judge an op file's real age against the
+     one-hour grace period rather than approximating it. A round with a
+     large-enough op-file count but every file still within the grace period
+     compacts nothing; a round past the grace period but below the op-file
+     threshold also compacts nothing; and a round with some files past the
+     grace period and some not folds and deletes only the eligible ones,
+     leaving the rest for a later round — `DriveCompactor` deletes exactly
+     what it read, matching §8.3's "delete-exactly-what-I-read" mitigation
+     verbatim, not a coarser "delete everything listed."
+
+     **Write fully before deleting, and re-verify ownership immediately
+     before the delete, not just at the start.** `compact()` checks
+     `isElectedOwner()` once before doing any work and again after the new
+     snapshot has been written but before a single op file is deleted. The
+     second check is defence in depth for the one narrow window D13's own
+     analysis leaves open — a device that believed itself elected during the
+     first-election race and loses the tiebreak partway through a compaction
+     cycle — and the cost of losing that race after already writing is one
+     harmless extra snapshot file, never a wrongly-elected device deleting
+     files it was never entitled to.
+
+     **The Settings takeover affordance is not wired to any screen.**
+     `isStale`/`takeOver` exist and are tested, satisfying D13's requirement
+     that the *logic* exist — what doesn't exist is a button. Wiring one into
+     `:feature:settings` needs a real `DriveCompactor` instance, which needs a
+     real `deviceId`, and nothing in this app generates or persists one yet —
+     the same slice-8/M4b gap `SyncEngine`'s own `deviceId` constructor
+     parameter has named as unresolved since M4a. Inventing a throwaway
+     device identity just to wire one button would be scaffolding this
+     document elsewhere refuses to build ahead of the code that actually
+     needs it (§9e's `SyncModule` binding deferral is the same call, for the
+     same reason). Whatever slice solves device identity — most likely 9g,
+     since `SyncEngine` needs the same answer to get its first caller — is
+     where the Settings screen should pick this up; `DriveCompactor`'s own
+     class doc names this gap in the same place a reviewer reading the code
+     would look for it.
    - **9g — The periodic worker** (§8.7). `PeriodicWorkRequest` at the 4-hour
      cadence, the foreground/Settings-open expedited trigger, the
      transient/terminal failure split, and the last-successful-sync display on

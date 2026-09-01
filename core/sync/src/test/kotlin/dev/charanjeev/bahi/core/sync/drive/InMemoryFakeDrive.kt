@@ -1,5 +1,6 @@
 package dev.charanjeev.bahi.core.sync.drive
 
+import java.time.Instant
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import okhttp3.MultipartReader
@@ -12,15 +13,22 @@ private data class FakeFileMetadata(val name: String, val appProperties: Map<Str
 
 /**
  * A minimal in-process stand-in for Drive's `appDataFolder`, used by
- * [DriveTransportTest] -- [DriveApiTest] already covers request shape in
- * isolation, so this is behaviour, not verification: it actually stores
- * whatever `create` uploads and answers `list`/`get` against that, the same
- * "fakes, not mocks" convention as the rest of this repo's tests, applied to
- * the one seam ([okhttp3.Call.Factory]) that made writing one possible here.
+ * [DriveTransportTest] and [DriveCompactorTest] -- [DriveApiTest] already
+ * covers request shape in isolation, so this is behaviour, not verification:
+ * it actually stores whatever `create` uploads and answers `list`/`get`
+ * against that, the same "fakes, not mocks" convention as the rest of this
+ * repo's tests, applied to the one seam ([okhttp3.Call.Factory]) that made
+ * writing one possible here.
+ *
+ * [clock] stamps each file's `createdTime` at the moment it's created --
+ * [DriveCompactor]'s grace period and staleness checks are both ages, and a
+ * test asserting on either needs to move time forward without a real
+ * `Thread.sleep`, the same reason [DriveCompactor] itself takes an injectable
+ * clock rather than calling [Instant.now] directly.
  */
-class InMemoryFakeDrive {
+class InMemoryFakeDrive(private val clock: () -> Instant = Instant::now) {
 
-    private data class StoredFile(val id: String, val name: String, val appProperties: Map<String, String>, val content: ByteArray)
+    private data class StoredFile(val id: String, val name: String, val appProperties: Map<String, String>, val content: ByteArray, val createdTime: Instant)
 
     private val files = mutableListOf<StoredFile>()
     private var nextId = 1
@@ -45,7 +53,7 @@ class InMemoryFakeDrive {
         }
         val filesJson = matching.joinToString(",") { file ->
             val propsJson = file.appProperties.entries.joinToString(",") { (k, v) -> "\"$k\":\"$v\"" }
-            """{"id":"${file.id}","name":"${file.name}","appProperties":{$propsJson}}"""
+            """{"id":"${file.id}","name":"${file.name}","appProperties":{$propsJson},"createdTime":"${file.createdTime}"}"""
         }
         return okResponse(request, """{"files":[$filesJson]}""")
     }
@@ -66,7 +74,7 @@ class InMemoryFakeDrive {
         reader.close()
 
         val id = "fake-file-${nextId++}"
-        files += StoredFile(id, metadata.name, metadata.appProperties, content)
+        files += StoredFile(id, metadata.name, metadata.appProperties, content, clock())
         return okResponse(request, """{"id":"$id","name":"${metadata.name}","appProperties":{}}""")
     }
 
