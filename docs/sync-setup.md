@@ -58,3 +58,22 @@ Once that client is registered, tapping "Connect" on the Settings screen's
 Google Drive row (docs/sync-design.md §8.6, slice 9d) walks through Google's
 real consent screen. Nothing in the app calls `SyncEngine.sync` yet, so
 connecting doesn't make anything sync -- that's slice 9g.
+
+## Testing the Drive transport itself (slice 9e)
+
+`DriveTransportContractTest` (docs/sync-design.md §10.5,
+`docs/sync-manual-test-plan.md`) needs its own credentials, separate from the
+app's OAuth client above -- it runs as a plain JVM test with no Android
+runtime, so it exchanges a refresh token for an access token directly over
+HTTP rather than through Play Services. Create `core/sync/drive-test.properties`
+(gitignored):
+
+```properties
+clientId=<a Desktop-type OAuth client id, for a throwaway Google account>
+clientSecret=<its client secret>
+refreshToken=<a refresh token already consented for that account, drive.appdata scope>
+```
+
+Then `./gradlew :core:sync:driveTest`. `DriveTransportContractTest`'s own doc
+comment has the full explanation of why a *Desktop*-type client is what this
+needs (it has a secret; the Android client above deliberately doesn't).

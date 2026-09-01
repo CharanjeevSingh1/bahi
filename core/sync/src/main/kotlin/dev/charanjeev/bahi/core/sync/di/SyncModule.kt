@@ -2,6 +2,7 @@ package dev.charanjeev.bahi.core.sync.di
 
 import dagger.Binds
 import dagger.Module
+import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
 import dev.charanjeev.bahi.core.data.repository.RemoteMerge
@@ -17,6 +18,8 @@ import dev.charanjeev.bahi.core.sync.crypto.KeyWrapper
 import dev.charanjeev.bahi.core.sync.oauth.DriveAuthorization
 import dev.charanjeev.bahi.core.sync.oauth.PlayServicesDriveAuthorization
 import javax.inject.Singleton
+import okhttp3.Call
+import okhttp3.OkHttpClient
 
 @Module
 @InstallIn(SingletonComponent::class)
@@ -36,9 +39,11 @@ interface SyncModule {
     fun bindRemoteMerge(implementation: ConflictResolverRemoteMerge): RemoteMerge
 
     /**
-     * Bound unconditionally -- there is only one `SyncTransport`
-     * implementation to choose between so far, configured or not.
-     * [DisabledSyncTransport]'s own doc has the reasoning.
+     * Bound unconditionally, not behind a `SyncConfiguration.isConfigured`
+     * check, even though `DriveTransport` (slice 9e) exists now --
+     * conditional binding is deferred to slice 9g, on purpose.
+     * [DisabledSyncTransport]'s
+     * own doc has the reasoning.
      */
     @Binds
     @Singleton
@@ -57,4 +62,21 @@ interface SyncModule {
     @Binds
     @Singleton
     fun bindDriveAuthorization(implementation: PlayServicesDriveAuthorization): DriveAuthorization
+}
+
+/**
+ * [Call.Factory], not the concrete [OkHttpClient], is what
+ * [dev.charanjeev.bahi.core.sync.drive.DriveApi] asks for -- the same reason
+ * [DriveAuthorization] is a seam rather than `PlayServicesDriveAuthorization`
+ * itself: a test supplies a fake that implements the same interface without
+ * touching the network. `@Provides`, not `@Binds`, because `OkHttpClient` is
+ * a class this module doesn't own the constructor of.
+ */
+@Module
+@InstallIn(SingletonComponent::class)
+object NetworkModule {
+
+    @Provides
+    @Singleton
+    fun provideCallFactory(): Call.Factory = OkHttpClient()
 }

@@ -3,6 +3,7 @@
 .kotlin/
 local.properties
 sync.properties
+drive-test.properties
 .idea/
 .DS_Store
 build/

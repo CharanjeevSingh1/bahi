@@ -2385,13 +2385,17 @@ the compaction race analysed in §8.3, quota, and token lifecycle — none of
 those are property-of-two-calls facts a contract test is shaped to hold.
 
 **Where it lives, and why CI doesn't run it.** `DriveTransportContractTest`
-sits in `core/sync/src/driveTest/`, a source set CI's `unitTests` and
-`connectedDebugAndroidTest` tasks do not include, gated on a
-`local.properties`-shaped file naming a real OAuth client and a
-pre-authorized refresh token for a throwaway Google account — gitignored,
-never a CI secret, the same reasoning §8.5 gives for the app build itself,
-applied to a test. Run by hand: `./gradlew :core:sync:driveTest`. A fresh
-clone's CI is never blocked by a transport it cannot reach.
+sits in `core/sync/src/driveTest/`, added as a source directory to the `test`
+AndroidSourceSet only when `core/sync/drive-test.properties` exists
+(gitignored, naming a real OAuth client and a pre-authorized refresh token for
+a throwaway Google account — never a CI secret, the same reasoning §8.5
+gives for the app build itself, applied to a test). Absent that file, on a
+fresh clone and on every CI run, the source isn't merely un-run, it is never
+compiled — AGP has no notion of a custom-named test source set, so this adds
+the directory to the existing `test` source set and relies on a
+`driveTest`/`testDebugUnitTest` filter split to keep it out of a routine
+`./gradlew unitTests` even on a machine that does have the file. Run by hand:
+`./gradlew :core:sync:driveTest`. Full setup steps: docs/sync-setup.md.
 
 **The manual test plan, and why "manual" doesn't mean "aspirational."** A
 checklist that exists once and is never re-run is worse than no checklist — it
@@ -2401,27 +2405,17 @@ different artifact. The mitigation is the same shape: the plan is a table, not
 prose, and every row carries a **last-verified date and the commit it was
 verified against**, checked in at `docs/sync-manual-test-plan.md` (linked from
 here rather than duplicated, since it is a living checklist and this document
-is a design record):
-
-| Check | Last verified | Against |
-|---|---|---|
-| Two physical devices converge on a genuine field conflict | — | — |
-| Token refresh survives an app process death mid-sync | — | — |
-| Revoking access from the Google Account page surfaces `NeedsReauthorization` within one cycle | — | — |
-| Quota exhaustion (fill `appDataFolder` deliberately) reports a terminal failure, not an infinite retry | — | — |
-| Two devices compacting within the election window (§8.3, D13) — forced by racing two emulators against one throwaway account | — | — |
-| A device whose cursor predates the horizon takes the reconciliation path against real Drive data | — | — |
-
-Empty because none of this is built yet — filled in as M4b's slices land, the
-same way this document's own slice list (§13) only marks a row "done" once it
-is checked, not once it is planned. **The rule that keeps it honest going
-forward:** any PR touching `:core:sync`'s Drive-facing code re-runs every row
-whose "against" commit is more than one M4b slice old and updates the date,
-and a stale-plan check (every date older than 90 days — the same horizon
-number the rest of this design already uses, for the same "longer than any
-device is plausibly offline" reasoning, not because the two clocks need to
-share a value) is a line item in the M4b release checklist, not a job CI
-enforces, because CI is precisely what cannot exercise these rows.
+is a design record). Empty because none of this is built yet — filled in as
+M4b's slices land, the same way this document's own slice list (§13) only
+marks a row "done" once it is checked, not once it is planned. **The rule
+that keeps it honest going forward:** any PR touching `:core:sync`'s
+Drive-facing code re-runs every row whose "against" commit is more than one
+M4b slice old and updates the date, and a stale-plan check (every date older
+than 90 days — the same horizon number the rest of this design already
+uses, for the same "longer than any device is plausibly offline" reasoning,
+not because the two clocks need to share a value) is a line item in the M4b
+release checklist, not a job CI enforces, because CI is precisely what cannot
+exercise these rows.
 
 ---
 
@@ -2863,11 +2857,92 @@ questions into decisions (D9, D12, D13).
      documented contract rather than on having watched it happen.
      `PlayServicesDriveAuthorization`'s own doc has the same account, in the
      place a future reader is most likely to look for it.
-   - **9e — `DriveTransport` and its contract test** (§10.5). The four REST
-     calls (list/get/create/delete under `appDataFolder`),
-     `DriveTransportContractTest` in the `driveTest` source set, and the
-     manual-test-plan scaffold at `docs/sync-manual-test-plan.md` with every
-     row still unchecked.
+   - **9e — `DriveTransport` and its contract test** (§10.5). Done.
+     `DriveApi` (`core/sync/drive/`) is the four REST calls, list/get/create/
+     delete, all scoped to `appDataFolder`; `DriveTransport` builds `push`/
+     `pull`/`snapshot` on top of it and is the one place in the app that
+     actually calls `OpBatchCipher` — `SyncTransport.push` takes a structured
+     `OpBatch`, not bytes, so encryption can only run where an `OpBatch`
+     first turns into bytes to leave the device, which is here, not above it.
+     A device with no key set up refuses both operations loudly via
+     `DriveTransportException` rather than ever writing or reading plaintext.
+
+     **Does `SyncTransportContractTest` run against Drive? Yes**, exactly as
+     §10.5 committed to: `DriveTransportContractTest` (`core/sync/src/
+     driveTest/`) subclasses it and overrides only `createTransport()`,
+     wiring a real `DriveTransport` against a real, already-authorized
+     throwaway Drive account — the same eight checks `InMemoryTransportTest`
+     runs, with zero new test logic, against the real backend. It is never
+     run by CI: the source directory is only added to the `test`
+     AndroidSourceSet when `core/sync/drive-test.properties` (gitignored)
+     exists, so on a fresh clone the sources aren't merely un-run, they are
+     never compiled. **What stands in for CI, and what doesn't exist to
+     stand in at all:** `DriveTransportTest` — a second, separate subclass of
+     the same `SyncTransportContractTest`, living in the *ordinary* `test`
+     source set — wires `DriveTransport` to `InMemoryFakeDrive`, a
+     hand-written fake `okhttp3.Call.Factory` backend that actually stores
+     and serves files rather than verifying calls happened. It runs on every
+     `unitTests`/CI pass and proves `DriveTransport`'s own logic (cursoring,
+     encryption, appProperties tagging, pagination, error classification)
+     satisfies the contract; it cannot prove anything about eventual
+     consistency, quota, or Drive's real query semantics, which is exactly
+     what `DriveTransportContractTest` exists to check separately and
+     manually. Nothing stands in for a real account at all — that gap is
+     named, not hidden, the same way slice 9d named what a real consent
+     grant could not be verified against.
+
+     **The salt, published unencrypted — `SyncEncryptionKeyStore`'s doc
+     named this as this slice's job, and it's built:** `DriveTransport.
+     publishSalt`/`readPublishedSalt` write and read one small plaintext
+     file, tagged separately from the encrypted op log, so a second device
+     can find the first device's salt instead of being told it by hand. This
+     is additive only: `PassphraseScreen`'s manual pairing-code flow (slice
+     9c) is untouched. Nothing calls `readPublishedSalt` from that screen
+     yet — replacing a pasted code with automatic discovery is a UX decision
+     for whoever picks that up next, deliberately not assumed here.
+
+     **`snapshot()` always returns the empty default.** No writer of a
+     compacted snapshot exists until 9f, which also owns the wire format one
+     would use — inventing that format now, ahead of the code that first
+     writes one, would be guessing both sides of a contract that slice hasn't
+     set yet. This still satisfies `SyncTransportContractTest`'s only check
+     on this method (`snapshot of a transport nothing has compacted has an
+     empty horizon`) exactly.
+
+     **`SyncModule` still binds `DisabledSyncTransport` unconditionally.**
+     `DriveTransport` exists, fully implemented and tested, but nothing
+     constructs it via Hilt yet. This is a deliberate scope line, not an
+     oversight: `SyncEngine` has no caller anywhere in the app until 9g, so a
+     conditional binding today would be reachable by nothing — the same
+     "complete but not yet wired to run" state `SyncEngine` itself has been
+     in since M4a. Making the binding conditional on `SyncConfiguration.
+     isConfigured` is left for 9g, so it can be wired and manually verified
+     together with the code that first actually calls it, rather than
+     sitting inert in between.
+
+     **Two corrections found while building this, neither in the design
+     pass's control:**
+     - OkHttp 5.5.0 (approved mid-session for the HTTP client) turned out to
+       need `compileSdk` 37 for its Android AAR variant — it added Encrypted
+       Client Hello support in that release, gated on Android API 37, and
+       Gradle's AAR-metadata check fails a build compiled against 36 (this
+       repo's setting) rather than silently ignoring it. Checked against
+       OkHttp's own changelog rather than guessed: 5.4.0 predates that
+       requirement and has no other Android-relevant change back to 5.0.0.
+       Pinned to 5.4.0 in `gradle/libs.versions.toml` instead of bumping
+       `compileSdk` project-wide, which would have been a much larger,
+       unrequested footprint for one dependency.
+     - AGP has no supported way to add a custom-named test source set to an
+       Android library module — unlike a plain `java-library` module,
+       `sourceSets` here is AGP's `AndroidSourceSet` container, which only
+       wires compile/test tasks for build-type/variant-shaped names.
+       `driveTest` is instead extra source directories on the *existing*
+       `test` source set, conditionally added, with a `driveTest` task built
+       by hand out of `testDebugUnitTest`'s own already-configured classpath
+       rather than a from-scratch compile task. `core/sync/build.gradle.kts`
+       has the full reasoning; docs/sync-setup.md has the developer-facing
+       setup steps for both this and 9d's OAuth client (also corrected
+       there — see that document).
    - **9f — Compaction** (§8.3, D13). `compaction/owner.json` election, the
      snapshot write-then-delete sequence, the grace period and threshold
      trigger from §8.3's original mitigation list, and the Settings takeover
