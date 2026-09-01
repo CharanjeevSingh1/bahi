@@ -25,6 +25,18 @@ import kotlinx.coroutines.flow.flowOf
 class FakeTransactionRepository : TransactionRepository {
 
     var importAllReturnValue: Int = 0
+
+    /**
+     * Defaults to 0, which is what keeps every test predating slice 9b
+     * passing unchanged: with this at 0, [importAll] attributes every
+     * un-inserted row to `duplicatesSkipped`, exactly the "everything not
+     * inserted is a duplicate" arithmetic the importer itself used to do
+     * before it started trusting the repository's own two counts
+     * (docs/sync-design.md §6.1). A test exercising the split sets this to
+     * carve some of those un-inserted rows out as tombstone collisions
+     * instead.
+     */
+    var previouslyDeletedSkippedReturnValue: Int = 0
     var importAllBatchId: String = "fake-batch-id"
     var lastImportedBatch: List<Transaction> = emptyList()
         private set
@@ -61,7 +73,13 @@ class FakeTransactionRepository : TransactionRepository {
             rows[transaction.id] = transaction
             batchOf[transaction.id] = importAllBatchId
         }
-        return ImportBatchResult(importAllBatchId, inserted.map { it.id })
+        val duplicatesSkipped = transactions.size - inserted.size - previouslyDeletedSkippedReturnValue
+        return ImportBatchResult(
+            batchId = importAllBatchId,
+            insertedIds = inserted.map { it.id },
+            duplicatesSkipped = duplicatesSkipped,
+            previouslyDeletedSkipped = previouslyDeletedSkippedReturnValue,
+        )
     }
 
     var undoImportReturnValue: Int? = null

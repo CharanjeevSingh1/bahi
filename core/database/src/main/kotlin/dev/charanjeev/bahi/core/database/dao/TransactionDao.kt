@@ -2,7 +2,6 @@ package dev.charanjeev.bahi.core.database.dao
 
 import androidx.room.Dao
 import androidx.room.Insert
-import androidx.room.MapColumn
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Transaction
@@ -39,22 +38,24 @@ interface TransactionDao {
     ): Flow<List<TransactionEntity>>
 
     /**
-     * A count per hash, not just presence: two genuinely identical
-     * transactions -- same coffee shop, same amount, twice -- hash the
-     * same, and presence alone can't tell "this exact one was already
-     * imported" from "one of these was, the other wasn't." See
-     * [importBatch] for how the count is used.
+     * Every existing row sharing a hash with an incoming import row, not just
+     * a count: two genuinely identical transactions -- same coffee shop, same
+     * amount, twice -- hash the same, and a bare count can't tell "this exact
+     * one was already imported" from "one of these was, the other wasn't,"
+     * the reason [importBatch] needs a count at all. [ExistingHashRow.deletedAt]
+     * is the newer reason: a live row and a tombstoned row used to consume
+     * the same quota unit and be reported identically as "duplicate," which
+     * made deleting a transaction and later re-importing it to get it back
+     * silently do nothing (docs/sync-design.md §6.1). See [importBatch] for
+     * how the two are told apart.
      */
     @Query(
         """
-        SELECT content_hash, COUNT(*) AS existing_count FROM transactions
+        SELECT content_hash, id, deleted_at FROM transactions
         WHERE content_hash IN (:hashes)
-        GROUP BY content_hash
         """,
     )
-    suspend fun countExistingHashes(
-        hashes: List<String>,
-    ): Map<@MapColumn(columnName = "content_hash") String, @MapColumn(columnName = "existing_count") Int>
+    suspend fun existingRowsByHash(hashes: List<String>): List<ExistingHashRow>
 
     /**
      * Expense spending in a date window that is filed under no category at
@@ -521,17 +522,29 @@ interface TransactionDao {
      * relative to an earlier import, this can drop the wrong one and
      * re-insert a duplicate of the wrong one instead -- the total row count
      * would still look right, which is what would make it easy to miss.
+     *
+     * Which existing row a quota unit is consumed against, when a hash has
+     * several, is arbitrary -- list order out of [existingRowsByHash] --
+     * exactly as arbitrary as it was when the quota was a bare count and a
+     * duplicate simply "matched" one of them (docs/sync-design.md §6.1).
+     * Nothing here needs to prefer a tombstoned match over a live one or vice
+     * versa; it only needs to record which kind was matched.
      */
     @Transaction
-    suspend fun importBatch(transactions: List<TransactionEntity>): List<String> {
-        val remainingExisting = countExistingHashes(transactions.map { it.contentHash }).toMutableMap()
+    suspend fun importBatch(transactions: List<TransactionEntity>): ImportBatchOutcome {
+        val remainingExisting = existingRowsByHash(transactions.map { it.contentHash })
+            .groupByTo(mutableMapOf()) { it.contentHash }
+            .mapValuesTo(mutableMapOf()) { (_, rows) -> ArrayDeque(rows) }
+
+        var duplicatesSkipped = 0
+        var previouslyDeletedSkipped = 0
         val fresh = transactions.filter { transaction ->
-            val remaining = remainingExisting.getOrDefault(transaction.contentHash, 0)
-            if (remaining > 0) {
-                remainingExisting[transaction.contentHash] = remaining - 1
-                false
-            } else {
-                true
+            when (val matched = remainingExisting[transaction.contentHash]?.removeFirstOrNull()) {
+                null -> true
+                else -> {
+                    if (matched.deletedAt != null) previouslyDeletedSkipped++ else duplicatesSkipped++
+                    false
+                }
             }
         }
         // Which rows were written, not merely how many. Auto-categorisation
@@ -546,8 +559,16 @@ interface TransactionDao {
         // exactly when the stable-order assumption in this doc is violated,
         // and is the only place a violation is visible at all. The quota
         // stays the de-duplication mechanism; this is the net under it, not
-        // a second one.
+        // a second one. Counted into duplicatesSkipped, not a third bucket:
+        // a row the quota missed but the insert still caught collided with a
+        // live id by construction (the quota above already claimed every
+        // tombstoned match), so it is a duplicate the same way, just caught
+        // one step later.
         val rowIds = insertAllIgnoringConflicts(fresh)
-        return fresh.filterIndexed { index, _ -> rowIds[index] != -1L }.map { it.id }
+        val insertedIds = mutableListOf<String>()
+        fresh.forEachIndexed { index, transaction ->
+            if (rowIds[index] != -1L) insertedIds += transaction.id else duplicatesSkipped++
+        }
+        return ImportBatchOutcome(insertedIds, duplicatesSkipped, previouslyDeletedSkipped)
     }
 }

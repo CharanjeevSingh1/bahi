@@ -17,7 +17,7 @@ Most of my production Android work — mobile banking on the Backbase platform, 
 Two problems here are genuinely hard and get the most attention:
 
 1. **CSV import** — inferring column mappings across bank exports that disagree about column order, date format, debit sign convention, and whether the file even starts with a header row. See [`docs/csv-import-design.md`](docs/csv-import-design.md) for the inference design.
-2. **Sync conflict resolution** — two devices that were both offline, both edited overlapping state, and now have to agree. Per-field resolution against a stored merge base, because last-write-wins on a whole row silently discards the category the user set on their phone while their tablet was offline. There is no authoritative side to defer to — no server decides, and no bank is involved; both devices are peers, and the merge has to be right without one. The engine, the resolver, the two-device convergence suite and the Settings screen that surfaces a conflict and lets a discarded value be restored are all built and proven on CI with no network. See [`docs/sync-design.md`](docs/sync-design.md) and **M4a** in the [Roadmap](#roadmap).
+2. **Sync conflict resolution** — two devices that were both offline, both edited overlapping state, and now have to agree. Per-field resolution against a stored merge base, because last-write-wins on a whole row silently discards the category the user set on their phone while their tablet was offline. There is no authoritative side to defer to — no server decides, and no bank is involved; both devices are peers, and the merge has to be right without one. The engine, the resolver and the two-device convergence suite are proven on CI with no network (M4a); a Google Drive transport, OAuth, end-to-end encryption and a periodic background worker carry that engine's operations between devices and give it its first real caller, with a Settings screen that surfaces a real conflict and lets a discarded value be restored (M4b) — proven against an in-memory fake Drive the same way M4a needs no network, not yet against a real Drive account. See [`docs/sync-design.md`](docs/sync-design.md) and **M4a**/**M4b** in the [Roadmap](#roadmap).
 
 <p align="center">
   <img src="docs/screenshots/transactions.png" width="320" alt="Transaction list grouped by date">
@@ -113,6 +113,8 @@ This simplified diagram is derived from that same generated data (`renderSimplif
 | Data | Repository behaviour against fakes, not mocks | `core/data/src/test` |
 | Room | Migrations run against the previous schema | `core/database/src/androidTest` |
 | Import inference | Column-mapping inference against real-world CSV fixtures (ambiguous dates, no header, mixed amount formats) | `core/importer/src/test` |
+| Sync convergence | Two real `SyncEngine`s, two real Room databases, one in-process transport -- every row of the conflict matrix plus a property test over random operation orderings. No network. | `core/sync/src/androidTest` |
+| Drive transport (manual) | `DriveTransportContractTest` against a real Google Drive account -- not run in CI; no credentials exist in this environment | `./gradlew :core:sync:driveTest`, [`docs/sync-setup.md`](docs/sync-setup.md) |
 | ViewModel | State emission with Turbine + `TestDispatcher` | `feature/*/src/test` |
 | Compose | Screen states driven from the stateless composable | `feature/*/src/androidTest` |
 | Build | Feature-to-feature dependencies fail the build | `./gradlew checkModuleBoundaries` |
@@ -143,8 +145,8 @@ cd bahi
 - [x] **M2** — CSV import: column-mapping inference, preview, de-duplication
 - [x] **M3** — Budgets and rule-based auto-categorisation
 - [x] **M4a** — Row-level sync, the convergence engine: per-field merge against a stored base, proven by running two engines over two databases and a fake transport in one process. No network. [`docs/sync-design.md`](docs/sync-design.md)
-- [ ] **M5** — Insights, baseline profile, Macrobenchmark startup numbers
-- [ ] **M4b** — *Deferred, not next.* The transport that carries M4a's operations between devices. Deferred because the hard part is not in it: convergence is decided on-device, and M4a proves that on CI with no credentials, whereas M4b is OAuth, quota, key management and a compaction step with no compare-and-swap.
+- [x] **M4b** — The transport that carries M4a's operations between devices: Google Drive as an encrypted append-only op log, OAuth, an elected-compactor step, and the periodic worker that gives `SyncEngine` its first real caller. Everything is proven against `InMemoryTransport`/an in-memory fake Drive, the same way M4a proves convergence with no network — no real Drive account has run this app yet, stated plainly rather than left to be inferred. [`docs/sync-design.md`](docs/sync-design.md)
+- [ ] **M5** — **Insights done** — category breakdown, spending trend, over-budget list (`:feature:insights`). Baseline profile and Macrobenchmark startup numbers still pending.
 
 ---
 

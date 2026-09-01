@@ -58,6 +58,7 @@
     <string name="import_result_new_one">1 new transaction</string>
     <string name="import_result_new">%1$d new transactions</string>
     <string name="import_result_duplicates">%1$d already imported, skipped</string>
+    <string name="import_result_previously_deleted">%1$d previously deleted, not re-added</string>
     <string name="import_result_failed">%1$d row(s) couldn\'t be read</string>
     <string name="import_result_location">They\'re in your transaction list now.</string>
     <string name="import_result_undo_button">Undo import</string>

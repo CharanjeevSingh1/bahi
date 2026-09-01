@@ -151,6 +151,7 @@ class ImportViewModel @Inject constructor(
         savedStateHandle[KEY_RESULT_BATCH_ID] = result.batchId
         savedStateHandle[KEY_RESULT_NEW_COUNT] = result.newCount
         savedStateHandle[KEY_RESULT_DUPLICATES_SKIPPED] = result.duplicatesSkipped
+        savedStateHandle[KEY_RESULT_PREVIOUSLY_DELETED_SKIPPED] = result.previouslyDeletedSkipped
         savedStateHandle[KEY_RESULT_FAILED_ROW_COUNT] = result.failedRowCount
         savedStateHandle[KEY_RESULT_UNDONE_COUNT] = result.undoneCount
         _uiState.value = result
@@ -162,6 +163,7 @@ class ImportViewModel @Inject constructor(
             batchId = batchId,
             newCount = savedStateHandle[KEY_RESULT_NEW_COUNT] ?: 0,
             duplicatesSkipped = savedStateHandle[KEY_RESULT_DUPLICATES_SKIPPED] ?: 0,
+            previouslyDeletedSkipped = savedStateHandle[KEY_RESULT_PREVIOUSLY_DELETED_SKIPPED] ?: 0,
             failedRowCount = savedStateHandle[KEY_RESULT_FAILED_ROW_COUNT] ?: 0,
             undoneCount = savedStateHandle[KEY_RESULT_UNDONE_COUNT],
         )
@@ -225,6 +227,7 @@ class ImportViewModel @Inject constructor(
         const val KEY_RESULT_BATCH_ID = "importResultBatchId"
         const val KEY_RESULT_NEW_COUNT = "importResultNewCount"
         const val KEY_RESULT_DUPLICATES_SKIPPED = "importResultDuplicatesSkipped"
+        const val KEY_RESULT_PREVIOUSLY_DELETED_SKIPPED = "importResultPreviouslyDeletedSkipped"
         const val KEY_RESULT_FAILED_ROW_COUNT = "importResultFailedRowCount"
         const val KEY_RESULT_UNDONE_COUNT = "importResultUndoneCount"
     }

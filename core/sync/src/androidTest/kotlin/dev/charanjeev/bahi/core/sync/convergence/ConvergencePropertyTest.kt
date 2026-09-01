@@ -6,11 +6,13 @@ import com.google.common.truth.Truth.assertWithMessage
 import dev.charanjeev.bahi.core.model.Money
 import dev.charanjeev.bahi.core.model.YearMonth
 import dev.charanjeev.bahi.core.model.budgetIdFor
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.Test
 import org.junit.runner.RunWith
 import kotlin.random.Random
+import kotlin.time.Duration.Companion.minutes
 
 /**
  * docs/sync-design.md §10.3: scripted scenarios test the cases someone
@@ -42,17 +44,39 @@ import kotlin.random.Random
  * this split named as the piece still owed. Each seed is deterministic and
  * reproducible regardless of count: a failure names the seed, and re-running
  * [runSeed] with just that number reproduces it with no other state.
+ *
+ * The whole loop runs inside one `runTest`, so it is one coroutine subject to
+ * `runTest`'s own watchdog -- not a per-seed budget. The 10-minute `timeout`
+ * on [seeds_convergeToTheSameDatabase] was set by measuring, not guessing:
+ * 1,000 seeds took ~132s of actual test-body wall-clock time (the JUnit
+ * report's `time=` attribute, not the surrounding Gradle/install overhead)
+ * on a local emulator, so 10 minutes is ~4.5x headroom against CI hardware
+ * being slower. This is a real-device measurement, not virtual time --
+ * [TwoDeviceHarness] builds real Room databases per seed, so nothing here is
+ * skippable the way `delay()` is under `runTest`. **The trap:** raising
+ * [DEFAULT_SEED_COUNT] or the nightly `-PseedCount` further does not just
+ * mean "more seeds" -- it also means re-measuring throughput and moving this
+ * timeout, or a genuine hang and 1,000 seeds simply running past the budget
+ * become indistinguishable failures.
  */
 @RunWith(AndroidJUnit4::class)
 class ConvergencePropertyTest {
 
     @Test
-    fun seeds_convergeToTheSameDatabase() = runTest {
+    fun seeds_convergeToTheSameDatabase() = runTest(timeout = 10.minutes) {
         val seedCount = configuredSeedCount()
         val failures = mutableListOf<String>()
         for (seed in 1..seedCount) {
             try {
                 runSeed(seed)
+            } catch (e: CancellationException) {
+                // Not a per-seed failure: runTest's own watchdog cancelling this body on
+                // timeout also surfaces as a CancellationException here. Swallowing it
+                // let one real infrastructure failure (the loop ran out of time) replay
+                // as a fabricated failure for every seed from here to seedCount, burying
+                // whatever seed actually mattered under noise. Let it propagate so a
+                // timeout fails loudly, once, as itself.
+                throw e
             } catch (e: Throwable) {
                 failures += "seed $seed: ${e.message}"
             }

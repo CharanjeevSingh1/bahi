@@ -203,6 +203,11 @@ slice 9 below is a sketch of what the transport will have to do, not a queued
 piece of work. Everything M4a builds is transport-agnostic by construction, so
 deferring it costs nothing but the ability to actually sync two phones.
 
+**Superseded.** M4b was taken up on the `m4b-transport` branch and is done as
+of slice 9h (§13) — the sketch below became the queued piece of work this
+paragraph said it wasn't. Left as written for the history of the decision;
+§13's slice 9 entry and the README roadmap carry the current status.
+
 ---
 
 ## 3. Identity: the problem that comes before conflict resolution
@@ -1175,6 +1180,26 @@ reading later was the only order that worked at all. Same argument
 csv-import-design §11.1 makes for `import_batch_id` and budgets-design §4.1 for
 putting sync columns on tables before sync exists.
 
+**The screen slice 8 built still has no live data path.** `sync_conflicts` is
+written from exactly one place — `SyncApplier`'s conflict-recording path,
+driven by `ConflictResolver` — and nothing in the app calls it. `SyncEngine`
+has no caller anywhere (the comment at the top of `SettingsViewModel` says so
+directly), because M4a stops before M4b's transport exists. There's also no
+way to hand-seed the table to see the populated state for real: the release
+build stays debug-signed (see the convention plugin comment) but is not
+`isDebuggable`, so `run-as`/`adb shell` writes into its Room database aren't
+possible either, and the debug build has no sync running to produce a genuine
+row. `SettingsScreenTest` and the `SettingsViewModel` tests exercise the
+populated and restore-flow states entirely against `FakeSyncConflictRepository`
+— real behaviour, never real data. That's fine for M4a, whose deliverable is
+the convergence suite, not this screen (§2) — but it means **M4b inherits an
+unusual bug surface**: the first conflict a real two-device sync ever produces
+will also be this screen's first render against a non-fake row, seen by nobody
+until then. Whatever the fakes didn't think to cover — a `chosenValue`/
+`discardedValue` shape the resolver never actually emits, a `reason` string
+that doesn't wrap where the fakes' did, a `table_name` the tests never fed it —
+surfaces for the first time on that render, not before.
+
 **Three things delete a row. Nothing else does.**
 
 1. **Superseding.** At most one *unacknowledged* conflict per (table, row,
@@ -1242,6 +1267,66 @@ should surface that in the import result ("12 rows were previously deleted and
 were not re-added"), which is the same "show it rather than bury it" shape
 `ImportResult.duplicatesSkipped` already has. It is a slice-9 item, not a reason
 to reject §3.1.
+
+**Design, since it's now due (§13 slice 9b).** `duplicatesSkipped` cannot
+distinguish the two cases today, and the reason is checkable rather than
+assumed: `TransactionDao.countExistingHashes` has no `deleted_at IS NULL`
+condition —
+
+```sql
+SELECT content_hash, COUNT(*) AS existing_count FROM transactions
+WHERE content_hash IN (:hashes)
+GROUP BY content_hash
+```
+
+— so a tombstoned row's hash consumes the same quota unit as a live one in
+`importBatch`'s count-aware filter (§4). A row that collides with a tombstone
+is filtered out of `fresh` before insert is ever attempted, and is counted as
+an ordinary duplicate. **That is wrong on a single device with no sync anywhere
+near it**: a user deletes a coffee, re-imports the statement a month later
+meaning to get it back, and the import result says "1 duplicate skipped" —
+indistinguishable from the case where the transaction was never deleted. Sync
+makes it worse (above) but does not create it.
+
+The fix splits the quota by status rather than only counting it.
+`countExistingHashes` becomes `existingRowsByHash`, returning
+`(contentHash, id, deletedAt)` rather than a bare count — the DAO already has
+to know which specific rows it is counting to answer this; a count alone
+throws that away. `importBatch`'s quota consumption tags each unit taken as
+`LIVE` or `TOMBSTONED` (which specific row within a hash's matches gets tagged
+first is arbitrary here, the same way it's already arbitrary which existing
+row a duplicate "matches" today — nothing in this design needs to prefer one
+tombstoned row over another). The result carries two counts instead of one:
+`duplicatesSkipped` narrows to mean "collided with a live row," and a new
+`previouslyDeletedSkipped` counts the tombstoned collisions:
+
+```kotlin
+data class ImportResult(
+    val imported: List<Transaction>,
+    val duplicatesSkipped: Int,
+    val previouslyDeletedSkipped: Int,
+    val failedRows: List<FailedRow>,
+    val batchId: String,
+    val autoCategorisedCount: Int = 0,
+)
+```
+
+The import result screen gains one line, shown only when the count is
+nonzero, in the same register as the existing summary: "12 rows were
+previously deleted and were not re-added." **No restore affordance rides
+along with it.** Offering one would mean guessing at intent the app has no way
+to check — a row a user deliberately deleted and a row they want back produce
+the identical signal, a content-hash match against a tombstone — and
+`duplicatesSkipped` doesn't get an undo button either. Counting and naming it
+is the whole of what this line does; a user who wants the row back already has
+the transaction list's own restore path for a specific row, once they know to
+look for it.
+
+This is entirely local — no transport, no `SyncEngine` — and testable in
+`:core:importer` and `:core:database` today, so it does not have to wait on
+the rest of M4b. It is grouped with the transport slices in §13 because the
+scenario that surfaced it (§6.1) is a cross-device one, but nothing about the
+fix itself is.
 
 ### 6.2 Does M4 trip budgets-design §2.2?
 
@@ -1565,7 +1650,9 @@ Shape:
 `UserPreferencesDataSource.lastSyncCursor` is a single `String?` today. It has to
 become a per-device map (`{deviceId: seq}`), because "everything after cursor X"
 is not expressible as one number across independently-appending writers. That is
-a DataStore key change, not a schema change.
+a DataStore key change, not a schema change. **Done, as of slice 9g's
+cursor-persistence follow-up (§13):** `syncCursor` now holds exactly this,
+JSON-encoded under the same `last_sync_cursor` key.
 
 **The biggest unfixed risk in M4b, named rather than buried:** compaction has no
 compare-and-swap. Two devices compacting at the same time can each write a
@@ -1577,6 +1664,87 @@ device verify after compaction that its own last-pushed sequence still resolves.
 correct solution needs a lock the storage doesn't offer. If this turns out to bite
 in practice, it is the strongest single argument for option A, and the engine
 from M4a moves across unchanged — which is the point of the split.
+
+**M4b design pass, 2026-09-01 — quantifying the risk named above, since
+building the transport means this needs an answer rather than a hedge.**
+
+*What Drive actually offers, checked against the API v3 reference rather than
+assumed.* Files have an `id`, an `md5Checksum`, and a revision history, but
+`files.update` exposes no conditional-write precondition — nothing analogous
+to S3's `If-Match` or Cloud Storage's `ifGenerationMatch`. There is no way to
+ask Drive "write this content only if the file is still at the revision I last
+read." The revisions resource lets a caller inspect history *after* the fact;
+it does not let one guard a write *before* it happens. And listing
+(`files.list` against `appDataFolder`) carries no documented consistency
+SLA — Google states no bound on how quickly a create or delete by one session
+is reflected in a `list` call from another. The honest answer to "does Drive
+give us enough" is no, on both axes this needed: no compare-and-swap, and no
+guaranteed-fresh listing to fall back to instead.
+
+*The failure mode, worked through rather than asserted.* Naively, "delete only
+the exact file ids I just folded into my own snapshot" — not a re-query by
+watermark — removes the most obvious version of the race for free: a device
+that lists, builds `snapshot/<n>.json`, and deletes precisely the ids it read
+never touches a file pushed after its listing, because that file has a
+different id and was never in its delete set. The race that survives needs two
+devices compacting independently, close enough together that their listings
+diverge — device A's listing misses an op file device B's includes, or the
+reverse, plausible under "no consistency SLA," not exotic. A produces
+`snapshot/5.json` with a smaller horizon; B, moments later, produces
+`snapshot/6.json` with a larger horizon that supersets A's. B's delete step is
+correct *by B's own accounting* — every file it deletes is one it folded into
+`snapshot/6.json`. The loss shows up one level away: a reader calling
+`snapshot()` has no principled way to know `snapshot/6.json` supersedes
+`snapshot/5.json` rather than being a sibling — `n` is assigned locally by
+whichever device compacts, not by anything that enforces a total order, so two
+devices computing it from their own stale listings can produce values in
+either order or even collide. A reader that picks the wrong one is not merely
+looking at stale data (recoverable next cycle): if it picks `snapshot/5.json`
+and the op file that only `snapshot/6.json`'s horizon accounts for has already
+been deleted by B, that op is gone — not in the chosen snapshot's content, and
+its raw file no longer exists. That is the concrete shape of "ops can be
+lost," not a gesture at concurrency in general.
+
+*Does it bite, in this app specifically.* The window needs several unlikely
+things stacked: two of a 2–3 device household compacting within Drive's
+(unbounded, undocumented) listing-propagation delay of each other, with their
+listings actually diverging in that window, and a reader subsequently
+preferring the smaller-horizon snapshot. Compaction is opportunistic and
+threshold-triggered, not scheduled, so two devices crossing the threshold at
+the same moment needs a specific prior history — both offline together, then
+both catching up at once, which is exactly the "tablet in a drawer for a
+season" scenario §7 already sizes the tombstone horizon against. Not exotic;
+not the common case either. **It can bite, rarely, and only in that specific
+window** — and given that, this design does not ship it as a
+mitigated-but-still-live risk the way the paragraph above originally left it.
+It closes the window structurally instead.
+
+**Decision: only one device ever compacts.** A single, long-lived
+`compaction/owner.json` file (`{deviceId, claimedAt}`) is the elected
+compactor. On first sync, a device that finds no owner file writes one
+claiming itself, waits a short window (30 seconds — comfortably longer than
+any plausible listing-propagation delay, cheap because election happens once
+per install rather than every cycle), re-reads the owner file, and proceeds
+only if it still names itself; if it now names a different device, it defers
+permanently and never compacts. Every other device checks the owner file
+before compacting and, if it isn't the named device, never attempts to. This
+does not eliminate the race — claim-then-verify is the same unguaranteed
+read-after-write this whole analysis is about, so two devices can still both
+believe they won a simultaneous first claim — but it collapses "can happen on
+every compaction, indefinitely, for the life of the app" into "can happen
+once, at first-sync election, and never again after." A false double-election
+at that single moment is also lower stakes than the general case: there is no
+prior snapshot for the two claimants to disagree about yet, so the worst case
+is two owner files racing (resolved by both sides independently computing the
+same tiebreak — lexicographically-lower `deviceId` wins, the same
+"deterministic so it converges" shape §5.5's tiebreak already uses) rather
+than two *snapshots* with divergent horizons. The cost is a single point of
+staleness if the elected device is lost or stops running — compaction simply
+stops, which is safe by the same argument D8 already makes about the tombstone
+horizon: under-compacting wastes storage, it does not lose data — and needs a
+manual takeover: a Settings affordance, "no device has compacted in 90+ days,
+make this the compactor," gated on the same horizon constant §7 already names.
+D13.
 
 ### 8.4 Encryption at rest — the app's job or the provider's?
 
@@ -1599,10 +1767,25 @@ the sync toggle, in words a non-engineer reads once and understands:
   Not a server I run: I hold no copy, and there is no account of mine to
   compromise. That folder is hidden from the Drive UI and reachable only by an
   app holding the `drive.appdata` scope for that user.
-- **Who can read it.** Without app-layer encryption: the user, any app they
-  authorise for `drive.appdata`, and Google — who encrypt at rest but hold the
-  keys, so they can decrypt, and will if compelled. With app-layer encryption:
-  only someone holding the passphrase, which never leaves the device.
+- **Who can read it.** Not *"any app the user authorises for `drive.appdata`"*
+  — that was wrong when this section first said so, and it's worth fixing in
+  place rather than quietly. `appDataFolder` is scoped per OAuth client, not
+  per scope grant: a second app the user has separately authorised for
+  `drive.appdata` gets its own empty folder through that alias, not this
+  app's — Google's own Drive API guide states each app's app-data section is
+  invisible to every other app, not only to the user. It also isn't in the
+  Drive UI and isn't included in a Google Takeout export; the only ordinary
+  way to reach it is through Bahi itself. So the honest list, without
+  app-layer encryption, is shorter than this document first claimed but not
+  empty: **Google**, who encrypt at rest but hold the keys, and can decrypt if
+  compelled by legal process, by an internal support or abuse investigation,
+  or in the event of a defect in their own systems; and **anyone who takes
+  over the user's Google account outright** — a phished password, a stolen
+  session, a SIM-swapped recovery flow — since account control is sufficient
+  to complete the same OAuth consent Bahi itself uses and then read the
+  folder the same way a legitimate sign-in would. With app-layer encryption,
+  both of those get ciphertext instead of a ledger; only someone holding the
+  passphrase, which never leaves the device, gets the plaintext.
 - **Whose job encryption is.** Under (b) it is the provider's, and the honest
   form of that answer is *acceptable because it is the user's own account, not
   mine* — which is a real answer, and defensible, but only when the app says it
@@ -1616,6 +1799,16 @@ Adding it is cheaper than it sounds and needs **no new dependency**: AES-256-GCM
 with a key derived from a user passphrase via PBKDF2, both from `javax.crypto`.
 The payload envelope carries version, salt and nonce; ciphertext is the op batch.
 
+**Corrected while building 9c: no salt in the envelope.** That sentence
+predates the AndroidKeyStore-cached-key refinement two paragraphs below --
+a salt travelling on every envelope would only matter if every encryption
+re-derived the key from the passphrase, which is exactly what caching the
+derived key exists to avoid. The salt PBKDF2 actually uses lives once, in
+the persisted key material (`SyncEncryptionKeyStore`), not on the wire. What
+every envelope still needs, and does carry, is a fresh nonce -- GCM's
+security argument requires one per encryption under a given key, and the key
+is reused across many batches. `OpBatchCipher`'s doc has the full format.
+
 The costs are real:
 
 - The user must type the passphrase on every device. That is the same flow every
@@ -1626,29 +1819,327 @@ The costs are real:
   exact way in the UI: losing it costs you sync, not your ledger.
 - Debugging is harder; the remote becomes opaque blobs.
 
-**Recommendation: encrypt, in M4b's first slice, not later.** Retrofitting means
-re-encrypting everything already in Drive and re-pairing every device — the same
-"the cost of not having it compounds" argument csv-import-design §11.1 used for
-`importBatchId` and budgets-design §4.1 used for putting sync columns on tables
-before sync existed. D9.
+**The case for (b), argued rather than assumed away.** The corrected list
+above is the fair version of it: skip app-layer encryption, keep the
+disclosure, and say plainly that Google can read this if compelled and that a
+compromised Google account is a compromised ledger. That's a real, shippable
+position — real products take it, and this section already called it
+"defensible" above it. Three things keep it from being a strawman:
 
-### 8.5 How a fresh clone builds and tests
+1. **The cost lands immediately, not later.** Every other "pay now, it
+   compounds later" call in this repo — `importBatchId`, the sync columns
+   landing before sync existed — was free to the user: an extra column
+   nobody sees. This one is not. Every device gets a passphrase prompt at
+   setup, every additional device gets a second one with no shortcut (§8.4
+   below), and a forgotten passphrase permanently forfeits the synced copy.
+   The recommendation this section reaches borrows the same "cost compounds,
+   decide now" heuristic csv-import-design §11.1 and budgets-design §4.1 used
+   — but that heuristic was measuring engineering cost, which does compound
+   here exactly the way it did there; it says nothing about the user cost,
+   which is paid up front, on every install, encryption or not.
+2. **It's the step sync adoption is most likely to die on.** §1's whole case
+   for building sync is that a second device is useless without it; a setup
+   flow that asks for OAuth consent and then a second, unrecoverable,
+   must-be-remembered secret roughly doubles the friction of turning it on
+   at all. This document has no data — it's a portfolio app with no users —
+   that the disclosure-only version of (b) wouldn't clear that adoption bar
+   just as well on its own.
+3. **The strongest version of the old justification didn't hold.** "Any app
+   with the scope" was the most concrete, most alarming-sounding reason to
+   encrypt, and it was wrong (above). What's left — Google under compulsion,
+   and account takeover — is real, but it's the same pair of actors every
+   cloud-synced app on this phone already exposes the user to, Gmail
+   included, per this section's own comparison to bank statement PDFs
+   already sitting there. Singling out Bahi for a passphrase Gmail doesn't
+   ask for is a defensible choice, not an obviously correct one.
 
-Nothing secret is committed, and nothing secret needs to be.
+None of that reverses the recommendation, but it changes why it's right.
+(1) and (2) are real costs and stay real no matter which option wins; (3)
+shrinks the threat model without emptying it — Google-under-compulsion and
+account-takeover are exactly the two actors a passphrase that never leaves
+the device is good at stopping. A subpoena or a phished password hands an
+attacker `appDataFolder` access, not a key, and the ciphertext sitting behind
+it is exactly as useless to them as it would have been if the "other apps"
+reasoning had been the correct one all along. And the asymmetry the
+`importBatchId` comparison misses cuts the other way, too: guessing wrong by
+shipping *without* encryption costs more than guessing wrong by shipping
+*with* it. Adding encryption later means re-encrypting a live corpus,
+re-pairing every device, and explaining to whichever users exist by then why
+the trust model just changed under them; over-building it now costs one
+avoidable setup step for however long the app never has that problem.
 
-- An OAuth client ID is not a secret — it ships inside the APK. What a fresh
-  clone needs is its *own* client ID, registered in its own GCP project against
-  its own debug-keystore SHA-1, because Google binds Android OAuth clients to the
-  signing certificate. That is a documented ~15-minute setup in the README, not a
-  credential handoff.
-- Absent that, the build works and the app works. `SyncModule` reads an optional
-  `sync.properties` (gitignored); when it is missing it binds a
-  `DisabledSyncTransport`, and the Settings sync row says sync is not configured
-  and why. Every offline feature — which is every feature — is unaffected.
-- **CI never needs any of it.** `./gradlew unitTests` and
-  `connectedDebugAndroidTest` exercise the fake transport, which is where all the
-  convergence testing lives (§10). The one thing CI cannot cover is real Drive
-  behaviour, and §10.4 says so plainly rather than pretending otherwise.
+**Recommendation: encrypt, in M4b's first slice, not later — (a), for the
+corrected reason above rather than the original one.** D9.
+
+**Decided, 2026-09-01 — (a).** M4a moved no data off the device, so D9 was
+correctly left open through that milestone (§14's entry said as much). This
+design pass is M4b's, and M4b is the milestone that moves data, so the
+deferral no longer applies, and the choice above is not a hedge anymore. Two
+flows have to exist for "encrypt" to mean something, and the paragraphs above
+stop short of them.
+
+*Where the key lives, day to day.* PBKDF2-derived keys are deliberately slow
+to compute — that is the point of PBKDF2 — so re-deriving on every sync,
+potentially several times an hour once the periodic worker exists (§8.7), is
+not something to ask a phone's CPU or the user's patience for repeatedly. The
+derived key is cached, not the passphrase: after the user types it once during
+setup, the resulting AES-256 key is wrapped with a hardware-backed
+`AndroidKeyStore` key (tied to that installation) and the wrapped blob is
+stored in `DataStore` — the same "state you keep is per-device by definition"
+shape `lastSyncCursor` already has (§1.1's scope table). The raw passphrase is
+held in memory only for the derivation and discarded immediately after. This
+means the passphrase is typed once per device, at setup, not once per sync.
+
+*The new-device flow.* A second device authenticates to Drive (§8.6) and can
+list the op log, but every payload is ciphertext it cannot open until it holds
+the same key — and the key cannot be derived without the passphrase, which by
+design never travels through Drive or anywhere else off-device. So pairing a
+second device is: sign in, then type the same passphrase by hand. There is
+deliberately no QR-code-from-the-first-device shortcut in this design, because
+that shortcut is itself a channel the passphrase would have to cross, and the
+entire point of a passphrase-derived key is that it crosses no channel this
+app controls. The cost is one manual step per device, stated plainly as a cost
+rather than hidden as a convenience.
+
+*The lost-passphrase flow.* Exactly as bad as it sounds and no worse: the
+local ledger on every device that already holds the cached key is completely
+unaffected, because the passphrase protects the synced copy, not the data.
+What is lost is the ability to pair a *new* device into that same sync group,
+or to decrypt the op log from a device that never had the key cached (a
+factory-reset phone, a fresh install). The only recovery is deleting the
+remote data and starting sync over with a new passphrase — the "the app must
+not pretend a lost key is recoverable" case D9 already named. The UI wording
+is load-bearing here, and is copied out because it is easy to get subtly wrong
+in a way that either scares a user unnecessarily or reassures them falsely:
+**"This passphrase protects your synced backup only. Losing it means starting
+sync over on a new passphrase — your transactions on this device are safe
+either way."** Never "your data will be lost."
+
+### 8.5 What a fresh clone sees, and D12
+
+**D12 — the fresh-clone experience.**
+
+- **Options:** (a) sync UI hidden entirely until `sync.properties` exists — the
+  feature isn't there for a reviewer who hasn't set up a Cloud project. (b)
+  sync UI visible, disabled, with an explanation and a documented setup path.
+  (c) a mocked/demo sync mode that fabricates a second device in-process so a
+  reviewer sees the real screens without a Google account at all.
+- **Recommendation: (b).** This is a portfolio project (CLAUDE.md): the point
+  of M4a's convergence suite and this design is to be *read*, and a reviewer
+  who opens Settings and finds nothing where the README's second headline
+  feature should be has no way to know sync exists at all short of reading
+  source. (a) hides the most-discussed feature in this repo from the person
+  most likely to go looking for it. (c) is tempting and specifically wrong for
+  this app: a fabricated second device is exactly the "in-memory fake" M4a's
+  convergence suite already *is*, and building a second, UI-facing version of
+  that same fake risks a reviewer mistaking a demo for evidence — this design
+  has been careful, throughout M4a, to keep "the convergence suite proves
+  this" and "a reviewer can see this run" as separate claims (§10.1), and a
+  demo mode blurs exactly that line.
+- **If wrong:** (a) is a low-cost reversal — one conditional around a nav
+  entry. (c) is the expensive direction: unwinding a demo a reviewer may have
+  already judged real sync by, and re-explaining that what they saw wasn't it.
+
+**What (b) means concretely**, extending the sketch already in place before
+this pass:
+
+- `SyncModule` reads an optional, gitignored `sync.properties`. Absent, it
+  binds `DisabledSyncTransport` — a `SyncTransport` that throws on
+  `push`/`pull` and returns an empty snapshot, so nothing that calls it can
+  silently behave as if sync ran. `SyncEngine` is never constructed against it
+  in this state at all (§8.7 covers when it *is* constructed); the binding
+  exists so the module graph never needs a nullable `SyncTransport?` threaded
+  through Hilt.
+- The Settings screen's sync row (§8.8 extends this further) shows "Sync — not
+  configured," one line of what that means (§8.4's disclosure statement, which
+  ships regardless of whether the row is active), and a link to the setup doc
+  rather than a dead-looking toggle.
+- **The setup doc is the actual deliverable of this decision**, not an
+  afterthought: a README section, or a linked `docs/sync-setup.md` if the
+  instructions get long enough to clutter the README the way
+  `docs/csv-import-design.md` and this file already live outside it, walking a
+  reader through creating a GCP project, enabling the Drive API, registering an
+  Android OAuth client against their own debug keystore's SHA-1
+  (`keytool -list -v -keystore ~/.android/debug.keystore`, the exact command,
+  not a description of one), and writing the resulting client id into
+  `sync.properties`. Fifteen minutes, no payment method, no review process —
+  `drive.appdata` access for a debug-signed app in testing mode does not
+  require Google's OAuth verification review, which is otherwise the
+  multi-week blocker this flow would hit if it requested a broader scope
+  (§8.6).
+- **Nothing about this can silently rot**, which the doc's own
+  screenshot-staleness lesson (CLAUDE.md; §11's `settings-conflicts.png`
+  finding) argues has to be said explicitly rather than assumed: the "not
+  configured" copy is exercised by `SettingsScreenTest` against
+  `DisabledSyncTransport` directly, not a fake standing in for it, so a change
+  to `SyncModule`'s gating logic that breaks the fallback fails a test rather
+  than only being caught by someone who happens to run a clean checkout.
+- **CI never needs any of this.** `./gradlew unitTests` and the instrumented
+  job exercise `InMemoryTransport`, same as M4a — the fresh-clone path
+  (`DisabledSyncTransport`) is exercised by unit/instrumented tests directly,
+  and the *real* Drive path is exercised by nothing CI runs, which §10.5
+  states plainly rather than folding into this section's optimism about what
+  is covered.
+
+### 8.6 OAuth: library, scopes, refresh, revocation
+
+**Library.** Not the deprecated `GoogleSignInClient` — Google's own guidance
+points away from it. The scope this app needs, `drive.appdata`, is an
+*authorization* scope, not an identity claim, so the fit is the
+**Authorization API** inside Play Services (`Identity.getAuthorizationClient()`),
+which is what replaced `GoogleSignInClient`'s scope-consent path. That is one
+new dependency, `com.google.android.gms:play-services-auth` — already the one
+named in §8.2's option-B sketch. Ask-before-adding per CLAUDE.md; named here
+as the recommendation for that conversation rather than added.
+
+**Corrected while building 9d: no `androidx.credentials` dependency.** That
+artifact backports the newer Credential Manager *sign-in* flow to older API
+levels; it has nothing to do with the Authorization API's *scope-grant* flow
+this section actually specifies, and the hedge above was wrong to imply it
+might be needed alongside it. Checked against Google's own current
+documentation, not assumed. `play-services-auth` alone is the whole of the
+new dependency surface.
+
+The alternative considered and rejected: a provider-agnostic OAuth flow via
+AppAuth (Custom Tabs + PKCE, no Play Services dependency at all). It would
+work on a device without Play Services, which this app has never had a reason
+to care about — Drive itself is a Google product, so a device that can't run
+Play Services can't productively use this feature regardless of which library
+requests the token. Paying for provider-independence with a heavier,
+hand-rolled OAuth flow buys nothing here.
+
+**Scope.** `https://www.googleapis.com/auth/drive.appdata`, and nothing
+broader, ever. Not `drive.file`, which would let the app see files the user
+picked through a system chooser (irrelevant — this app never wants the user to
+pick a file), and not `drive`, which reads the user's entire Drive. `appdata`
+is also what keeps this app out of Google's OAuth verification review process
+(§8.5) — a broader scope would require it, and would be a much harder thing to
+justify for a project whose entire privacy pitch (§8.1, §8.4) is "I cannot
+read your data."
+
+**Refresh.** The Authorization API is responsible for minting and refreshing
+access tokens once consent is granted; this app does not store a refresh
+token itself. What it stores is one boolean-shaped fact — "this device has
+been granted `drive.appdata` access" — in `DataStore`, next to
+`lastSyncCursor`. Before each sync cycle (§8.7), the engine asks the
+authorization client for a current access token; a silent refresh happens
+underneath when the cached one has expired, with no user interaction, as long
+as consent hasn't been revoked.
+
+**Revocation.** The one case that is not silent. A user who revokes access
+from their Google Account's "Third-party apps & services" page invalidates the
+refresh token from Google's side; the next token request this app makes fails
+with an authorization error rather than returning a fresh access token. That
+failure has to be classified, not treated as an ordinary network error:
+retrying it on the WorkManager backoff schedule (§8.7) would retry forever for
+a request that can never succeed until the user acts. `SyncEngine`'s run-state
+(`SyncStatus`, `:core:model` — currently `Idle`/`Running`/`Failed`, unused
+today per §13 slice 8's note that nothing calls it yet) gains
+`NeedsReauthorization`. The Settings row surfaces it distinctly from a generic
+sync failure — "Sync access was removed — reconnect," with a button that
+re-runs the consent flow — and the periodic worker treats it as terminal for
+that cycle rather than something to back off and retry, since backing off
+implies the next attempt might succeed on its own, which this one will not.
+
+### 8.7 The periodic worker
+
+WorkManager has sat in the version catalog unused since M0 (§9's note); this
+is what finally calls it, and it is what gives `SyncEngine` its first real
+caller anywhere in the app (§8.8, §11's flagged gap).
+
+**Cadence.** Android's `PeriodicWorkRequest` floor is 15 minutes, but this app
+has no reason to sync that often — §1 states plainly that real-time
+propagation is out of scope, and the data volume is a personal ledger's worth
+of edits, not a stream. **Recommendation: a periodic tick every 4 hours** as
+the background safety net, `NetworkType.CONNECTED` (not `UNMETERED` — the
+payload is small JSON, not media, and gating a finance app's sync on Wi-Fi
+only would mean days of drift for someone mostly on cellular) and
+`setRequiresBatteryNotLow(true)`. Alongside it, an **expedited one-time
+request fired when the app moves to the foreground** and when the user opens
+Settings — the periodic tick is the guarantee against staleness for a phone
+left alone, but a user who just edited on their phone should not wait up to 4
+hours to see it on their tablet, and foreground sync is cheap because the user
+is already spending battery having the screen on.
+
+**Failure handling.** WorkManager's own `BackoffPolicy.EXPONENTIAL` covers
+transient failures within one execution — a Drive 5xx, a dropped connection —
+up to a capped number of attempts before that execution gives up for the
+current tick; the next periodic tick or the next foreground event is the
+natural retry, so nothing needs a second, hand-rolled retry loop layered on
+top of WorkManager's. Two failure classes need to be told apart, both by the
+worker and by what it reports:
+
+- **Transient** (network, Drive rate limiting, a timeout) → `Result.retry()`,
+  backoff applies, `SyncStatus.Failed` with the underlying cause, no user
+  action implied.
+- **Terminal for now** (revoked authorization, §8.6; Drive quota genuinely
+  exhausted rather than rate-limited — checked separately, since Drive's 429
+  for "too many requests" and 403 for "storage quota exceeded" mean different
+  things and only the second is something retrying can never fix) →
+  `Result.failure()`, no further attempts this tick, `NeedsReauthorization` or
+  an equivalent quota-exhausted state surfaced in Settings rather than
+  silently retried into the next tick.
+
+**What "fails repeatedly" looks like to the user.** A worker that silently
+fails forever in the background is exactly the failure mode this section
+exists to avoid — a finance app whose sync has been broken for three weeks and
+never said so is worse than one with no sync at all, because the user believes
+their second device is current when it is not. The unacknowledged-conflict
+count on the Settings row (§5.6, already built) is the wrong signal for this —
+it can be zero because nothing has conflicted, not because sync is healthy.
+This needs its own signal: a last-successful-sync timestamp, always shown on
+the Settings sync row once sync has run at least once, going from a quiet fact
+("Last synced 4 minutes ago") to a visible warning past some threshold ("Last
+synced 6 days ago — check your connection") without needing a notification —
+§5.6 already declined notification infrastructure for a less urgent case, and
+that argument doesn't get waived just because this is about plumbing rather
+than a conflict.
+
+### 8.8 The conflict screen's first real render
+
+§11 names the gap directly: every row that has ever populated
+`SettingsScreen`'s populated state came from `FakeSyncConflictRepository`,
+because `SyncEngine` has had no caller anywhere in the app through all of
+M4a. §8.7's periodic worker and foreground trigger are what change that — the
+first time two real devices, both running a build with `sync.properties`
+configured, edit the same field while both offline and then both come online,
+`RoomSyncApplier`'s resolver-driven path writes a `sync_conflicts` row nothing
+fabricated, and `SettingsScreen` renders it.
+
+Two things follow, and neither is optional once it's reachable rather than
+hypothetical:
+
+**The `category_id`-renders-as-uuid gap (§11, slice 8's known simplification)
+stops being a corner case.** It was accepted in M4a because the only
+conflicts anyone could produce were seeded, and seeded conflicts used the
+readable system-category slugs. A real two-device conflict has no reason to
+prefer a seeded category over a user-created one, and a user-created
+category's id is `UUID.randomUUID()` the same as everything else in this app.
+Shipping M4b without closing this means the first thing a real user sees on
+their first real conflict is `Kept: 7f3a9c21-...`, which is the exact
+"list nobody reads" failure §5.6 was written to prevent, arrived at through a
+different door. **This is now a required M4b slice, not a nice-to-have**:
+`SettingsViewModel` joins `category_id` against `observeCategories()` the same
+way `RuleListItem`/`BudgetRow` already resolve a category for display (§11's
+own description of the fix), falling back to the raw id only if the category
+itself is gone.
+
+**The screenshot has to be re-earned, not re-labelled.** `settings-conflicts.png`
+was captured against a hand-seeded database (slice 8's note) — an honest fake,
+but still a fake. CLAUDE.md's screenshot rule is about drift, not provenance,
+but the same discipline applies here for a stronger reason: a screenshot in a
+portfolio repo captioned as evidence of a working feature should be evidence,
+not a mockup with real chrome. The M4b slice that wires the periodic worker up
+should run two real devices (or two emulators with real Drive access, §10.5)
+to genuine convergence, produce a genuine conflict, and recapture
+`settings-conflicts.png` from that — at which point it is also the first real
+check on everything §5.6 flagged as untested against real data: whether
+`chosenValue`/`discardedValue` render for a shape the resolver actually emits
+and the fakes never happened to construct, whether a real `reason` string
+wraps the way the fakes' did, whether a `table_name` the tests never fed it
+does anything unexpected. If any of those needed fixing, this is where it
+would show up, and it should be looked for deliberately rather than left to be
+found by whoever opens the screen next.
 
 ---
 
@@ -1885,6 +2376,54 @@ and above all concurrent compaction (§8.3). Those get a written manual test pla
 run against two physical devices and one real account before M4b ships, and the
 plan is part of the M4b slice rather than something assembled afterwards.
 
+### 10.5 Testing the Drive transport, and keeping the manual plan honest
+
+**Does `SyncTransportContractTest` run against Drive?** Yes, and it is the
+whole reason §10.4 built it as an abstract class rather than a fake-only test:
+`DriveTransportContractTest : SyncTransportContractTest()` overrides
+`createTransport()` to construct a real `DriveTransport` against a real,
+already-authorized Drive account, and every one of the guarantees
+`InMemoryTransportTest` already checks — pull ordering, per-device cursor
+independence, an empty horizon before anything has compacted, and the rest —
+gets checked against the real backend with zero new test logic. What it
+*can't* check by construction: eventual consistency (a JVM test with no sleep
+between push and pull won't observe a listing lag that may or may not appear),
+the compaction race analysed in §8.3, quota, and token lifecycle — none of
+those are property-of-two-calls facts a contract test is shaped to hold.
+
+**Where it lives, and why CI doesn't run it.** `DriveTransportContractTest`
+sits in `core/sync/src/driveTest/`, added as a source directory to the `test`
+AndroidSourceSet only when `core/sync/drive-test.properties` exists
+(gitignored, naming a real OAuth client and a pre-authorized refresh token for
+a throwaway Google account — never a CI secret, the same reasoning §8.5
+gives for the app build itself, applied to a test). Absent that file, on a
+fresh clone and on every CI run, the source isn't merely un-run, it is never
+compiled — AGP has no notion of a custom-named test source set, so this adds
+the directory to the existing `test` source set and relies on a
+`driveTest`/`testDebugUnitTest` filter split to keep it out of a routine
+`./gradlew unitTests` even on a machine that does have the file. Run by hand:
+`./gradlew :core:sync:driveTest`. Full setup steps: docs/sync-setup.md.
+
+**The manual test plan, and why "manual" doesn't mean "aspirational."** A
+checklist that exists once and is never re-run is worse than no checklist — it
+is evidence of care that isn't actually evidence of anything current, the same
+failure CLAUDE.md's screenshot-staleness rule was written to name for a
+different artifact. The mitigation is the same shape: the plan is a table, not
+prose, and every row carries a **last-verified date and the commit it was
+verified against**, checked in at `docs/sync-manual-test-plan.md` (linked from
+here rather than duplicated, since it is a living checklist and this document
+is a design record). Empty because none of this is built yet — filled in as
+M4b's slices land, the same way this document's own slice list (§13) only
+marks a row "done" once it is checked, not once it is planned. **The rule
+that keeps it honest going forward:** any PR touching `:core:sync`'s
+Drive-facing code re-runs every row whose "against" commit is more than one
+M4b slice old and updates the date, and a stale-plan check (every date older
+than 90 days — the same horizon number the rest of this design already
+uses, for the same "longer than any device is plausibly offline" reasoning,
+not because the two clocks need to share a value) is a line item in the M4b
+release checklist, not a job CI enforces, because CI is precisely what cannot
+exercise these rows.
+
 ---
 
 ## 11. What this design gets wrong
@@ -1934,19 +2473,57 @@ sections were the ones that did this.
   this) and not closed; the ordering argument that closes the ordinary case
   does not extend to it.
 - **A `category_id` conflict renders as an unusable id for a user-created
-  category.** §13 slice 8. The Settings screen shows `ConflictValue.Text`
-  verbatim -- fine for the seeded system categories (`"food"`,
-  `"entertainment"`), whose ids are readable slugs, but every other
-  user-created entity in this app (a transaction, a rule, a budget) gets its
-  id from `UUID.randomUUID()`, and there is no reason a category-creation
-  screen would do otherwise once one exists. The row would read `Kept:
-  7f3a9c21-...`, which tells the user nothing. `docs/screenshots/settings-conflicts.png`
-  is a flattering case precisely because it only exercises a seeded
-  category -- it is not evidence this is fine in general. Closing it needs a
-  join against `categories` (by id, filtered `deleted_at IS NULL` else
-  fall back to the id itself, the same way `RuleListItem`/`BudgetRow`
-  already resolve a category for display) at the point `SettingsViewModel`
-  builds `ConflictListItem`, not attempted in slice 8.
+  category.** §13 slice 8. **Closed in M4b slice 9h**, kept here for the
+  history: the Settings screen showed `ConflictValue.Text` verbatim -- fine
+  for the seeded system categories (`"food"`, `"entertainment"`), whose ids
+  are readable slugs, but every other user-created entity in this app (a
+  transaction, a rule, a budget) gets its id from `UUID.randomUUID()`, and
+  there was no reason a category-creation screen would do otherwise once one
+  existed. The row would have read `Kept: 7f3a9c21-...`, which tells the user
+  nothing. `docs/screenshots/settings-conflicts.png` was a flattering case
+  precisely because it only exercised a seeded category -- it was not
+  evidence this was fine in general. Slice 9h's fix is exactly the join
+  sketched here: `SettingsViewModel` now resolves `category_id` (on every
+  table it appears on) and `parent_id` (on `CATEGORIES` only) against
+  `CategoryRepository.observeCategories()`, falling back to the raw id when
+  the category is absent -- soft-deleted, reaped, or a lost shadow all look
+  the same: not in that flow, since it already filters `deleted_at IS NULL`.
+- **The Settings conflict screen's populated state has no live data path.**
+  §5.6. **Closed in M4b slice 9g/9h**, kept here for the history: `sync_conflicts`
+  was written only by `SyncApplier`'s resolver-driven path, and nothing
+  called `SyncEngine` until M4b's transport existed -- so every row that had
+  ever populated that screen came from a fake. The release build can't be
+  hand-seeded either (debug-signed, but not `isDebuggable`). Slice 9g gave
+  `SyncEngine` its first real caller; slice 9h is the render this bullet
+  predicted -- proven end to end in `ConvergenceScenariosTest`
+  (§13, slice 9h) against the real `SyncConflictRepository`, and against the
+  real `SettingsScreen` by hand-seeding a running debug build with a
+  genuinely-produced row rather than a fabricated one (§8.8's own note on
+  what "genuine" means without a real Drive account).
+- **Single-elected-compactor narrows the compaction race to one moment and does
+  not close it.** §8.3, D13. Two devices can still both believe they won the
+  first-compactor election if their claim-then-verify listings diverge in that
+  exact window — rarer and lower-stakes than the general race, since no prior
+  snapshot exists yet to disagree about, but not impossible, and nothing
+  detects it after the fact beyond the manual plan's own row for it.
+- **The manual test plan is only as honest as the discipline that re-runs
+  it.** §10.5. Nothing mechanical enforces the re-verification rule the way
+  `checkModuleBoundaries` enforces the module graph; it is a checklist item in
+  a release process, the same category of "someone has to remember" §10.3
+  already names for the property test's alphabet.
+- **A lost passphrase is permanent by design, and the UI has exactly one
+  chance to say that correctly.** §8.4, D9. The wording matters more than
+  usual here because the two ways to get it wrong — understating it (a user
+  who thinks it's recoverable and later finds out otherwise) and overstating
+  it (a user who thinks their local ledger is at risk and abandons sync, or
+  the app, out of caution they didn't need) — are both worse than the accurate
+  middle this document commits its copy to.
+- **Drive's listing consistency has no documented SLA, and the compaction
+  argument leans on "the window is short" without a number to bound it.**
+  §8.3. That is a real gap, not a rounding error — everything from "does it
+  bite" to the 30-second election-verification window is sized against an
+  assumption, propagation delay is small in practice, that nothing in this
+  design measures, because nothing has talked to Drive yet.
 
 ---
 
@@ -2128,15 +2705,638 @@ M4a — slices 1–8. Each compiles and passes `checkModuleBoundaries` on its ow
    version of that gap -- the screenshot's own category ids are the seeded
    system slugs, which is a flattering case, not the general one.
 
-M4b — slice 9. **Deferred, not next** (§2, D3): it is a milestone's worth of
-work on its own, none of the hard part lives in it, and M4a is complete and
-provable without it. Sketched here so M4a's interfaces are shaped for it.
+M4b — slice 9. Sketched below in more detail than the M4a pass had reason to
+go into, because this document's M4b design pass (2026-09-01) is what turned
+§8's open questions into decisions (D9, D12, D13). At the time that pass was
+written, M4b was **deferred, not next** (§2, D3): a milestone's worth of work
+on its own, none of the hard part living in it, with M4a already complete and
+provable without it. **That call stood only briefly.** M4b was taken up on
+the `m4b-transport` branch and all nine sub-slices below are now done -- kept
+as "deferred, not next" in the paragraph above for the history of the
+decision, not as a current status.
 
-9. **The Drive transport** (§8). Authorization for `drive.appdata`, the
-   `appDataFolder` op log, compaction, the encryption envelope, DI gating on an
-   absent `sync.properties`, the transport contract tests, the WorkManager
-   periodic worker, and the manual two-device test plan. Also the import-result
-   line from §6.1 ("12 rows were previously deleted and were not re-added").
+9. **The Drive transport** (§8). **Done, all nine sub-slices** (see each
+   one's own status below), on the `m4b-transport` branch -- sketched
+   originally as deferred (§2, D3), taken up later than this document
+   assumed when it was first written.
+
+   - **9a — The disabled state and the setup path** (§8.5, D12). **Done.**
+     `SyncConfiguration` (`:core:sync`) is the seam: `:app`'s build script
+     turns whether `sync.properties` exists into `BuildConfig.SYNC_CONFIGURED`
+     (library modules here don't generate one, so `:app` is the only place
+     that can), and `AppSyncModule` binds it. `DisabledSyncTransport` is bound
+     unconditionally in `SyncModule` — there is only the one `SyncTransport`
+     implementation to choose between until 9e, configured or not.
+     `SettingsUiState.syncConfigured` carries the answer on every state,
+     `Loading` included, rather than defaulting it and risking a
+     correctly-configured build showing the wrong row for one frame; the
+     Settings screen renders a "not set up on this build" row above whatever
+     the conflicts section shows. `SettingsScreenTest` covers both the row's
+     presence and its absence, and `docs/sync-setup.md` has the setup path.
+     Ships with no OAuth code at all, exactly as scoped. Verified against a
+     running debug build, not just the test suite: `settings-empty.png` and
+     `settings-conflicts.png` both changed the moment this landed, because
+     the default build (no `sync.properties`) is the common case and both
+     screenshots predate the row — both recaptured against the app running
+     on-device, the second with a conflict hand-seeded directly into
+     `sync_conflicts` the same way slice 8's original capture did.
+   - **9b — The import-result line** (§6.1). **Done.** `existingRowsByHash`
+     replaces `countExistingHashes`, returning `ExistingHashRow` (hash, id,
+     `deleted_at`) instead of a bare per-hash count; `importBatch` now
+     returns `ImportBatchOutcome` and tags each quota match `LIVE` or
+     `TOMBSTONED` as it consumes it, with an insert-time id collision folded
+     into `duplicatesSkipped` (it can only be a live-id collision, since the
+     quota step already claimed every tombstoned match) so the three
+     buckets — inserted, `duplicatesSkipped`, `previouslyDeletedSkipped` —
+     never leave a row uncounted. The split threads all the way up through
+     `ImportBatchResult` and `ImportResult` to the import screen's new line,
+     shown only when the count is nonzero, exactly as designed above. No
+     dependency on the rest of M4b, confirmed while building it — the fix
+     touches `:core:database`, `:core:data`, `:core:importer` and
+     `:feature:import` only, with `TransactionDaoTest` covering the live/
+     tombstoned split against real Room and `DefaultCsvImporterTest` covering
+     that the importer trusts the repository's counts rather than
+     re-deriving them.
+   - **9c — Encryption** (§8.4, D9). **Done.** `OpBatchCipher` (AES-256-GCM,
+     `:core:sync`) encrypts/decrypts one `OpBatch` at a time against a
+     `SecretKey`, deliberately with no `SyncTransport` in the loop — see the
+     correction two paragraphs above §8.4's original sentence on why the
+     envelope carries no salt. `PassphraseKeyDerivation` (PBKDF2WithHmacSHA256,
+     210,000 iterations, OWASP's current floor) turns a passphrase and a salt
+     into that key. `KeyWrapper` is the seam over `AndroidKeyStore`
+     wrapping/unwrapping, exactly like `SyncConfiguration`'s seam over
+     `BuildConfig` in 9a — the real `AndroidKeyStoreKeyWrapper` is verified
+     on-device (`AndroidKeyStoreKeyWrapperTest`, real `AndroidKeyStore`, real
+     round-trip and real tamper failure), and everything built on top of it is
+     tested against `FakeKeyWrapper` instead. `SyncEncryptionKeyStore`
+     orchestrates: derive, wrap, persist to `DataStore` (via a new
+     `UserPreferencesDataSource.syncEncryptionKeyMaterial`, read as one
+     combined value so the three fields making it up can never be observed
+     half-written) and, on the way back, unwrap. `DataStoreModule`
+     (`:core:datastore`) is new — nothing had provided a `DataStore<Preferences>`
+     to Hilt before this, since `lastSyncCursor` has had no caller since M0
+     either (§8.3).
+
+     **What "pairing a new device" means without 9e.** `DriveTransport` does
+     not exist yet, so there is no channel for a second device to learn the
+     first device's salt automatically. `PairingCode` (base64 of the salt, not
+     secret the way the passphrase is) is the honest, fully-functional version
+     of that flow available today: `PassphraseScreen`'s setup path shows it
+     after setup completes, and a second device's pairing path takes it as
+     typed or pasted input alongside the passphrase. When 9e lands,
+     `DriveTransport` publishing this string unencrypted alongside the op log
+     replaces the manual copy — the seam (`SyncEncryptionKeyStore.pair`) does
+     not change shape, only what supplies its `salt` argument.
+
+     `PassphraseScreen`/`PassphraseViewModel`/`PassphraseUiState`
+     (`:feature:settings`) are the setup-and-pairing UI, reached from a new
+     "Encryption" row on Settings shown exactly when `syncConfigured` is —
+     the row does not itself know whether a key already exists, deliberately,
+     so there is exactly one place (`PassphraseViewModel`'s own `isSetUp`
+     check) that can be wrong about it. `PassphraseUiState.Loading` covers the
+     one genuinely async read this screen needs (unlike `syncConfigured`,
+     `isSetUp` has no synchronous answer), so an already-configured device
+     never flashes the entry form before landing on `Done`. The lost-passphrase
+     warning is the exact wording §8.4 commits to; the setup-time disclosure
+     paraphrases §8.4's threat-model bullets rather than quoting them verbatim
+     (only the lost-passphrase line was ever a verbatim commitment — the
+     bullets' commitment was to the reasoning, not the exact sentences).
+
+     Covered by `OpBatchCipherTest`, `PassphraseKeyDerivationTest`,
+     `PairingCodeTest` (all pure JVM, no transport, exactly the "testable in CI
+     as a pure byte-transform" claim this entry made before it was built — a
+     round trip, two different encryptions of the same batch producing
+     different envelopes, a wrong key failing loudly via
+     `WrongPassphraseException` rather than returning garbage, and a tampered
+     envelope failing the same way), `SyncEncryptionKeyStoreTest` (real
+     file-backed `DataStore`, `FakeKeyWrapper`), `AndroidKeyStoreKeyWrapperTest`
+     (androidTest, real `AndroidKeyStore`), `PassphraseViewModelTest`
+     (Turbine, `FakeSyncEncryptionKeyStore`), and `PassphraseScreenTest` plus
+     new `SettingsScreenTest` cases (androidTest, real Compose). Also verified
+     against a running debug build with `sync.properties` present: set up
+     encryption end to end, confirmed the real pairing code renders, force-
+     stopped and relaunched the app, and confirmed the same pairing code comes
+     back immediately from `Done` rather than the entry form — the one thing
+     no test suite here proves, since it depends on a real `AndroidKeyStore`
+     key surviving a real process death, not a fake standing in for one.
+   - **9d — OAuth** (§8.6). **Done.** `PlayServicesDriveAuthorization`
+     (`:core:sync/oauth`) wraps `Identity.getAuthorizationClient` behind
+     `DriveAuthorization`, the same seam shape `SyncEncryptionKeyStore` uses
+     over `AndroidKeyStore` (slice 9c): the real class needs Play Services and
+     a Google account, so `SettingsViewModel` and the Drive connection row are
+     tested against `FakeDriveAuthorization` instead.
+     `dev.charanjeev.bahi.core.model.SyncStatus.NeedsReauthorization` exists,
+     as this document said it would, but nothing produces it yet — same
+     "decorative until 9g" note slice 8 already made for the rest of
+     `SyncStatus`, restated at the new case rather than left to be
+     rediscovered. What the Settings row actually reads is
+     `DriveAuthorization.connectionState`
+     (`NOT_CONNECTED`/`CONNECTED`/`NEEDS_REAUTHORIZATION`), for the same
+     reason slice 8 preferred `observeUnacknowledgedCount` over `SyncStatus`
+     there: it is live from the moment a device first tries to authorize, not
+     only once a sync cycle exists to update it.
+
+     **Corrected while building 9d: `androidx.credentials` is not needed.**
+     §8.6's "plus whatever `androidx.credentials` artifacts it needs" was a
+     hedge from before this was built. Checked against Google's own current
+     documentation rather than assumed: that artifact backports the newer
+     Credential Manager *sign-in* flow to older API levels and has nothing to
+     do with the Authorization API's *scope-grant* flow this app actually
+     uses. The only new dependency is `com.google.android.gms:play-services-
+     auth:22.0.0`.
+
+     **A bug found in review before this shipped.** The Drive row's first
+     draft rendered inside the `Empty`/`Success` branches unconditionally,
+     independent of the `if (!syncConfigured) ... else ...` block above it
+     that gates `EncryptionRow` — so an unconfigured build would have shown
+     "Not set up on this build" *and* a live "Connect Google Drive" button
+     with nothing for it to connect to. Fixed before it reached a test run:
+     the row's own doc comment now says why it has to share `EncryptionRow`'s
+     gate, and `notConfigured_hidesTheDriveRow` is the regression test.
+
+     **What is and isn't verified, stated as plainly as the task asked for.**
+     Everything except `PlayServicesDriveAuthorization` itself is unit- or
+     Compose-tested against `FakeDriveAuthorization`: the ViewModel's
+     `onConnectDriveRequested`/`onAuthorizationResult`, every
+     `DriveConnectionState` the row can render, and the gate bug above. That
+     one class cannot be exercised by any automated test in this repo —
+     `DriveAuthorization`'s own doc says why — and this environment has no
+     Google account and no way to create one, so a real consent *grant* was
+     never completed either. What manual verification on the slice-9c emulator
+     did show, confirmed in `logcat` by real component names rather than
+     assumed: tapping "Connect" genuinely calls
+     `Identity.getAuthorizationClient(context).authorize(...)`, genuinely gets
+     back a resolution and a `pendingIntent`, and that `pendingIntent`,
+     launched through `SettingsRoute`'s `rememberLauncherForActivityResult`,
+     genuinely opens Google's own account-add UI and returns cleanly to
+     `NOT_CONNECTED` on cancel, with no crash. So the wiring is verified live;
+     only the inside of a completed grant — the `Authorized` branch, and the
+     exact `ApiException` codes a real revocation returns — rests on Google's
+     documented contract rather than on having watched it happen.
+     `PlayServicesDriveAuthorization`'s own doc has the same account, in the
+     place a future reader is most likely to look for it.
+   - **9e — `DriveTransport` and its contract test** (§10.5). Done.
+     `DriveApi` (`core/sync/drive/`) is the four REST calls, list/get/create/
+     delete, all scoped to `appDataFolder`; `DriveTransport` builds `push`/
+     `pull`/`snapshot` on top of it and is the one place in the app that
+     actually calls `OpBatchCipher` — `SyncTransport.push` takes a structured
+     `OpBatch`, not bytes, so encryption can only run where an `OpBatch`
+     first turns into bytes to leave the device, which is here, not above it.
+     A device with no key set up refuses both operations loudly via
+     `DriveTransportException` rather than ever writing or reading plaintext.
+
+     **Does `SyncTransportContractTest` run against Drive? Yes**, exactly as
+     §10.5 committed to: `DriveTransportContractTest` (`core/sync/src/
+     driveTest/`) subclasses it and overrides only `createTransport()`,
+     wiring a real `DriveTransport` against a real, already-authorized
+     throwaway Drive account — the same eight checks `InMemoryTransportTest`
+     runs, with zero new test logic, against the real backend. It is never
+     run by CI: the source directory is only added to the `test`
+     AndroidSourceSet when `core/sync/drive-test.properties` (gitignored)
+     exists, so on a fresh clone the sources aren't merely un-run, they are
+     never compiled. **What stands in for CI, and what doesn't exist to
+     stand in at all:** `DriveTransportTest` — a second, separate subclass of
+     the same `SyncTransportContractTest`, living in the *ordinary* `test`
+     source set — wires `DriveTransport` to `InMemoryFakeDrive`, a
+     hand-written fake `okhttp3.Call.Factory` backend that actually stores
+     and serves files rather than verifying calls happened. It runs on every
+     `unitTests`/CI pass and proves `DriveTransport`'s own logic (cursoring,
+     encryption, appProperties tagging, pagination, error classification)
+     satisfies the contract; it cannot prove anything about eventual
+     consistency, quota, or Drive's real query semantics, which is exactly
+     what `DriveTransportContractTest` exists to check separately and
+     manually. Nothing stands in for a real account at all — that gap is
+     named, not hidden, the same way slice 9d named what a real consent
+     grant could not be verified against.
+
+     **The salt, published unencrypted — `SyncEncryptionKeyStore`'s doc
+     named this as this slice's job, and it's built:** `DriveTransport.
+     publishSalt`/`readPublishedSalt` write and read one small plaintext
+     file, tagged separately from the encrypted op log, so a second device
+     can find the first device's salt instead of being told it by hand. This
+     is additive only: `PassphraseScreen`'s manual pairing-code flow (slice
+     9c) is untouched. Nothing calls `readPublishedSalt` from that screen
+     yet — replacing a pasted code with automatic discovery is a UX decision
+     for whoever picks that up next, deliberately not assumed here.
+
+     **`snapshot()` always returns the empty default.** No writer of a
+     compacted snapshot exists until 9f, which also owns the wire format one
+     would use — inventing that format now, ahead of the code that first
+     writes one, would be guessing both sides of a contract that slice hasn't
+     set yet. This still satisfies `SyncTransportContractTest`'s only check
+     on this method (`snapshot of a transport nothing has compacted has an
+     empty horizon`) exactly. **No longer true as of 9f:** `snapshot()` now
+     reads the real `kind=snapshot` file `DriveCompactor` writes; see that
+     slice's entry.
+
+     **`SyncModule` still binds `DisabledSyncTransport` unconditionally.**
+     `DriveTransport` exists, fully implemented and tested, but nothing
+     constructs it via Hilt yet. This is a deliberate scope line, not an
+     oversight: `SyncEngine` has no caller anywhere in the app until 9g, so a
+     conditional binding today would be reachable by nothing — the same
+     "complete but not yet wired to run" state `SyncEngine` itself has been
+     in since M4a. Making the binding conditional on `SyncConfiguration.
+     isConfigured` is left for 9g, so it can be wired and manually verified
+     together with the code that first actually calls it, rather than
+     sitting inert in between.
+
+     **Two corrections found while building this, neither in the design
+     pass's control:**
+     - OkHttp 5.5.0 (approved mid-session for the HTTP client) turned out to
+       need `compileSdk` 37 for its Android AAR variant — it added Encrypted
+       Client Hello support in that release, gated on Android API 37, and
+       Gradle's AAR-metadata check fails a build compiled against 36 (this
+       repo's setting) rather than silently ignoring it. Checked against
+       OkHttp's own changelog rather than guessed: 5.4.0 predates that
+       requirement and has no other Android-relevant change back to 5.0.0.
+       Pinned to 5.4.0 in `gradle/libs.versions.toml` instead of bumping
+       `compileSdk` project-wide, which would have been a much larger,
+       unrequested footprint for one dependency.
+     - AGP has no supported way to add a custom-named test source set to an
+       Android library module — unlike a plain `java-library` module,
+       `sourceSets` here is AGP's `AndroidSourceSet` container, which only
+       wires compile/test tasks for build-type/variant-shaped names.
+       `driveTest` is instead extra source directories on the *existing*
+       `test` source set, conditionally added, with a `driveTest` task built
+       by hand out of `testDebugUnitTest`'s own already-configured classpath
+       rather than a from-scratch compile task. `core/sync/build.gradle.kts`
+       has the full reasoning; docs/sync-setup.md has the developer-facing
+       setup steps for both this and 9d's OAuth client (also corrected
+       there — see that document).
+   - **9f — Compaction** (§8.3, D13). **Done.** `DriveCompactor`
+     (`core/sync/drive/`): D13's single-elected-compactor, the snapshot
+     write-then-delete sequence, and the grace period and threshold trigger
+     from §8.3's original mitigation list. Tested entirely against
+     `InMemoryFakeDrive`, the same offline fake `DriveTransportTest` already
+     used — this is the piece that makes compaction's correctness checkable
+     by CI on every push rather than something only a manual `driveTest` run
+     against a real account could exercise, which is what made it worth
+     building this way rather than deferring it to a manual-only proof the
+     way `DriveTransportContractTest` had to be for the transport itself.
+
+     **Election.** `electIfNeeded()` implements D13's claim-then-verify: no
+     `owner.json`-equivalent (a single `kind=owner` file, `appProperties`
+     carrying `deviceId`/`claimedAt` rather than a JSON body — consistent with
+     how `DriveTransport` already tags `ops`/`salt` files, so `DriveCompactor`
+     never needs to download a file's content just to learn who claimed it)
+     means this device claims it, waits, then keeps only the
+     lexicographically-lowest `deviceId` among whatever now exists — the same
+     tiebreak shape §5.5's conflict resolver already uses, reused rather than
+     invented fresh. Once any owner file exists, every later call is a single
+     `list` and a string comparison: no wait, no write, which is what makes
+     election "once per install" true in code and not just in the design
+     prose. The wait itself (`electionWaitMillis`, default 30 000 like D13
+     specifies) is a constructor parameter, not a fixed constant — no test in
+     this repo can afford a real 30-second wait per case, and the number
+     being unable to change per call site would have meant either that or a
+     slow suite.
+
+     **"Election has to work when the elected device is simply gone" — it
+     does not, on purpose, and that is what `isStale`/`takeOver` are for.**
+     `electIfNeeded` alone never re-elects a live-but-abandoned owner file —
+     nothing about a device going quiet deletes its claim, so by design
+     nothing here notices on its own. D13's own answer to that case is the
+     manual Settings affordance, not automatic failover: `isStale()` answers
+     whether it looks abandoned (gated on `TOMBSTONE_HORIZON_DAYS`, "the same
+     horizon constant §7 already names," per D13), and `takeOver()` deletes
+     the current claim and re-runs the identical claim-then-verify dance a
+     first election uses. `DriveCompactorTest` proves this end to end: elect
+     device A, advance the fake clock 91 days, confirm device B's `takeOver`
+     succeeds and device A's own `electIfNeeded` now reports false — the
+     "gone device" scenario, entirely reproducible offline, on every CI run.
+
+     **`isStale` measures compaction, not the claim's age, and says why in
+     its own doc.** The literal question — "has this snapshot been compacted
+     recently" — is answered by the newest snapshot's age once one exists.
+     Before any snapshot exists, claim age alone can't tell a genuinely quiet
+     account (never enough ops to cross the threshold, not stale) from an
+     abandoned one apart, so that branch also requires an actual op-file
+     backlog past the threshold before it will call the case stale. Both
+     branches, and the "quiet account is never flagged" property specifically,
+     are their own tests.
+
+     **Compaction folds forward, not from scratch.** A second and later round
+     reads the previous snapshot (if any) via the new `DriveApi.latestSnapshot`
+     seam shared with `DriveTransport.snapshot()` — the two classes agree on
+     the file (`kind=snapshot`, highest `n`) and the envelope
+     (`OpBatchCipher.encryptSnapshot`/`decryptSnapshot`, this slice's widening
+     of 9c's cipher onto `RemoteSnapshot` as well as `OpBatch` — same
+     envelope format, same failure mode on a wrong key) without one importing
+     the other's internals — and merges newly-eligible op files onto it
+     newest-revision-wins, the same fold `InMemoryTransport.compact()`'s
+     test-only simulation already does for the in-memory case, extended here
+     to not discard history a prior round already compacted away.
+     `DriveCompactorTest` proves this directly: a first round crosses the
+     threshold and writes `snapshot-1`; a second round's snapshot still
+     contains every row the first one did, not just what the second round's
+     own ops touched.
+
+     **Grace period and threshold, both real gates, tested independently of
+     each other.** `DriveApi.list`/`listAll` now request `createdTime` in
+     their `fields=` param (a field they simply hadn't needed until this
+     slice) so `DriveCompactor` can judge an op file's real age against the
+     one-hour grace period rather than approximating it. A round with a
+     large-enough op-file count but every file still within the grace period
+     compacts nothing; a round past the grace period but below the op-file
+     threshold also compacts nothing; and a round with some files past the
+     grace period and some not folds and deletes only the eligible ones,
+     leaving the rest for a later round — `DriveCompactor` deletes exactly
+     what it read, matching §8.3's "delete-exactly-what-I-read" mitigation
+     verbatim, not a coarser "delete everything listed."
+
+     **Write fully before deleting, and re-verify ownership immediately
+     before the delete, not just at the start.** `compact()` checks
+     `isElectedOwner()` once before doing any work and again after the new
+     snapshot has been written but before a single op file is deleted. The
+     second check is defence in depth for the one narrow window D13's own
+     analysis leaves open — a device that believed itself elected during the
+     first-election race and loses the tiebreak partway through a compaction
+     cycle — and the cost of losing that race after already writing is one
+     harmless extra snapshot file, never a wrongly-elected device deleting
+     files it was never entitled to.
+
+     **The Settings takeover affordance is not wired to any screen.**
+     `isStale`/`takeOver` exist and are tested, satisfying D13's requirement
+     that the *logic* exist — what doesn't exist is a button. Wiring one into
+     `:feature:settings` needs a real `DriveCompactor` instance, which needs a
+     real `deviceId`, and nothing in this app generates or persists one yet —
+     the same slice-8/M4b gap `SyncEngine`'s own `deviceId` constructor
+     parameter has named as unresolved since M4a. Inventing a throwaway
+     device identity just to wire one button would be scaffolding this
+     document elsewhere refuses to build ahead of the code that actually
+     needs it (§9e's `SyncModule` binding deferral is the same call, for the
+     same reason). Whatever slice solves device identity — most likely 9g,
+     since `SyncEngine` needs the same answer to get its first caller — is
+     where the Settings screen should pick this up; `DriveCompactor`'s own
+     class doc names this gap in the same place a reviewer reading the code
+     would look for it.
+   - **9g — The periodic worker** (§8.7). **Done.** `PeriodicWorkRequest` at
+     the 4-hour cadence, the foreground/Settings-open expedited trigger, the
+     transient/terminal failure split, and the last-successful-sync display on
+     the Settings row. **This is the slice that gives `SyncEngine` its first
+     caller anywhere in the app** — everything before it in this list could be
+     built and unit-tested without sync ever actually running end to end on a
+     device; this slice is where that stops being true, which is also why it
+     surfaced three things nothing before it could.
+
+     **Device identity, finally answered.** `DeviceIdentity`
+     (`core/sync/DeviceIdentity.kt`) is a random `UUID`, not a hardware id,
+     get-or-created once and persisted in `UserPreferencesDataSource` the
+     same way the encryption key material already is. `allowBackup="false"`
+     means it does not survive a reinstall, which is the correct answer, not
+     a gap: a reinstalled app is, correctly, a new device to `SyncEngine` and
+     `DriveCompactor` both, the same as it is a new OAuth consent and a new
+     encryption key. An orphaned `DriveCompactor` claim from the old id is
+     not a new failure mode this has to handle — it is exactly the
+     "elected device is simply gone" case `isStale`/`takeOver` (9f) already
+     resolve, under a different cause.
+
+     **The `SyncModule` binding, made conditional.** `SyncTransportModule`
+     (new, in the same file) replaces the old unconditional `@Binds
+     bindSyncTransport` with a `@Provides` that picks `DriveTransport` or
+     `DisabledSyncTransport` behind `Provider<T>` on
+     `SyncConfiguration.isConfigured` — `Provider`, not the transport itself,
+     so the losing branch is never constructed. `DisabledSyncTransport`'s own
+     doc is updated to match: its "every method throws" contract is now only
+     ever reachable if both this gate and `SyncScheduler`'s own configured
+     check were somehow bypassed.
+
+     **`SyncStatus`, no longer decorative.** `SyncStatusRepository`
+     (`core/sync/SyncStatusRepository.kt`) is what `SyncRunner` reports
+     through: `Running`/`Idle` in memory only (correct to reset on process
+     death), `Failed`/`NeedsReauthorization` driven by
+     `DriveTransportException.retryable`/`.needsReauthorization` — the second
+     field is new on that class, needed because `DriveAccessToken` and
+     `DriveApi` both threw the same `retryable = false` shape for two
+     different reasons (revoked consent vs. an ordinary non-retryable HTTP
+     status) and nothing distinguished them before now. `:feature:settings`
+     does not render `SyncStatus` directly — see the next paragraph — but it
+     is real, tested (`SyncRunnerTest`), and driving something for the first
+     time since M4a.
+
+     **What the user sees is a timestamp, not a status.** Per §8.7's own
+     scope ("a last-successful-sync timestamp," not a spinner),
+     `SettingsViewModel` combines `SyncStatusRepository.lastSuccessfulSyncAt`
+     into a new `LastSyncDisplay` (`:feature:settings`, its own file):
+     Never/JustNow/MinutesAgo/HoursAgo/DaysAgo, the last carrying `isStale`.
+     Three days, not one, is the staleness threshold — reasoned in that
+     file's doc: one bad day of connectivity absorbed, not flagged, while a
+     genuinely broken sync still surfaces well before "6 days," this
+     section's own example of obviously too long to have stayed quiet.
+     `SettingsViewModel` also requests an expedited sync in `init`, and
+     `MainActivity.onStart` does the same for the foreground trigger —
+     single-activity architecture (CLAUDE.md) means this Activity's own
+     lifecycle already is the app's foreground signal, so no
+     `ProcessLifecycleOwner` observer was needed.
+
+     **A cursor-reset regression, found and fixed while building this, not
+     designed for up front.** `SyncEngine`'s own doc has always said its pull
+     cursor and push sequence "live only in memory... across many `sync`
+     calls on the same instance." The first draft of `SyncRunner.run`
+     constructed a fresh `SyncEngine` on every call, which is a fresh, empty
+     cursor every time — every periodic tick would have re-pulled every
+     peer's entire history rather than incrementally. `SyncRunner.engineFor`
+     now caches one `SyncEngine` per process instead — closing the regression
+     9g itself introduced, but not yet the pre-existing gap `SyncEngine`'s doc
+     already named (`lastSyncCursor` becoming a real persisted per-device map,
+     §8.3): WorkManager does not keep a process alive between periodic
+     executions, so on a real device most 4-hour ticks still started a fresh
+     process and therefore a fresh cursor anyway. That gap is closed as a
+     follow-up in the same slice, next paragraph.
+
+     **The pre-existing gap, closed.** `UserPreferencesDataSource.syncCursor`
+     is now that persisted per-device map — `last_sync_cursor`'s DataStore key
+     unchanged, its type widened from a single unused `String?` to a
+     JSON-encoded `{deviceId: seq}` (kotlinx.serialization, already a
+     dependency of both modules; no new one added). `SyncEngine` takes an
+     `initialCursor` constructor parameter and exposes `cursorSnapshot` to
+     read it back — it still does not persist anything itself, that stays
+     `SyncRunner`'s job, argued in both classes' docs. `SyncRunner.engineFor`
+     seeds the cached engine from `syncCursor` once, and `run` writes
+     `cursorSnapshot` back after every cycle that completes its pull, so a
+     process that dies between ticks loses nothing this device already
+     pulled. Verified against two `SyncRunner`s over one persisted
+     `UserPreferencesDataSource` file with the first's `DataStore` scope
+     cancelled before the second is built — `DeviceIdentityTest`'s
+     process-restart stand-in, reused rather than invented fresh
+     (`SyncRunnerTest`) — and the reconciliation question a persisted cursor
+     raises that an in-memory one never had to answer: is a cursor read back
+     from DataStore, rather than accumulated by the engine itself, still
+     correctly caught by §7's behind-the-horizon check? Yes, by construction —
+     `reconcileIfBehindHorizon` only ever reads `cursor[peerId]`, with no way
+     to tell where an entry came from — but that answer went into
+     `SyncEngineTest` as a seeded-cursor case rather than staying assumed. A
+     reinstall wipes `syncCursor` in the same `DataStore` write that wipes
+     `deviceId` (`allowBackup="false"`), so a reinstalled device starts both
+     at once, correctly, with nothing left over to reconcile against.
+
+     **The push sequence, closed too — a worse failure than the cursor's, so
+     a different fix.** `SyncEngine`'s push sequence (`nextPushSeq`) had no
+     equivalent seam and reset to 1 on every process restart. Re-pulling a
+     batch this device already applied is harmless — §10.4's idempotence
+     watermark is keyed on each row's own revision, not on which batch or
+     seq carried it, so a duplicate or reordered delivery is a no-op, checked
+     directly rather than assumed. A reused push sequence number is not
+     forgivable the same way: it is filtered out by `SyncTransport.pull`'s
+     own `seq > cursor[deviceId]` gate before a single op inside it is ever
+     inspected, so a peer already past this device's pre-restart sequence
+     would silently never see it — no error, no conflict record, nothing to
+     reconcile against later. `UserPreferencesDataSource.pushSeq` is the new
+     persisted counter, but seeding `SyncEngine`'s `initialPushSeq` from it
+     alone would reopen the exact bug for every install already running the
+     cursor fix above: `push()` has always written `cursor[deviceId] =
+     batch.seq` into the now-persisted cursor, so an upgrading install's own
+     device already has a high watermark recorded there that predates
+     `pushSeq` entirely. `SyncRunner.engineFor` rebases the seed as
+     `max(pushSeq, cursor[deviceId]) + 1` — the same shape as slice 5c's
+     Lamport rebase for `local_revision`, a value already recorded elsewhere
+     for a different reason turning out to be exactly the floor a fresh
+     counter has to respect. A genuinely new device id (an ordinary
+     reinstall) has no entry in any peer's cursor yet, so seeding it at 1 is
+     still correct — the rebase only ever raises the floor for an id a peer
+     could already be holding a watermark for. And because persisting after
+     the fact reopens its own crash window (a push that reaches the transport
+     just before the process dies, with the number never recorded), `push()`
+     now calls a `persistPushSeq` hook — `UserPreferencesDataSource::setPushSeq`,
+     wired in `SyncRunner` — with the reserved number *before* calling
+     `SyncTransport.push`, not after: a crash between the two just burns that
+     number, which every `SyncTransportContractTest` case already treats as
+     fine, since nothing requires push sequences to be contiguous, only
+     monotonic and unique per device. Verified the same way as the cursor —
+     two `SyncRunner`s over one persisted file, the first's `DataStore` scope
+     cancelled before the second is built — asserting the transport actually
+     received both pushes under distinct sequence numbers, plus a dedicated
+     case for the upgrade rebase and one proving `persistPushSeq` runs before
+     the transport call even when that call then fails (`SyncEngineTest`,
+     `SyncRunnerTest`).
+
+     **Has a real sync run end to end on a device? No — named plainly rather
+     than implied by silence.** Every path this slice adds is proven against
+     fakes (`SyncRunnerTest`) and, one layer down, against `InMemoryFakeDrive`
+     (`DriveCompactorTest`, `DriveTransportTest`, both pre-existing) — the
+     same boundary §10.5 already drew for `DriveTransport` itself. What would
+     make it real is exactly what `DriveTransportContractTest`'s `driveTest`
+     task needs and this environment does not have: a Google Cloud project,
+     an OAuth client registered against a real keystore's SHA-1, and two
+     genuine devices or emulators signed in to it (docs/sync-setup.md). Until
+     someone runs that manual plan, `SyncWorker` executing on a device is
+     unverified beyond "WorkManager accepted the request and Hilt could
+     construct the worker" — worth distinguishing from "sync happened,"
+     because the two are not the same claim. `settings-conflicts.png` and
+     `settings-empty.png` were checked against this slice's UI change and
+     found unaffected: both were captured against a build with no
+     `sync.properties`, where the row this slice adds is gated off exactly
+     like `EncryptionRow`/`DriveRow` already are, so neither is stale. 9h is
+     still where a screenshot showing the configured branch, captured against
+     genuine output, belongs.
+   - **9h — The conflict screen's first real render** (§8.8). **Done.**
+
+     **The join, and why it stops at two fields.** `SettingsViewModel` now
+     takes a `CategoryRepository` and folds `observeCategories()` into the
+     same `combine` that already builds `ConflictListItem`s, the same shape
+     `RulesViewModel`/`BudgetsViewModel` already use (`categories.associateBy
+     { it.id }`, then a lookup per row). Two fields get resolved: `category_id`,
+     on every table it appears on (`transactions`, `budgets`,
+     `category_rules`), and `parent_id`, but only on `CATEGORIES` -- checked
+     against `FieldPolicies.kt` rather than assumed, and nothing else in any
+     table's field-policy map names another table's row the way these two do.
+     `import_batch_id` and `account_id` are id-*shaped* but not id-*valued* in
+     the same sense: there is no import-batch table to join against (§1.1),
+     and no accounts table exists at all yet (§11's "nothing here handles a
+     second account"), so both stay exactly as the resolver recorded them --
+     joining against nothing would be worse than not joining. The fallback on
+     a miss is the raw id itself, not a placeholder like "Unknown category"
+     -- deliberately different from `RuleListItem`/`BudgetRow`'s placeholder
+     for the same absence, because a conflict row is evidence of what was
+     chosen and discarded, and the id is the one thing left for a user to go
+     looking for if a placeholder swallowed it. `observeCategories()` already
+     filters `deleted_at IS NULL`, so a soft-deleted or horizon-reaped
+     category is simply absent from the map -- the fallback needs no
+     tombstone check of its own, the same "absence of a match, not absence of
+     a value" shape §1.2's uncategorised-spend fix already used.
+
+     **Restore is untouched, confirmed rather than assumed.**
+     `SyncConflictRepository.restore` reads the conflict fresh from
+     `SyncConflictDao.getById` and compares the *stored* `chosen_value` JSON
+     against the row's live field value -- it never sees a `ConflictListItem`
+     or anything `SettingsViewModel` resolved for display. The name-vs-id
+     question is entirely a `:feature:settings` presentation concern; nothing
+     about `RestoreOutcome.VALUE_CHANGED_SINCE`'s comparison changes because
+     the screen now shows a name instead of a UUID.
+
+     **The end-to-end proof, and the seam it can't cross.** A new
+     `ConvergenceScenariosTest` scenario (16) runs the same two-real-`SyncEngine`,
+     two-real-Room-database harness as scenario 7, but with two user-created
+     categories (`UUID.randomUUID()` ids, not the seeded-looking `cat-a`/
+     `cat-b` slugs scenario 7 uses -- §11 names that exact substitution as
+     the flattering case `settings-conflicts.png` was captured against) both
+     locked onto the same transaction concurrently. After `syncToQuiescence`,
+     it reads the result through `SyncTestDevice.conflictRepository` -- a
+     real `RoomSyncConflictRepository`, the same class `SyncModule` binds in
+     production, not the raw `SyncConflictEntity` scenario 7 reads -- and
+     confirms the decoded `SyncConflict` carries the two real UUIDs as
+     `ConflictValue.Text`, with `field = "category_id"` and a reason
+     containing "locked". That is as far as one test can go: `:feature:settings`
+     cannot be reached from `:core:sync`'s androidTest (a feature depends on
+     `:core:sync`, never the reverse), and `:feature:settings` cannot depend
+     on `:core:database` to build a real `RoomSyncConflictRepository` itself
+     (rule 4) -- both directions CLAUDE.md forbids. `SettingsViewModelTest`'s
+     `category_id`/`parent_id` tests prove the other half: given a
+     `SyncConflict` of the exact shape scenario 16 just proved a genuine merge
+     produces, fed through the `SyncConflictRepository` interface (the same
+     interface production wires to the class scenario 16 exercises directly),
+     `SettingsViewModel` resolves it to a name. The two tests meet at that
+     interface, which is the same seam the production Hilt binding crosses --
+     nothing here is proven more weakly than the app itself is wired.
+
+     **The screenshot, re-earned rather than re-labelled.** Two categories
+     were created with real `UUID` ids and real names ("Pet Care", "Hobbies")
+     through the same merge path scenario 16 proves -- run once, not
+     hand-typed -- and inserted into a running debug build's actual on-device
+     database (`run-as`/`sqlite3`, the same mechanism slice 8's and 9a's
+     screenshots were captured with, per their own notes above). The
+     Transactions screen and Settings screen were both captured from the
+     running app: `settings-conflicts.png` now shows `Kept: Hobbies` /
+     `Discarded: Pet Care`, not a UUID, and the seeded transaction that
+     carries the id reads "Hobbies" on the Transactions list too --
+     confirming the row is real data flowing through the app's ordinary
+     category-lookup path, not a Settings-screen-only fixture.
+     `settings-empty.png` needed no recapture: 9h changes nothing about the
+     empty state, and the check 9g's own note already ran (both screenshots
+     compared against the build before and after) still holds -- this
+     slice's diff is entirely inside `ConflictRow`'s value rendering.
+
+     **Correcting 9g's own anticipation.** The previous entry above guessed
+     9h's screenshot would show "the configured branch" -- `sync.properties`
+     present, `EncryptionRow`/`DriveRow` visible. That would need either a
+     fabricated "Connected" state this device never earned (dishonest, and
+     the opposite of what this rule exists to prevent) or a real Google Cloud
+     OAuth client (out of scope: no credentials exist in this environment,
+     same boundary §10.5 already drew). The honest choice is the one already
+     made for every prior Settings screenshot: the unconfigured branch, which
+     is what this build actually is. What 9h's screenshot proves is the
+     conflict row's content, not the Drive connection state -- those are
+     independent claims, and only the first one is this slice's job.
+
+     **Has sync ever run against a real Drive account? No, and it still
+     hasn't, stated plainly rather than left to be inferred from the rest of
+     this section.** Every claim in M4b, 9h included, is proven against
+     `InMemoryTransport`/`InMemoryFakeDrive` and, for this screenshot, a
+     database hand-seeded with a genuinely-computed row -- never against
+     Drive itself. `docs/sync-setup.md`'s manual plan is what would change
+     that, and nobody has run it in this environment. That does not make the
+     merge logic, the conflict recording, or the render any less real -- all
+     three are the actual shipped code, exercised end to end -- but "two
+     phones synced over Drive and one of them showed this screen" remains an
+     unproven claim, and M4b closes without anyone having tested it.
+
+   Ordering within the list is not strict. 9a and 9b have no dependency on
+   anything else and could go first, or ship standalone. 9c is independent of
+   9d/9e. But 9f, 9g and 9h are a strict chain — compaction has to exist
+   before the worker runs it repeatedly for long enough to matter, and the
+   worker has to exist before there's real data for 9h to render. If M4b ever
+   gets split further than this document schedules, that chain is where the
+   boundary should fall.
 
 ---
 
@@ -2152,6 +3352,13 @@ and **plan for M4a only** — build the convergence engine and stop before the
 transport; M4b is recorded in the README roadmap as deferred, with the reason,
 rather than as next. D9 is the only one left open, and it does not block M4a;
 see its entry.
+
+**M4b design pass, 2026-09-01.** D9 as recommended, (a) — now decided rather
+than deferred; see its entry for what changed. D12 and D13 are new to this
+pass, both as recommended. Nothing here is scheduled: M4a remains the only
+milestone actually built, and the README roadmap's "deferred, not next" for
+M4b is still accurate. This pass turns the sketch in §8 into a design that
+could be sliced and estimated — not into a commitment about when.
 
 ### D1 — What syncs?
 
@@ -2268,21 +3475,38 @@ see its entry.
 - **Options:** (a) AES-GCM with a passphrase-derived key, in M4b's first slice,
   no new dependency. (b) rely on the provider's at-rest encryption and say so
   plainly in the app. (c) defer and add later.
-- **Recommendation: (a).** §8.4. Retrofitting means re-encrypting everything
-  already uploaded and re-pairing every device — the same compounding-cost
-  argument this repo has now used twice.
+- **Recommendation: (a), argued against properly, not just asserted.** §8.4
+  now makes the case for (b) in full rather than only for (a) — the reasoning
+  in the original pass here ("any app the user authorises for `drive.appdata`
+  can read it") turned out to be factually wrong: `appDataFolder` is isolated
+  per OAuth client, so no other app reaches it regardless of scope, and it's
+  excluded from Takeout too. The corrected threat model is narrower — Google
+  under compulsion, and anyone who takes over the user's Google account
+  outright — and (a) still answers both of those correctly, so the
+  recommendation didn't reverse the way the ₹0-budget call in budgets-design
+  §2.1 did. What changed is the reason: not "other apps can read this," which
+  wasn't true, but "a subpoena or a phished password shouldn't be enough to
+  read this," which is. The compounding-cost comparison to `importBatchId`
+  also doesn't fully hold on its own — that cost was pure engineering and
+  free to the user; this one is paid by the user at setup, encryption or not
+  — so it isn't cited as the reason by itself here anymore.
 - **If wrong:** a passphrase the user must not lose, with no recovery. The
   mitigation is framing: it protects the synced copy, not the ledger — losing it
   costs sync, not data — and that has to be the literal wording in the UI. If
   that trade is unacceptable, (b) is defensible **only** if the app states
   plainly where the data goes and who can read it.
-- **Status: open, and deliberately not forced.** Both (a) and (b) are
-  defensible, the choice belongs to M4b, and M4b is deferred — M4a moves no
-  data off the device, so nothing waits on this. What is **not** deferred is the
-  statement itself: §8.4 now writes out what the data is, where it goes, who can
-  read it and whose job encryption is, under either answer, and that paragraph
-  ships whichever way this lands. A finance app that stores transaction history
-  off-device owes its user that in words, not by implication.
+- **Status: decided, 2026-09-01 — (a).** M4a moved no data off the device, so
+  D9 was correctly left open through that milestone. This design pass is
+  M4b's, and M4b is the milestone that moves data, so the deferral no longer
+  applies. §8.4 has the concrete shape settled now: a passphrase-derived
+  AES-256-GCM key, cached behind `AndroidKeyStore` so the passphrase is typed
+  once per device rather than once per sync, a new device paired by typing the
+  same passphrase by hand — no in-app shortcut, deliberately, since any
+  shortcut is itself a channel the passphrase would have to cross — and the
+  two pieces of user-facing copy this document commits to verbatim, for setup
+  and for the lost-passphrase case. The disclosure paragraph §8.4 already
+  wrote ships regardless, as it would have under (b) too — that part was never
+  what was open.
 
 ### D10 — Rule priority under concurrent reordering
 
@@ -2314,3 +3538,41 @@ see its entry.
   a policy map, and it stays cheap. The cost of dropping it only ever rises, so
   the decision should not be allowed to drift a third time — it gets an explicit
   re-decision in M5's design rather than another conditional deadline.
+
+### D12 — What a fresh clone sees
+
+- **Options:** (a) sync UI hidden until configured. (b) sync UI visible,
+  disabled, with an explanation and a documented setup path. (c) a fabricated
+  demo sync mode.
+- **Recommendation: (b).** §8.5. The portfolio-project argument: hiding the
+  feature most discussed in this document from the person most likely to read
+  the document is the wrong direction to fail in, and a fabricated demo risks
+  being mistaken for evidence in a repo that has been careful, throughout M4a,
+  to keep "the convergence suite proves this" and "a reviewer can see this
+  run" as separate claims.
+- **If wrong:** (a) is a low-cost reversal — one conditional around a nav
+  entry. (c) is not: unwinding a demo mode a reviewer may have already judged
+  real sync by is more expensive than building it was.
+
+### D13 — Compaction concurrency, now that it has to be more than a named risk
+
+- **Options:** (a) single elected compactor, `compaction/owner.json`,
+  claim-then-verify at first sync. (b) let any device compact, with §8.3's
+  original mitigation list (threshold trigger, grace period,
+  delete-exactly-what-I-read) and accept the residual race. (c) switch to
+  backend option A (hosted Postgres, §8.2) specifically to get real
+  compare-and-swap.
+- **Recommendation: (a).** §8.3's M4b addendum. It collapses an every-cycle,
+  indefinite-duration race into a once-per-install-lifetime one, at the cost
+  of one Settings affordance for the case the elected device is lost. (c) is
+  the option the original design named as the fallback if this bites in
+  practice — right instinct, wrong moment: nothing has run against real Drive
+  yet to justify concluding (b)'s mitigations are insufficient, and (a) is
+  cheap enough that reaching for (c) first would mean paying the
+  account-system cost §8.2 argued against before confirming it's needed.
+- **If wrong:** if single-election itself turns out to be the wrong shape —
+  the takeover affordance is fumbled, or the claim-verify window needs to be
+  longer than 30 seconds in practice — the fallback is (b)'s mitigation list,
+  already designed and not discarded by choosing (a); nothing about the op
+  log's shape changes. (c) remains available after either, unchanged, because
+  the engine is transport-agnostic by construction (D3).

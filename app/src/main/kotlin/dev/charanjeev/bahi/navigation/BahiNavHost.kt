@@ -13,6 +13,7 @@ import dev.charanjeev.bahi.feature.csvimport.navigation.importScreen
 import dev.charanjeev.bahi.feature.insights.navigation.InsightsRoute
 import dev.charanjeev.bahi.feature.insights.navigation.insightsScreen
 import dev.charanjeev.bahi.feature.settings.navigation.SettingsRoute
+import dev.charanjeev.bahi.feature.settings.navigation.passphraseScreen
 import dev.charanjeev.bahi.feature.settings.navigation.settingsScreen
 import dev.charanjeev.bahi.feature.transactions.navigation.TransactionsRoute
 import dev.charanjeev.bahi.feature.transactions.navigation.transactionsScreen
@@ -87,6 +88,9 @@ fun BahiNavHost(
         // all three rather than from the bottom bar -- see TopLevelDestination
         // for why Settings isn't a tab.
         settingsScreen(navController)
+        // An action on Settings, not a destination of its own -- same shape
+        // as import screen's relationship to the transactions tab.
+        passphraseScreen(navController)
     }
 }
 

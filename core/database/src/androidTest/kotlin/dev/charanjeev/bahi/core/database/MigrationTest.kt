@@ -243,7 +243,7 @@ class MigrationTest {
     /**
      * The half of MIGRATION_4_5 with a consequence that has nothing to do with
      * sync. `contentHashOf` moved off `String.hashCode()`, so a row that keeps
-     * its old hash is a row the next import's `countExistingHashes` cannot
+     * its old hash is a row the next import's `existingRowsByHash` cannot
      * match, and the user re-importing an overlapping statement gets the
      * overlap a second time.
      */

@@ -11,6 +11,7 @@ import com.google.common.truth.Truth.assertThat
 import dev.charanjeev.bahi.core.data.repository.RestoreOutcome
 import dev.charanjeev.bahi.core.model.ConflictValue
 import dev.charanjeev.bahi.core.model.SyncTable
+import dev.charanjeev.bahi.core.sync.oauth.DriveConnectionState
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.datetime.Instant
 import org.junit.Rule
@@ -43,9 +44,52 @@ class SettingsScreenTest {
 
     @Test
     fun loadingState_showsLoadingIndicator() {
-        composeTestRule.setContent { SettingsScreen(uiState = SettingsUiState.Loading) }
+        composeTestRule.setContent { SettingsScreen(uiState = SettingsUiState.Loading(syncConfigured = true)) }
 
         composeTestRule.onNodeWithTag(SettingsTestTags.LOADING).assertIsDisplayed()
+    }
+
+    @Test
+    fun notConfigured_showsExplanationRowAboveWhateverStateFollows() {
+        composeTestRule.setContent { SettingsScreen(uiState = SettingsUiState.Empty(syncConfigured = false)) }
+
+        composeTestRule.onNodeWithTag(SettingsTestTags.NOT_CONFIGURED).assertIsDisplayed()
+        composeTestRule.onNodeWithText(string(R.string.settings_sync_not_configured_title)).assertIsDisplayed()
+    }
+
+    @Test
+    fun configured_hidesTheNotConfiguredRow() {
+        composeTestRule.setContent { SettingsScreen(uiState = SettingsUiState.Empty(syncConfigured = true)) }
+
+        composeTestRule.onNodeWithTag(SettingsTestTags.NOT_CONFIGURED).assertDoesNotExist()
+    }
+
+    @Test
+    fun configured_showsTheEncryptionRow() {
+        composeTestRule.setContent { SettingsScreen(uiState = SettingsUiState.Empty(syncConfigured = true)) }
+
+        composeTestRule.onNodeWithTag(SettingsTestTags.ENCRYPTION_ROW).assertIsDisplayed()
+    }
+
+    @Test
+    fun notConfigured_hidesTheEncryptionRow() {
+        // Setting up encryption for a transport this build doesn't have would be
+        // a dead end -- same gate as NotConfiguredRow, opposite branch.
+        composeTestRule.setContent { SettingsScreen(uiState = SettingsUiState.Empty(syncConfigured = false)) }
+
+        composeTestRule.onNodeWithTag(SettingsTestTags.ENCRYPTION_ROW).assertDoesNotExist()
+    }
+
+    @Test
+    fun tappingTheEncryptionRowNavigates() {
+        var opened = false
+        composeTestRule.setContent {
+            SettingsScreen(uiState = SettingsUiState.Empty(syncConfigured = true), onOpenEncryptionSetup = { opened = true })
+        }
+
+        composeTestRule.onNodeWithTag(SettingsTestTags.ENCRYPTION_ROW).performClick()
+
+        assertThat(opened).isTrue()
     }
 
     @Test
@@ -121,6 +165,89 @@ class SettingsScreenTest {
         }
 
         composeTestRule.onNodeWithText(string(R.string.settings_restore_value_changed)).assertIsDisplayed()
+    }
+
+    @Test
+    fun notConnected_showsAConnectButton() {
+        composeTestRule.setContent {
+            SettingsScreen(uiState = SettingsUiState.Empty(driveConnection = DriveConnectionState.NOT_CONNECTED))
+        }
+
+        composeTestRule.onNodeWithText(string(R.string.settings_drive_not_connected_title)).assertIsDisplayed()
+        composeTestRule.onNodeWithTag(SettingsTestTags.DRIVE_CONNECT_BUTTON).assertIsDisplayed()
+        composeTestRule.onNodeWithText(string(R.string.settings_drive_connect)).assertIsDisplayed()
+    }
+
+    @Test
+    fun connected_showsNoButton() {
+        composeTestRule.setContent {
+            SettingsScreen(uiState = SettingsUiState.Empty(driveConnection = DriveConnectionState.CONNECTED))
+        }
+
+        composeTestRule.onNodeWithText(string(R.string.settings_drive_connected)).assertIsDisplayed()
+        composeTestRule.onNodeWithTag(SettingsTestTags.DRIVE_CONNECT_BUTTON).assertDoesNotExist()
+    }
+
+    @Test
+    fun needsReauthorization_showsAReconnectButtonWithDistinctCopy() {
+        composeTestRule.setContent {
+            SettingsScreen(uiState = SettingsUiState.Empty(driveConnection = DriveConnectionState.NEEDS_REAUTHORIZATION))
+        }
+
+        composeTestRule.onNodeWithText(string(R.string.settings_drive_needs_reauthorization_title)).assertIsDisplayed()
+        composeTestRule.onNodeWithText(string(R.string.settings_drive_reconnect)).assertIsDisplayed()
+    }
+
+    @Test
+    fun notConfigured_hidesTheDriveRow() {
+        composeTestRule.setContent {
+            SettingsScreen(uiState = SettingsUiState.Empty(syncConfigured = false, driveConnection = DriveConnectionState.NOT_CONNECTED))
+        }
+
+        composeTestRule.onNodeWithTag(SettingsTestTags.DRIVE_ROW).assertDoesNotExist()
+    }
+
+    @Test
+    fun neverSynced_showsTheNeverCopy() {
+        composeTestRule.setContent {
+            SettingsScreen(uiState = SettingsUiState.Empty(lastSyncDisplay = LastSyncDisplay.Never))
+        }
+
+        composeTestRule.onNodeWithText(string(R.string.settings_last_synced_never)).assertIsDisplayed()
+    }
+
+    @Test
+    fun staleLastSync_appendsTheWarningSuffix() {
+        composeTestRule.setContent {
+            SettingsScreen(uiState = SettingsUiState.Empty(lastSyncDisplay = LastSyncDisplay.DaysAgo(days = 6, isStale = true)))
+        }
+
+        val expected = context.resources.getQuantityString(R.plurals.settings_last_synced_days, 6, 6) + string(R.string.settings_last_synced_stale_suffix)
+        composeTestRule.onNodeWithText(expected).assertIsDisplayed()
+    }
+
+    @Test
+    fun notConfigured_hidesTheLastSyncRow() {
+        composeTestRule.setContent {
+            SettingsScreen(uiState = SettingsUiState.Empty(syncConfigured = false, lastSyncDisplay = LastSyncDisplay.Never))
+        }
+
+        composeTestRule.onNodeWithTag(SettingsTestTags.LAST_SYNC_ROW).assertDoesNotExist()
+    }
+
+    @Test
+    fun tappingConnectInvokesTheCallback() {
+        var clicked = false
+        composeTestRule.setContent {
+            SettingsScreen(
+                uiState = SettingsUiState.Empty(driveConnection = DriveConnectionState.NOT_CONNECTED),
+                onConnectDriveClicked = { clicked = true },
+            )
+        }
+
+        composeTestRule.onNodeWithTag(SettingsTestTags.DRIVE_CONNECT_BUTTON).performClick()
+
+        assertThat(clicked).isTrue()
     }
 
     @Test

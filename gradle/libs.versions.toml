@@ -37,6 +37,8 @@ kotlinxCollectionsImmutable = "0.3.8"
 
 javaxInject = "1"
 commonsCsv = "1.11.0"
+playServicesAuth = "22.0.0"
+okhttp = "5.4.0"
 
 junit4 = "4.13.2"
 truth = "1.4.4"
@@ -90,6 +92,16 @@ kotlinx-collections-immutable = { group = "org.jetbrains.kotlinx", name = "kotli
 # its own. See docs/csv-import-design.md §8 for why this is a dependency
 # rather than a hand-rolled tokenizer.
 commons-csv = { group = "org.apache.commons", name = "commons-csv", version.ref = "commonsCsv" }
+
+# The Authorization API (docs/sync-design.md §8.6, slice 9d) -- an OAuth
+# *scope* grant, not a sign-in/identity flow, so androidx.credentials (the
+# newer Credential Manager path) is not needed alongside this.
+play-services-auth = { group = "com.google.android.gms", name = "play-services-auth", version.ref = "playServicesAuth" }
+
+# The Drive transport's four REST calls (docs/sync-design.md §8.2, slice 9e)
+# -- chosen over the official Drive Java client, which "pulls a large tree
+# and is not worth it for four endpoints" (§8.2's own words).
+okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
 
 junit4 = { group = "junit", name = "junit", version.ref = "junit4" }
 truth = { group = "com.google.truth", name = "truth", version.ref = "truth" }

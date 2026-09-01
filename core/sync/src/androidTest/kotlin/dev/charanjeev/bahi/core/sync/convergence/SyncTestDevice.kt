@@ -7,7 +7,9 @@ import dev.charanjeev.bahi.core.data.repository.OfflineFirstCategoryRepository
 import dev.charanjeev.bahi.core.data.repository.OfflineFirstCategoryRuleRepository
 import dev.charanjeev.bahi.core.data.repository.OfflineFirstTransactionRepository
 import dev.charanjeev.bahi.core.data.repository.RoomSyncApplier
+import dev.charanjeev.bahi.core.data.repository.RoomSyncConflictRepository
 import dev.charanjeev.bahi.core.data.repository.RoomTombstoneReaper
+import dev.charanjeev.bahi.core.data.repository.SyncConflictRepository
 import dev.charanjeev.bahi.core.database.BahiDatabase
 import dev.charanjeev.bahi.core.sync.ConflictResolverRemoteMerge
 import dev.charanjeev.bahi.core.sync.DefaultConflictResolver
@@ -84,6 +86,16 @@ class SyncTestDevice(
      * [dump], which only ever shows the winning value.
      */
     suspend fun unacknowledgedConflicts() = database.syncConflictDao().observeUnacknowledged().first()
+
+    /**
+     * The same [SyncConflictRepository] Hilt binds in production
+     * (`SyncModule`), not a stand-in -- what §8.8/slice 9h needs to prove
+     * that a genuine merge produces a [dev.charanjeev.bahi.core.model.SyncConflict]
+     * a real repository decodes correctly, not just the raw
+     * [dev.charanjeev.bahi.core.database.entity.SyncConflictEntity]
+     * [unacknowledgedConflicts] already exposed.
+     */
+    val conflictRepository: SyncConflictRepository = RoomSyncConflictRepository(database, clock, ioDispatcher)
 
     suspend fun sync() = engine.sync()
 

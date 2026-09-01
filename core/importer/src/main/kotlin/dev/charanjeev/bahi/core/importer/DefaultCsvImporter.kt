@@ -135,11 +135,13 @@ class DefaultCsvImporter @Inject constructor(
             }
 
             // The DAO's de-duplication is count-aware (docs/csv-import-design.md
-            // §4): it returns which of `mapped` it actually inserted, which
-            // is the only trustworthy source for duplicatesSkipped. Re-deriving
-            // "is this a duplicate" here -- e.g. by checking existing hashes
-            // independently -- would reintroduce presence-based counting at a
-            // second layer, exactly the bug §4 fixed at the DAO layer.
+            // §4) and now status-aware too (docs/sync-design.md §6.1, slice 9b):
+            // it returns which of `mapped` it actually inserted and why each
+            // skip was skipped, which is the only trustworthy source for both
+            // counts below. Re-deriving "is this a duplicate" here -- e.g. by
+            // checking existing hashes independently -- would reintroduce
+            // presence-based counting at a second layer, exactly the bug §4
+            // fixed at the DAO layer.
             val batchResult = transactionRepository.importAll(mapped)
 
             // Order matters: rules run after de-duplication, over the rows
@@ -155,7 +157,8 @@ class DefaultCsvImporter @Inject constructor(
 
             ImportResult(
                 imported = mapped,
-                duplicatesSkipped = mapped.size - batchResult.insertedCount,
+                duplicatesSkipped = batchResult.duplicatesSkipped,
+                previouslyDeletedSkipped = batchResult.previouslyDeletedSkipped,
                 failedRows = failed,
                 batchId = batchResult.batchId,
                 autoCategorisedCount = autoCategorised,

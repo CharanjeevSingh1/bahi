@@ -6,10 +6,24 @@ plugins {
 android {
     namespace = "dev.charanjeev.bahi"
 
+    // Off everywhere else (gradle.properties, AndroidLibraryConventionPlugin) to
+    // keep incremental builds fast on modules that don't need it. :app does: it's
+    // the only module that can read `sync.properties` and turn its presence into
+    // something `:core:sync`'s SyncConfiguration seam can consume at runtime
+    // (docs/sync-setup.md, docs/sync-design.md §8.5, D12).
+    buildFeatures {
+        buildConfig = true
+    }
+
     defaultConfig {
         applicationId = "dev.charanjeev.bahi"
         versionCode = 1
         versionName = "0.1.0"
+
+        // `sync.properties` is gitignored, same as `local.properties` -- its only
+        // job right now is to exist or not. Nothing reads a value out of it yet;
+        // M4b slice 9d is what gives it a real key to hold (docs/sync-setup.md).
+        buildConfigField("boolean", "SYNC_CONFIGURED", rootProject.file("sync.properties").exists().toString())
     }
 }
 
@@ -32,6 +46,14 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.navigation.compose)
+
+    // BahiApplication is the only place that implements Configuration.Provider
+    // (docs/sync-design.md §8.7, §13 slice 9g) -- it needs both artifacts on
+    // its own classpath even though :core:sync (SyncWorker) already depends
+    // on them, because a HiltWorkerFactory has to be handed to WorkManager
+    // from application code, not from a library module.
+    implementation(libs.androidx.work.runtime.ktx)
+    implementation(libs.androidx.hilt.work)
 
     testImplementation(projects.core.testing)
 

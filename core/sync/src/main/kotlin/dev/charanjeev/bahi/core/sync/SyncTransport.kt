@@ -5,9 +5,13 @@ import dev.charanjeev.bahi.core.model.RemoteSnapshot
 
 /**
  * What the engine needs from a backend, and nothing about what the backend
- * actually is (docs/sync-design.md §8.3, §9). [InMemoryTransport] is the only
- * implementation until M4b's Drive transport; the engine (slice 5c) is built
- * and tested entirely against this interface so that swap is additive.
+ * actually is (docs/sync-design.md §8.3, §9). [InMemoryTransport] is what the
+ * app actually runs against; `DriveTransport` (`core/sync/drive/`, slice 9e)
+ * is a second, real implementation, proven against the same contract
+ * (`SyncTransportContractTest`) but not yet the one Hilt binds -- see
+ * [DisabledSyncTransport]'s doc for why that's deliberate. The engine (slice
+ * 5c) is built and tested entirely against this interface so that swap is
+ * additive.
  *
  * Modelled on the op-log shape §8.3 settled on for Drive: each device appends
  * immutable batches at an ever-increasing per-device [OpBatch.seq], and a pull

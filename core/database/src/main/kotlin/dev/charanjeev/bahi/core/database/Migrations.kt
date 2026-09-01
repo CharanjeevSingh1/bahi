@@ -193,7 +193,7 @@ object Migrations {
      * `contentHashOf` moved off `String.hashCode()` (32 bits is survivable for
      * de-duplication and not for a primary key), so every stored hash is now
      * computed by a function nothing uses. Skip this and
-     * `countExistingHashes` matches nothing on the next import, and a user
+     * `existingRowsByHash` matches nothing on the next import, and a user
      * re-importing an overlapping statement gets the overlap inserted a second
      * time -- a data bug on one device with no sync anywhere near it.
      *

@@ -16,7 +16,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 /**
- * importBatch and countExistingHashes are exercised here for the first time
+ * importBatch and existingRowsByHash are exercised here for the first time
  * since they were written -- nothing in the app calls them yet, since
  * CsvImporter isn't implemented (that's a later slice). The test is what
  * makes the count-aware de-duplication behaviour real rather than assumed.
@@ -52,10 +52,11 @@ class TransactionDaoTest {
             transactionEntity(id = "t1", contentHash = coffeeHash),
             transactionEntity(id = "t2", contentHash = coffeeHash),
         )
-        val firstInsertedIds = dao.importBatch(firstImport)
+        val firstOutcome = dao.importBatch(firstImport)
         // The ids, not just the count: auto-categorisation runs against
         // exactly these, so naming them wrongly is a silent bug downstream.
-        assertThat(firstInsertedIds).containsExactly("t1", "t2")
+        assertThat(firstOutcome.insertedIds).containsExactly("t1", "t2")
+        assertThat(firstOutcome.duplicatesSkipped).isEqualTo(0)
         assertThat(allTransactions()).hasSize(2)
 
         // Step 2: the exact same file, re-imported. This is where presence-
@@ -65,8 +66,10 @@ class TransactionDaoTest {
             transactionEntity(id = "t3", contentHash = coffeeHash),
             transactionEntity(id = "t4", contentHash = coffeeHash),
         )
-        val secondInsertedIds = dao.importBatch(secondImport)
-        assertThat(secondInsertedIds).isEmpty()
+        val secondOutcome = dao.importBatch(secondImport)
+        assertThat(secondOutcome.insertedIds).isEmpty()
+        assertThat(secondOutcome.duplicatesSkipped).isEqualTo(2)
+        assertThat(secondOutcome.previouslyDeletedSkipped).isEqualTo(0)
         assertThat(allTransactions()).hasSize(2)
 
         // Step 3: an overlapping re-export that now contains a third,
@@ -82,9 +85,67 @@ class TransactionDaoTest {
         )
         // The third row of the incoming batch is the one kept -- the first
         // two are consumed as matches for the two already present.
-        val thirdInsertedIds = dao.importBatch(thirdImport)
-        assertThat(thirdInsertedIds).containsExactly("t7")
+        val thirdOutcome = dao.importBatch(thirdImport)
+        assertThat(thirdOutcome.insertedIds).containsExactly("t7")
+        assertThat(thirdOutcome.duplicatesSkipped).isEqualTo(2)
         assertThat(allTransactions()).hasSize(3)
+    }
+
+    // --- importBatch: live vs. tombstoned collisions (docs/sync-design.md
+    // --- §6.1, slice 9b) -- the split that used to be one undifferentiated
+    // --- "duplicate" count regardless of whether the matching row was ever
+    // --- deleted.
+
+    @Test
+    fun importBatch_reportsALiveCollisionAsDuplicatesSkipped() = runTest {
+        dao.importBatch(listOf(transactionEntity(id = "t1", contentHash = "h1")))
+
+        val outcome = dao.importBatch(listOf(transactionEntity(id = "t2", contentHash = "h1")))
+
+        assertThat(outcome.insertedIds).isEmpty()
+        assertThat(outcome.duplicatesSkipped).isEqualTo(1)
+        assertThat(outcome.previouslyDeletedSkipped).isEqualTo(0)
+    }
+
+    @Test
+    fun importBatch_reportsATombstonedCollisionAsPreviouslyDeletedSkipped_notDuplicatesSkipped() = runTest {
+        dao.importBatch(listOf(transactionEntity(id = "t1", contentHash = "h1")))
+        dao.softDelete("t1", deletedAt = 1_000L)
+
+        // The scenario the fix exists for: a user deletes a transaction, then
+        // re-imports the statement meaning to get it back. Before this split,
+        // this reported as an ordinary duplicate -- indistinguishable from
+        // "was never deleted" -- rather than as what it actually is.
+        val outcome = dao.importBatch(listOf(transactionEntity(id = "t2", contentHash = "h1")))
+
+        assertThat(outcome.insertedIds).isEmpty()
+        assertThat(outcome.duplicatesSkipped).isEqualTo(0)
+        assertThat(outcome.previouslyDeletedSkipped).isEqualTo(1)
+        // Not resurrected: the tombstone stands, matching duplicatesSkipped's
+        // own "no restore affordance" rule (CsvImporter.kt's doc on ImportResult).
+        assertThat(allTransactions(includeDeleted = true)).hasSize(1)
+    }
+
+    @Test
+    fun importBatch_countsEveryIncomingRowIntoExactlyOneBucket() = runTest {
+        dao.importBatch(listOf(transactionEntity(id = "live", contentHash = "h-live")))
+        dao.importBatch(listOf(transactionEntity(id = "gone", contentHash = "h-gone")))
+        dao.softDelete("gone", deletedAt = 1_000L)
+
+        val outcome = dao.importBatch(
+            listOf(
+                transactionEntity(id = "new1", contentHash = "h-live"), // collides with a live row
+                transactionEntity(id = "new2", contentHash = "h-gone"), // collides with a tombstone
+                transactionEntity(id = "new3", contentHash = "h-new"), // genuinely new
+            ),
+        )
+
+        assertThat(outcome.insertedIds).containsExactly("new3")
+        assertThat(outcome.duplicatesSkipped).isEqualTo(1)
+        assertThat(outcome.previouslyDeletedSkipped).isEqualTo(1)
+        // No silent gap: every row handed in landed in exactly one bucket.
+        assertThat(outcome.insertedIds.size + outcome.duplicatesSkipped + outcome.previouslyDeletedSkipped)
+            .isEqualTo(3)
     }
 
     @Test

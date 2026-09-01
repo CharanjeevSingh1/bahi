@@ -92,7 +92,20 @@ interface TransactionRepository {
  * counting them, is what lets a caller act on exactly the new rows: running
  * auto-categorisation over the whole parsed file instead would report work
  * against rows that were never inserted.
+ *
+ * [duplicatesSkipped] and [previouslyDeletedSkipped] mirror
+ * `TransactionDao.ImportBatchOutcome`'s own two counts one layer up
+ * (docs/sync-design.md §6.1, slice 9b): a hash match against a live row
+ * versus a tombstoned one. They stay split all the way to `CsvImporter`'s
+ * `ImportResult`, which is what lets the import screen tell a user "this was
+ * already there" apart from "you deleted this one already" instead of
+ * reporting both as an undifferentiated duplicate.
  */
-data class ImportBatchResult(val batchId: String, val insertedIds: List<String>) {
+data class ImportBatchResult(
+    val batchId: String,
+    val insertedIds: List<String>,
+    val duplicatesSkipped: Int,
+    val previouslyDeletedSkipped: Int,
+) {
     val insertedCount: Int get() = insertedIds.size
 }
