@@ -1,16 +1,22 @@
 package dev.charanjeev.bahi.feature.settings
 
+import android.app.PendingIntent
+import android.content.Intent
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.charanjeev.bahi.core.data.repository.SyncConflictRepository
 import dev.charanjeev.bahi.core.sync.SyncConfiguration
+import dev.charanjeev.bahi.core.sync.oauth.ConsentRequest
+import dev.charanjeev.bahi.core.sync.oauth.DriveAuthorization
 import javax.inject.Inject
 import kotlinx.collections.immutable.toPersistentList
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -29,10 +35,18 @@ import kotlinx.coroutines.launch
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
     private val conflictRepository: SyncConflictRepository,
+    private val driveAuthorization: DriveAuthorization,
     syncConfiguration: SyncConfiguration,
 ) : ViewModel() {
 
     private val restoreMessage = MutableStateFlow<RestoreMessage?>(null)
+
+    // A PendingIntent isn't state -- launching it a second time on
+    // recomposition or process restart would be wrong -- so it travels as a
+    // one-shot event, the same reasoning restoreMessage's own ack path
+    // (onRestoreMessageShown) exists to avoid re-showing a snackbar.
+    private val consentRequests = Channel<PendingIntent>(Channel.CONFLATED)
+    val consentRequestEvents = consentRequests.receiveAsFlow()
 
     // Read once: whether sync.properties existed at build time can't change for
     // the life of this process, so there is nothing to observe here -- see
@@ -43,9 +57,10 @@ class SettingsViewModel @Inject constructor(
     val uiState: StateFlow<SettingsUiState> = combine(
         conflictRepository.observeConflicts(),
         restoreMessage,
-    ) { conflicts, message ->
+        driveAuthorization.connectionState,
+    ) { conflicts, message, driveConnection ->
         if (conflicts.isEmpty()) {
-            SettingsUiState.Empty(syncConfigured = syncConfigured, restoreMessage = message)
+            SettingsUiState.Empty(syncConfigured = syncConfigured, restoreMessage = message, driveConnection = driveConnection)
         } else {
             SettingsUiState.Success(
                 conflicts = conflicts.map {
@@ -61,6 +76,7 @@ class SettingsViewModel @Inject constructor(
                 }.toPersistentList(),
                 restoreMessage = message,
                 syncConfigured = syncConfigured,
+                driveConnection = driveConnection,
             )
         }
     }.stateIn(
@@ -82,5 +98,23 @@ class SettingsViewModel @Inject constructor(
 
     fun onRestoreMessageShown() {
         restoreMessage.value = null
+    }
+
+    /** Tapping "Connect" or "Reconnect" on the Drive row. */
+    fun onConnectDriveRequested() {
+        viewModelScope.launch {
+            when (val request = driveAuthorization.beginAuthorization()) {
+                // driveAuthorization.connectionState already reflects a
+                // Resolved outcome (DriveAuthorization's own contract) --
+                // nothing further to do here.
+                is ConsentRequest.Resolved -> Unit
+                is ConsentRequest.NeedsConsent -> consentRequests.trySend(request.pendingIntent)
+            }
+        }
+    }
+
+    /** The Activity Result callback for a launched consent [PendingIntent], forwarded here. */
+    fun onAuthorizationResult(resultCode: Int, data: Intent?) {
+        viewModelScope.launch { driveAuthorization.completeAuthorization(resultCode, data) }
     }
 }

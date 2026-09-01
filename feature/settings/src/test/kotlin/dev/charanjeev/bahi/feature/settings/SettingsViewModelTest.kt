@@ -6,6 +6,9 @@ import dev.charanjeev.bahi.core.data.repository.RestoreOutcome
 import dev.charanjeev.bahi.core.model.ConflictValue
 import dev.charanjeev.bahi.core.model.SyncConflict
 import dev.charanjeev.bahi.core.model.SyncTable
+import dev.charanjeev.bahi.core.sync.oauth.AuthorizationOutcome
+import dev.charanjeev.bahi.core.sync.oauth.ConsentRequest
+import dev.charanjeev.bahi.core.sync.oauth.DriveConnectionState
 import dev.charanjeev.bahi.core.testing.MainDispatcherRule
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
@@ -21,8 +24,9 @@ class SettingsViewModelTest {
 
     private val repository = FakeSyncConflictRepository()
     private val syncConfiguration = FakeSyncConfiguration()
+    private val driveAuthorization = FakeDriveAuthorization()
 
-    private fun viewModel() = SettingsViewModel(repository, syncConfiguration)
+    private fun viewModel() = SettingsViewModel(repository, driveAuthorization, syncConfiguration)
 
     private fun conflict(
         id: String = "c1",
@@ -48,7 +52,7 @@ class SettingsViewModelTest {
 
     @Test
     fun `carries syncConfigured through every state, not just once it loads`() = runTest {
-        val viewModel = SettingsViewModel(repository, FakeSyncConfiguration(isConfigured = false))
+        val viewModel = SettingsViewModel(repository, driveAuthorization, FakeSyncConfiguration(isConfigured = false))
 
         viewModel.uiState.test {
             assertThat(awaitItem().syncConfigured).isFalse()
@@ -160,5 +164,51 @@ class SettingsViewModelTest {
             assertThat(cleared.restoreMessage).isNull()
             assertThat(cleared.conflicts.map { it.id }).containsExactly("c1")
         }
+    }
+
+    @Test
+    fun `carries driveConnection through every state that has one`() = runTest {
+        val driveAuth = FakeDriveAuthorization(initialState = DriveConnectionState.NEEDS_REAUTHORIZATION)
+        val viewModel = SettingsViewModel(repository, driveAuth, syncConfiguration)
+
+        viewModel.uiState.test {
+            skipItems(1) // Loading -- no driveConnection to carry
+            val empty = awaitItem() as SettingsUiState.Empty
+            assertThat(empty.driveConnection).isEqualTo(DriveConnectionState.NEEDS_REAUTHORIZATION)
+        }
+    }
+
+    @Test
+    fun `connecting drive with no resolution needed leaves nothing to launch`() = runTest {
+        driveAuthorization.beginAuthorizationResult = ConsentRequest.Resolved(AuthorizationOutcome.Authorized("token"))
+        val viewModel = viewModel()
+
+        viewModel.uiState.test {
+            skipItems(1) // Loading
+            skipItems(1) // Empty, NOT_CONNECTED
+
+            viewModel.onConnectDriveRequested()
+
+            val afterConnect = awaitItem() as SettingsUiState.Empty
+            assertThat(afterConnect.driveConnection).isEqualTo(DriveConnectionState.CONNECTED)
+        }
+        assertThat(driveAuthorization.beginAuthorizationCalls).isEqualTo(1)
+    }
+
+    @Test
+    fun `completing authorization forwards the activity result to the key store`() = runTest {
+        driveAuthorization.completeAuthorizationResult = AuthorizationOutcome.Authorized("token")
+        val viewModel = viewModel()
+
+        viewModel.uiState.test {
+            skipItems(1) // Loading
+            skipItems(1) // Empty, NOT_CONNECTED
+
+            viewModel.onAuthorizationResult(resultCode = -1, data = null)
+
+            val afterComplete = awaitItem() as SettingsUiState.Empty
+            assertThat(afterComplete.driveConnection).isEqualTo(DriveConnectionState.CONNECTED)
+        }
+        assertThat(driveAuthorization.completeAuthorizationCalls).isEqualTo(1)
     }
 }

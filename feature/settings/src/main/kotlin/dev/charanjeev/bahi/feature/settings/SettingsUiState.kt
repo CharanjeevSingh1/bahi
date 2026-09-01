@@ -3,6 +3,7 @@ package dev.charanjeev.bahi.feature.settings
 import dev.charanjeev.bahi.core.data.repository.RestoreOutcome
 import dev.charanjeev.bahi.core.model.ConflictValue
 import dev.charanjeev.bahi.core.model.SyncTable
+import dev.charanjeev.bahi.core.sync.oauth.DriveConnectionState
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.datetime.Instant
 
@@ -43,12 +44,14 @@ sealed interface SettingsUiState {
     data class Empty(
         override val syncConfigured: Boolean = true,
         override val restoreMessage: RestoreMessage? = null,
+        val driveConnection: DriveConnectionState = DriveConnectionState.NOT_CONNECTED,
     ) : SettingsUiState
 
     data class Success(
         val conflicts: ImmutableList<ConflictListItem>,
         override val restoreMessage: RestoreMessage? = null,
         override val syncConfigured: Boolean = true,
+        val driveConnection: DriveConnectionState = DriveConnectionState.NOT_CONNECTED,
     ) : SettingsUiState
 }
 
@@ -79,6 +82,8 @@ internal object SettingsTestTags {
     const val CONFLICTS_COUNT = "settings:conflictsCount"
     const val NOT_CONFIGURED = "settings:notConfigured"
     const val ENCRYPTION_ROW = "settings:encryptionRow"
+    const val DRIVE_ROW = "settings:driveRow"
+    const val DRIVE_CONNECT_BUTTON = "settings:driveConnectButton"
 
     fun row(id: String) = "settings:row:$id"
     fun restore(id: String) = "settings:restore:$id"

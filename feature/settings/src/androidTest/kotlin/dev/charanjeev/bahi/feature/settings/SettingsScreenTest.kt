@@ -11,6 +11,7 @@ import com.google.common.truth.Truth.assertThat
 import dev.charanjeev.bahi.core.data.repository.RestoreOutcome
 import dev.charanjeev.bahi.core.model.ConflictValue
 import dev.charanjeev.bahi.core.model.SyncTable
+import dev.charanjeev.bahi.core.sync.oauth.DriveConnectionState
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.datetime.Instant
 import org.junit.Rule
@@ -164,6 +165,61 @@ class SettingsScreenTest {
         }
 
         composeTestRule.onNodeWithText(string(R.string.settings_restore_value_changed)).assertIsDisplayed()
+    }
+
+    @Test
+    fun notConnected_showsAConnectButton() {
+        composeTestRule.setContent {
+            SettingsScreen(uiState = SettingsUiState.Empty(driveConnection = DriveConnectionState.NOT_CONNECTED))
+        }
+
+        composeTestRule.onNodeWithText(string(R.string.settings_drive_not_connected_title)).assertIsDisplayed()
+        composeTestRule.onNodeWithTag(SettingsTestTags.DRIVE_CONNECT_BUTTON).assertIsDisplayed()
+        composeTestRule.onNodeWithText(string(R.string.settings_drive_connect)).assertIsDisplayed()
+    }
+
+    @Test
+    fun connected_showsNoButton() {
+        composeTestRule.setContent {
+            SettingsScreen(uiState = SettingsUiState.Empty(driveConnection = DriveConnectionState.CONNECTED))
+        }
+
+        composeTestRule.onNodeWithText(string(R.string.settings_drive_connected)).assertIsDisplayed()
+        composeTestRule.onNodeWithTag(SettingsTestTags.DRIVE_CONNECT_BUTTON).assertDoesNotExist()
+    }
+
+    @Test
+    fun needsReauthorization_showsAReconnectButtonWithDistinctCopy() {
+        composeTestRule.setContent {
+            SettingsScreen(uiState = SettingsUiState.Empty(driveConnection = DriveConnectionState.NEEDS_REAUTHORIZATION))
+        }
+
+        composeTestRule.onNodeWithText(string(R.string.settings_drive_needs_reauthorization_title)).assertIsDisplayed()
+        composeTestRule.onNodeWithText(string(R.string.settings_drive_reconnect)).assertIsDisplayed()
+    }
+
+    @Test
+    fun notConfigured_hidesTheDriveRow() {
+        composeTestRule.setContent {
+            SettingsScreen(uiState = SettingsUiState.Empty(syncConfigured = false, driveConnection = DriveConnectionState.NOT_CONNECTED))
+        }
+
+        composeTestRule.onNodeWithTag(SettingsTestTags.DRIVE_ROW).assertDoesNotExist()
+    }
+
+    @Test
+    fun tappingConnectInvokesTheCallback() {
+        var clicked = false
+        composeTestRule.setContent {
+            SettingsScreen(
+                uiState = SettingsUiState.Empty(driveConnection = DriveConnectionState.NOT_CONNECTED),
+                onConnectDriveClicked = { clicked = true },
+            )
+        }
+
+        composeTestRule.onNodeWithTag(SettingsTestTags.DRIVE_CONNECT_BUTTON).performClick()
+
+        assertThat(clicked).isTrue()
     }
 
     @Test

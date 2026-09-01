@@ -14,6 +14,8 @@ import dev.charanjeev.bahi.core.sync.SyncEncryptionKeyStore
 import dev.charanjeev.bahi.core.sync.SyncTransport
 import dev.charanjeev.bahi.core.sync.crypto.AndroidKeyStoreKeyWrapper
 import dev.charanjeev.bahi.core.sync.crypto.KeyWrapper
+import dev.charanjeev.bahi.core.sync.oauth.DriveAuthorization
+import dev.charanjeev.bahi.core.sync.oauth.PlayServicesDriveAuthorization
 import javax.inject.Singleton
 
 @Module
@@ -50,4 +52,9 @@ interface SyncModule {
     @Binds
     @Singleton
     fun bindSyncEncryptionKeyStore(implementation: DefaultSyncEncryptionKeyStore): SyncEncryptionKeyStore
+
+    /** See [PlayServicesDriveAuthorization]'s doc for what this cannot be verified against in this repo. */
+    @Binds
+    @Singleton
+    fun bindDriveAuthorization(implementation: PlayServicesDriveAuthorization): DriveAuthorization
 }

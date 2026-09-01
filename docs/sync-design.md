@@ -1982,9 +1982,16 @@ points away from it. The scope this app needs, `drive.appdata`, is an
 **Authorization API** inside Play Services (`Identity.getAuthorizationClient()`),
 which is what replaced `GoogleSignInClient`'s scope-consent path. That is one
 new dependency, `com.google.android.gms:play-services-auth` — already the one
-named in §8.2's option-B sketch — plus whatever `androidx.credentials`
-artifacts it needs. Both ask-before-adding per CLAUDE.md; named here as the
-recommendation for that conversation rather than added.
+named in §8.2's option-B sketch. Ask-before-adding per CLAUDE.md; named here
+as the recommendation for that conversation rather than added.
+
+**Corrected while building 9d: no `androidx.credentials` dependency.** That
+artifact backports the newer Credential Manager *sign-in* flow to older API
+levels; it has nothing to do with the Authorization API's *scope-grant* flow
+this section actually specifies, and the hedge above was wrong to imply it
+might be needed alongside it. Checked against Google's own current
+documentation, not assumed. `play-services-auth` alone is the whole of the
+new dependency surface.
 
 The alternative considered and rejected: a provider-agnostic OAuth flow via
 AppAuth (Custom Tabs + PKCE, no Play Services dependency at all). It would
@@ -2800,12 +2807,62 @@ questions into decisions (D9, D12, D13).
      back immediately from `Done` rather than the entry form — the one thing
      no test suite here proves, since it depends on a real `AndroidKeyStore`
      key surviving a real process death, not a fake standing in for one.
-   - **9d — OAuth** (§8.6). The Authorization API integration, the
-     `drive.appdata` consent flow, silent refresh, and
-     `SyncStatus.NeedsReauthorization` with its Settings surfacing. The slice
-     that most needs a real Google account to develop against, though its
-     unit-testable parts — state transitions, what the worker does with each
-     `SyncStatus` — don't.
+   - **9d — OAuth** (§8.6). **Done.** `PlayServicesDriveAuthorization`
+     (`:core:sync/oauth`) wraps `Identity.getAuthorizationClient` behind
+     `DriveAuthorization`, the same seam shape `SyncEncryptionKeyStore` uses
+     over `AndroidKeyStore` (slice 9c): the real class needs Play Services and
+     a Google account, so `SettingsViewModel` and the Drive connection row are
+     tested against `FakeDriveAuthorization` instead.
+     `dev.charanjeev.bahi.core.model.SyncStatus.NeedsReauthorization` exists,
+     as this document said it would, but nothing produces it yet — same
+     "decorative until 9g" note slice 8 already made for the rest of
+     `SyncStatus`, restated at the new case rather than left to be
+     rediscovered. What the Settings row actually reads is
+     `DriveAuthorization.connectionState`
+     (`NOT_CONNECTED`/`CONNECTED`/`NEEDS_REAUTHORIZATION`), for the same
+     reason slice 8 preferred `observeUnacknowledgedCount` over `SyncStatus`
+     there: it is live from the moment a device first tries to authorize, not
+     only once a sync cycle exists to update it.
+
+     **Corrected while building 9d: `androidx.credentials` is not needed.**
+     §8.6's "plus whatever `androidx.credentials` artifacts it needs" was a
+     hedge from before this was built. Checked against Google's own current
+     documentation rather than assumed: that artifact backports the newer
+     Credential Manager *sign-in* flow to older API levels and has nothing to
+     do with the Authorization API's *scope-grant* flow this app actually
+     uses. The only new dependency is `com.google.android.gms:play-services-
+     auth:22.0.0`.
+
+     **A bug found in review before this shipped.** The Drive row's first
+     draft rendered inside the `Empty`/`Success` branches unconditionally,
+     independent of the `if (!syncConfigured) ... else ...` block above it
+     that gates `EncryptionRow` — so an unconfigured build would have shown
+     "Not set up on this build" *and* a live "Connect Google Drive" button
+     with nothing for it to connect to. Fixed before it reached a test run:
+     the row's own doc comment now says why it has to share `EncryptionRow`'s
+     gate, and `notConfigured_hidesTheDriveRow` is the regression test.
+
+     **What is and isn't verified, stated as plainly as the task asked for.**
+     Everything except `PlayServicesDriveAuthorization` itself is unit- or
+     Compose-tested against `FakeDriveAuthorization`: the ViewModel's
+     `onConnectDriveRequested`/`onAuthorizationResult`, every
+     `DriveConnectionState` the row can render, and the gate bug above. That
+     one class cannot be exercised by any automated test in this repo —
+     `DriveAuthorization`'s own doc says why — and this environment has no
+     Google account and no way to create one, so a real consent *grant* was
+     never completed either. What manual verification on the slice-9c emulator
+     did show, confirmed in `logcat` by real component names rather than
+     assumed: tapping "Connect" genuinely calls
+     `Identity.getAuthorizationClient(context).authorize(...)`, genuinely gets
+     back a resolution and a `pendingIntent`, and that `pendingIntent`,
+     launched through `SettingsRoute`'s `rememberLauncherForActivityResult`,
+     genuinely opens Google's own account-add UI and returns cleanly to
+     `NOT_CONNECTED` on cancel, with no crash. So the wiring is verified live;
+     only the inside of a completed grant — the `Authorized` branch, and the
+     exact `ApiException` codes a real revocation returns — rests on Google's
+     documented contract rather than on having watched it happen.
+     `PlayServicesDriveAuthorization`'s own doc has the same account, in the
+     place a future reader is most likely to look for it.
    - **9e — `DriveTransport` and its contract test** (§10.5). The four REST
      calls (list/get/create/delete under `appDataFolder`),
      `DriveTransportContractTest` in the `driveTest` source set, and the

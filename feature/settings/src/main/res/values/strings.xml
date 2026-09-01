@@ -7,6 +7,13 @@
     <string name="settings_sync_not_configured_title">Not set up on this build</string>
     <string name="settings_sync_not_configured_body">This build has no sync backend configured, so nothing leaves this device. See docs/sync-setup.md.</string>
     <string name="settings_encryption_row">Encryption</string>
+    <string name="settings_drive_not_connected_title">Google Drive not connected</string>
+    <string name="settings_drive_not_connected_body">Sync uploads to your own Google Drive, not a server anyone else runs. Connect to allow it.</string>
+    <string name="settings_drive_connected">Google Drive connected</string>
+    <string name="settings_drive_needs_reauthorization_title">Sync access was removed</string>
+    <string name="settings_drive_needs_reauthorization_body">Access to your Google Drive was revoked, so sync has stopped. Reconnect to resume it.</string>
+    <string name="settings_drive_connect">Connect</string>
+    <string name="settings_drive_reconnect">Reconnect</string>
 
     <string name="passphrase_title">Sync encryption</string>
     <string name="passphrase_setup_disclosure">Every transaction — amount, date, description, merchant, category, notes — plus your budgets and categorisation rules go into your own Google Drive, not a server anyone else runs. Encrypting them means only someone who knows this passphrase can read that copy, not Google and not anyone who takes over your Google account.</string>

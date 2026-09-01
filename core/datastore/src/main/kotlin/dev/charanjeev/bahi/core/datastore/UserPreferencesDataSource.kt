@@ -2,6 +2,7 @@ package dev.charanjeev.bahi.core.datastore
 
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import kotlinx.coroutines.flow.Flow
@@ -53,11 +54,28 @@ class UserPreferencesDataSource @Inject constructor(
         }
     }
 
+    /**
+     * The one boolean-shaped fact §8.6 says this device's OAuth state reduces
+     * to: whether `drive.appdata` access has ever been granted. Not a token
+     * and not a refresh token -- the Authorization API owns minting and
+     * refreshing those, silently, as long as consent hasn't been revoked
+     * (slice 9d). Defaults `false` for a fresh install, same direction
+     * `categories.updated_at`'s migration default picked for the same reason:
+     * the safe side to be wrong on is the one that asks again, not the one
+     * that assumes access it doesn't have.
+     */
+    val driveAuthorized: Flow<Boolean> = dataStore.data.map { it[KEY_DRIVE_AUTHORIZED] ?: false }
+
+    suspend fun setDriveAuthorized(authorized: Boolean) {
+        dataStore.edit { it[KEY_DRIVE_AUTHORIZED] = authorized }
+    }
+
     private companion object {
         val KEY_SYNC_CURSOR = stringPreferencesKey("last_sync_cursor")
         val KEY_SYNC_ENCRYPTION_SALT = stringPreferencesKey("sync_encryption_salt")
         val KEY_SYNC_ENCRYPTION_WRAPPED_KEY = stringPreferencesKey("sync_encryption_wrapped_key")
         val KEY_SYNC_ENCRYPTION_WRAPPED_KEY_IV = stringPreferencesKey("sync_encryption_wrapped_key_iv")
+        val KEY_DRIVE_AUTHORIZED = booleanPreferencesKey("drive_authorized")
     }
 }
 

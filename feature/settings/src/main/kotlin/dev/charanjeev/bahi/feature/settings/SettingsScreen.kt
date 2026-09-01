@@ -1,5 +1,8 @@
 package dev.charanjeev.bahi.feature.settings
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.IntentSenderRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -11,6 +14,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -39,6 +43,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.charanjeev.bahi.core.data.repository.RestoreOutcome
 import dev.charanjeev.bahi.core.model.ConflictValue
 import dev.charanjeev.bahi.core.model.SyncTable
+import dev.charanjeev.bahi.core.sync.oauth.DriveConnectionState
 
 @Composable
 fun SettingsRoute(
@@ -48,10 +53,26 @@ fun SettingsRoute(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
+    // Only the Composable can launch a system consent screen (Activity
+    // Result API) -- the ViewModel hands over the PendingIntent as a one-shot
+    // event and finds out how it went through onAuthorizationResult, the same
+    // split SettingsViewModel's own doc draws between "decide" and "launch"
+    // (docs/sync-design.md §8.6, slice 9d).
+    val consentLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartIntentSenderForResult(),
+    ) { result -> viewModel.onAuthorizationResult(result.resultCode, result.data) }
+
+    LaunchedEffect(Unit) {
+        viewModel.consentRequestEvents.collect { pendingIntent ->
+            consentLauncher.launch(IntentSenderRequest.Builder(pendingIntent.intentSender).build())
+        }
+    }
+
     SettingsScreen(
         uiState = uiState,
         onNavigateBack = onNavigateBack,
         onOpenEncryptionSetup = onOpenEncryptionSetup,
+        onConnectDriveClicked = viewModel::onConnectDriveRequested,
         onRestoreRequested = viewModel::onRestoreRequested,
         onDismissRequested = viewModel::onDismissRequested,
         onRestoreMessageShown = viewModel::onRestoreMessageShown,
@@ -66,6 +87,7 @@ internal fun SettingsScreen(
     modifier: Modifier = Modifier,
     onNavigateBack: () -> Unit = {},
     onOpenEncryptionSetup: () -> Unit = {},
+    onConnectDriveClicked: () -> Unit = {},
     onRestoreRequested: (String) -> Unit = {},
     onDismissRequested: (String) -> Unit = {},
     onRestoreMessageShown: () -> Unit = {},
@@ -114,10 +136,26 @@ internal fun SettingsScreen(
             if (!uiState.syncConfigured) {
                 NotConfiguredRow(modifier = Modifier.testTag(SettingsTestTags.NOT_CONFIGURED))
             } else {
+                // Both rows only make sense once this build has a transport
+                // target at all -- same gate as NotConfiguredRow, just the
+                // opposite branch of it. Connecting Drive with nothing to
+                // sync to would be a dead end the same way setting up
+                // encryption would be (EncryptionRow's doc).
                 EncryptionRow(
                     onClick = onOpenEncryptionSetup,
                     modifier = Modifier.testTag(SettingsTestTags.ENCRYPTION_ROW),
                 )
+                // Only Empty/Success carry a driveConnection -- see DriveRow's
+                // own doc for why Loading has none to show rather than a
+                // fabricated default.
+                val driveConnection = when (uiState) {
+                    is SettingsUiState.Empty -> uiState.driveConnection
+                    is SettingsUiState.Success -> uiState.driveConnection
+                    is SettingsUiState.Loading -> null
+                }
+                if (driveConnection != null) {
+                    DriveRow(state = driveConnection, onConnectClicked = onConnectDriveClicked)
+                }
             }
             when (uiState) {
                 is SettingsUiState.Loading -> CircularProgressIndicator(
@@ -253,6 +291,57 @@ private fun EncryptionRow(onClick: () -> Unit, modifier: Modifier = Modifier) {
             text = stringResource(R.string.settings_encryption_row),
             style = MaterialTheme.typography.bodyLarge,
         )
+    }
+    HorizontalDivider()
+}
+
+/**
+ * Gated on `syncConfigured` the same way [EncryptionRow] is -- connecting
+ * Drive on a build with no transport target at all would be a dead end.
+ * Rendered in [SettingsUiState.Empty] and [SettingsUiState.Success], not
+ * [SettingsUiState.Loading]: `isAuthorized` has no synchronous answer the way
+ * `syncConfigured` does, so there is no value to show here yet while still
+ * loading, and none is fabricated (docs/sync-design.md §8.6, slice 9d).
+ */
+@Composable
+private fun DriveRow(state: DriveConnectionState, onConnectClicked: () -> Unit, modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 12.dp)
+            .testTag(SettingsTestTags.DRIVE_ROW),
+    ) {
+        when (state) {
+            DriveConnectionState.NOT_CONNECTED -> {
+                Text(stringResource(R.string.settings_drive_not_connected_title), style = MaterialTheme.typography.bodyLarge)
+                Text(
+                    stringResource(R.string.settings_drive_not_connected_body),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Button(onClick = onConnectClicked, modifier = Modifier.testTag(SettingsTestTags.DRIVE_CONNECT_BUTTON)) {
+                    Text(stringResource(R.string.settings_drive_connect))
+                }
+            }
+
+            DriveConnectionState.CONNECTED -> Text(stringResource(R.string.settings_drive_connected), style = MaterialTheme.typography.bodyLarge)
+
+            DriveConnectionState.NEEDS_REAUTHORIZATION -> {
+                Text(
+                    stringResource(R.string.settings_drive_needs_reauthorization_title),
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.error,
+                )
+                Text(
+                    stringResource(R.string.settings_drive_needs_reauthorization_body),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Button(onClick = onConnectClicked, modifier = Modifier.testTag(SettingsTestTags.DRIVE_CONNECT_BUTTON)) {
+                    Text(stringResource(R.string.settings_drive_reconnect))
+                }
+            }
+        }
     }
     HorizontalDivider()
 }
