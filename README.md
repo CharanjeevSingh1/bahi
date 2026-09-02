@@ -166,7 +166,7 @@ cd bahi
 
 ---
 
-## Roadmap
+## Milestones
 
 - [x] **M0** — Module structure, convention plugins, CI, Room schema + migration test harness
 - [x] **M1** — Transaction CRUD, categories, list and detail screens
@@ -175,7 +175,7 @@ cd bahi
 - [x] **M4a** — Row-level sync, the convergence engine: per-field merge against a stored base, proven by running two engines over two databases and a fake transport in one process. No network. [`docs/sync-design.md`](docs/sync-design.md)
 - [x] **M4b** — The transport that carries M4a's operations between devices: Google Drive as an encrypted append-only op log, OAuth, an elected-compactor step, and the periodic worker that gives `SyncEngine` its first real caller. Everything is proven against `InMemoryTransport`/an in-memory fake Drive, the same way M4a proves convergence with no network — **no real Drive account has run this app yet**, stated plainly rather than left to be inferred. [`docs/sync-design.md`](docs/sync-design.md)
 - [x] **M5** — Insights: category breakdown, spending trend, over-budget list (`:feature:insights`)
-- [ ] **M5** — Baseline profile and Macrobenchmark startup numbers
+- [ ] **M6** — Baseline profile and Macrobenchmark startup numbers
 
 ---
 
