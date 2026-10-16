@@ -12,7 +12,7 @@ import org.jetbrains.kotlin.gradle.dsl.KotlinJvmProjectExtension
 /**
  * Single place where compile SDK, min SDK, Java version and compiler flags are
  * set for every Android module. Changing the JVM target here changes it for all
- * 15 modules -- which is the entire reason convention plugins exist.
+ * 17 modules -- which is the entire reason convention plugins exist.
  */
 internal fun Project.configureKotlinAndroid(
     commonExtension: CommonExtension<*, *, *, *, *, *>,

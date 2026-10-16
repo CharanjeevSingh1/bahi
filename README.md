@@ -51,12 +51,15 @@ Two shorter documents support the sync design rather than arguing a case of thei
 
 ## Architecture
 
-Three layers, sixteen modules. Features never depend on other features; the build fails if they try.
+Three layers plus the `:benchmark` test module, seventeen modules. Features never depend on other features; the build fails if they try.
 
 ```mermaid
 graph LR
     subgraph tier_app[App]
         app[":app"]:::app
+    end
+    subgraph tier_benchmark[Benchmark]
+        benchmark[":benchmark"]:::benchmark
     end
     subgraph tier_feature[Feature]
         feature_budgets[":feature:budgets"]:::feature
@@ -79,6 +82,7 @@ graph LR
         core_common[":core:common"]:::foundation
     end
 
+    benchmark --> app
     app --> tier_feature
     app --> core_data
     app --> core_designsystem
@@ -87,6 +91,7 @@ graph LR
     tier_feature --> core_data
     tier_feature --> core_designsystem
     tier_feature --> core_importer
+    tier_feature --> core_sync
     tier_feature --> core_ui
     core_data --> core_database
     core_data --> core_datastore
@@ -98,6 +103,7 @@ graph LR
     classDef app fill:#f9a825,stroke:#333,color:#000
     classDef feature fill:#42a5f5,stroke:#333,color:#000
     classDef core fill:#66bb6a,stroke:#333,color:#000
+    classDef benchmark fill:#ba68c8,stroke:#333,color:#000
     classDef foundation fill:#e0e0e0,stroke:#333,color:#000
 ```
 
@@ -123,7 +129,7 @@ This simplified diagram is derived from that same generated data (`renderSimplif
 
 **Content hashing for import de-duplication.** Re-importing an overlapping statement must not create duplicates — and, subtler, two genuinely identical transactions in one batch must not be mistaken for a re-import of each other. The check is count-aware (how many of this hash already exist vs. how many just arrived), not presence-aware, precisely because presence-only filtering drops legitimate duplicates the moment a batch overlaps a previous import. `docs/csv-import-design.md` §4 has the failure case that motivated it.
 
-**Convention plugins, not copy-pasted build files.** JVM target, compile SDK, Compose setup and test dependencies are defined once in `build-logic/` and applied as `bahi.android.feature` etc. Changing the JVM target changes it for all sixteen modules.
+**Convention plugins, not copy-pasted build files.** JVM target, compile SDK, Compose setup and test dependencies are defined once in `build-logic/` and applied as `bahi.android.feature` etc. Changing the JVM target changes it for all seventeen modules.
 
 ---
 

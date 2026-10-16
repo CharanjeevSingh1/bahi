@@ -25,6 +25,26 @@ android {
         // M4b slice 9d is what gives it a real key to hold (docs/sync-setup.md).
         buildConfigField("boolean", "SYNC_CONFIGURED", rootProject.file("sync.properties").exists().toString())
     }
+
+    buildTypes {
+        // What :benchmark measures. Copies release wholesale -- R8, resource
+        // shrinking, debug signing -- so the numbers are for the app that ships.
+        // Not debuggable: Macrobenchmark refuses a debuggable target, which is
+        // the point (docs/baseline-profile-design.md §4, §6).
+        create("benchmark") {
+            initWith(getByName("release"))
+            matchingFallbacks += "release"
+            isDebuggable = false
+        }
+    }
+
+    // A custom build type gets no src/<name> of its own, and release's
+    // DebugSeeder no-op lives in src/release; without this the benchmark
+    // variant has no DebugSeeder at all. Sharing the directory (rather than
+    // copying the file) keeps the two from drifting.
+    sourceSets {
+        getByName("benchmark").java.srcDir("src/release/kotlin")
+    }
 }
 
 dependencies {
@@ -46,6 +66,11 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.navigation.compose)
+
+    // Already on the classpath transitively (activity, compose-ui, lifecycle);
+    // declared so the ProfileVerifier check in M6 asserts against a pinned
+    // version and survives an unrelated library dropping it.
+    implementation(libs.androidx.profileinstaller)
 
     // BahiApplication is the only place that implements Configuration.Provider
     // (docs/sync-design.md §8.7, §13 slice 9g) -- it needs both artifacts on

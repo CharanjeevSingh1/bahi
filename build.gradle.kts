@@ -1,3 +1,4 @@
+import com.android.build.api.dsl.TestExtension
 import org.gradle.api.artifacts.ProjectDependency
 
 plugins {
@@ -52,13 +53,13 @@ subprojects {
 // build itself rather than hand-drawn:
 //
 //  1. A simplified, tier-level architecture diagram -- meant for the README.
-//  2. The full 50-edge dependency graph -- every edge, for when someone
+//  2. The full 59-edge dependency graph -- every edge, for when someone
 //     actually needs to trace one.
 //
-// The full graph is complete but, at 50 edges through 15 nodes, unreadable as
+// The full graph is complete but, at 59 edges through 17 nodes, unreadable as
 // an "explain the architecture" picture: Mermaid has no idea :core:model and
 // :core:common are foundational rather than architecturally interesting, so
-// it draws all twelve edges into them along with everything else. The
+// it draws all 26 edges into them along with everything else. The
 // simplified diagram fixes this by construction, not by asking Mermaid to lay
 // the hairball out better -- it omits :core:model, :core:common and
 // :core:testing as edge targets (see excludedFromSimplified below) and
@@ -68,14 +69,24 @@ subprojects {
 // this file is evaluated, so their `dependencies {}` blocks -- and therefore
 // their ProjectDependency entries -- don't exist. Called from inside doLast,
 // by which point every project is configured and the edges are real.
+//
+// A com.android.test module (:benchmark) links to its target through
+// `targetProjectPath`, which creates no ProjectDependency -- so it is read
+// separately below. Without that, the module would contribute no edges, vanish
+// from the graph (nodes are derived from edges), and the check would still
+// print "Module boundaries OK".
 fun moduleEdges(): List<Pair<String, String>> = subprojects.flatMap { sub ->
-    listOf("implementation", "api", "compileOnly").flatMap { configName ->
+    val declared = listOf("implementation", "api", "compileOnly").flatMap { configName ->
         sub.configurations.findByName(configName)
             ?.dependencies
             ?.filterIsInstance<ProjectDependency>()
             ?.map { sub.path to it.path }
             .orEmpty()
     }
+    val target = (sub.extensions.findByName("android") as? TestExtension)
+        ?.targetProjectPath
+        ?.let { sub.path to it }
+    declared + listOfNotNull(target)
 }.distinct()
 
 fun nodeId(path: String) = path.removePrefix(":").replace(":", "_")
@@ -83,6 +94,7 @@ fun tierOf(path: String) = when {
     path.startsWith(":app") -> "app"
     path.startsWith(":feature") -> "feature"
     path.startsWith(":core") -> "core"
+    path == ":benchmark" -> "benchmark"
     else -> "other"
 }
 
@@ -104,7 +116,8 @@ fun renderFullGraph(edges: List<Pair<String, String>>): String {
     // with "tier_" -- Mermaid shares one id namespace between subgraphs and
     // nodes, and the :app module's node id is bare "app", which would
     // collide with a same-named subgraph id.
-    listOf("app" to "App", "feature" to "Feature", "core" to "Core").forEach { (cls, title) ->
+    listOf("app" to "App", "feature" to "Feature", "core" to "Core", "benchmark" to "Benchmark").forEach { (cls, title) ->
+        if (nodes.none { tierOf(it) == cls }) return@forEach
         sb.appendLine("    subgraph tier_$cls[$title]")
         nodes.filter { tierOf(it) == cls }.forEach { sb.appendLine("        ${nodeId(it)}[\"$it\"]:::${tierOf(it)}") }
         sb.appendLine("    end")
@@ -117,6 +130,7 @@ fun renderFullGraph(edges: List<Pair<String, String>>): String {
     sb.appendLine("    classDef app fill:#f9a825,stroke:#333,color:#000")
     sb.appendLine("    classDef feature fill:#42a5f5,stroke:#333,color:#000")
     sb.appendLine("    classDef core fill:#66bb6a,stroke:#333,color:#000")
+    sb.appendLine("    classDef benchmark fill:#ba68c8,stroke:#333,color:#000")
     sb.appendLine("```")
     return sb.toString()
 }
@@ -125,7 +139,7 @@ fun renderFullGraph(edges: List<Pair<String, String>>): String {
 // understand the shape of the system, not every edge that exists.
 //
 // :core:model, :core:common and :core:testing are dropped as edge targets --
-// almost every module depends on them, so drawing those edges is 15+ lines
+// almost every module depends on them, so drawing those edges is 26 lines
 // that say "this is a normal module" and nothing else. They're surfaced once,
 // as a labelled foundation layer with no incoming edges, instead of at every
 // node that touches them.
@@ -152,6 +166,8 @@ fun renderSimplifiedGraph(edges: List<Pair<String, String>>): String {
         it.first.startsWith(":core") && it.second.startsWith(":core") && it.second !in excludedCoreTargets
     }.distinct().sortedBy { it.first }
 
+    val benchmarkToApp = edges.any { it.first == ":benchmark" && it.second == ":app" }
+
     val appToFeature = edges.any { it.first.startsWith(":app") && it.second.startsWith(":feature") }
 
     val coreNodes = (appToCore + featureToCore + coreInternal.map { it.first } + coreInternal.map { it.second })
@@ -163,6 +179,11 @@ fun renderSimplifiedGraph(edges: List<Pair<String, String>>): String {
     sb.appendLine("    subgraph tier_app[App]")
     sb.appendLine("        app[\":app\"]:::app")
     sb.appendLine("    end")
+    if (benchmarkToApp) {
+        sb.appendLine("    subgraph tier_benchmark[Benchmark]")
+        sb.appendLine("        benchmark[\":benchmark\"]:::benchmark")
+        sb.appendLine("    end")
+    }
     sb.appendLine("    subgraph tier_feature[Feature]")
     featureNodes.forEach { sb.appendLine("        ${nodeId(it)}[\"$it\"]:::feature") }
     sb.appendLine("    end")
@@ -177,6 +198,7 @@ fun renderSimplifiedGraph(edges: List<Pair<String, String>>): String {
     sb.appendLine("        core_common[\":core:common\"]:::foundation")
     sb.appendLine("    end")
     sb.appendLine()
+    if (benchmarkToApp) sb.appendLine("    benchmark --> app")
     if (appToFeature) sb.appendLine("    app --> tier_feature")
     appToCore.forEach { sb.appendLine("    app --> ${nodeId(it)}") }
     featureToCore.forEach { sb.appendLine("    tier_feature --> ${nodeId(it)}") }
@@ -185,6 +207,7 @@ fun renderSimplifiedGraph(edges: List<Pair<String, String>>): String {
     sb.appendLine("    classDef app fill:#f9a825,stroke:#333,color:#000")
     sb.appendLine("    classDef feature fill:#42a5f5,stroke:#333,color:#000")
     sb.appendLine("    classDef core fill:#66bb6a,stroke:#333,color:#000")
+    sb.appendLine("    classDef benchmark fill:#ba68c8,stroke:#333,color:#000")
     sb.appendLine("    classDef foundation fill:#e0e0e0,stroke:#333,color:#000")
     sb.appendLine("```")
     return sb.toString()
@@ -235,29 +258,37 @@ tasks.register("moduleGraph") {
 // ---------------------------------------------------------------------------
 // ./gradlew checkModuleBoundaries
 //
-// Fails the build if a :feature module depends on another :feature module.
-// This is the architectural rule the README claims -- CI enforcing it is the
+// Fails the build if any module dependency matches a forbidden pattern. These
+// are the architectural rules the README claims -- CI enforcing them is the
 // difference between a stated convention and a real one.
+//
+// Two rules, kept as a plain list on purpose: it is the right size for two
+// rules, and a rule engine would be bigger than the thing it checks.
 // ---------------------------------------------------------------------------
+val boundaryRules: List<Pair<(from: String, to: String) -> Boolean, String>> = listOf(
+    { from: String, to: String -> from.startsWith(":feature") && to.startsWith(":feature") } to
+        "Feature-to-feature dependencies are not allowed. Share code through a :core module instead.",
+    // The benchmark drives the shipped app from outside; anything else it
+    // linked against would be measured code the app does not run as shipped.
+    { from: String, to: String -> from == ":benchmark" && to != ":app" } to
+        ":benchmark may depend on :app only.",
+)
+
 tasks.register("checkModuleBoundaries") {
     group = "verification"
-    description = "Fails if any feature module depends on another feature module"
+    description = "Fails if a module dependency breaks a boundary rule (feature->feature, :benchmark->anything but :app)"
 
     // See moduleGraph above -- same reason.
     notCompatibleWithConfigurationCache("reads project configurations directly in doLast")
 
     doLast {
         val edges = moduleEdges()
-        val violations = edges.filter { (from, to) ->
-            from.startsWith(":feature") && to.startsWith(":feature")
+        val failures = boundaryRules.mapNotNull { (isViolation, message) ->
+            val violations = edges.filter { (from, to) -> isViolation(from, to) }
+            if (violations.isEmpty()) null
+            else message + "\n" + violations.joinToString("\n") { "  ${it.first} -> ${it.second}" }
         }
-        if (violations.isNotEmpty()) {
-            val detail = violations.joinToString("\n") { "  ${it.first} -> ${it.second}" }
-            throw GradleException(
-                "Feature-to-feature dependencies are not allowed.\n$detail\n" +
-                    "Share code through a :core module instead.",
-            )
-        }
+        if (failures.isNotEmpty()) throw GradleException(failures.joinToString("\n\n"))
         logger.lifecycle("Module boundaries OK (${edges.size} project dependencies checked).")
     }
 }

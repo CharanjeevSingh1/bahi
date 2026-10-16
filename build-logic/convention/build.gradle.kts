@@ -37,6 +37,10 @@ gradlePlugin {
             id = "bahi.android.library.compose"
             implementationClass = "AndroidLibraryComposeConventionPlugin"
         }
+        register("androidTest") {
+            id = "bahi.android.test"
+            implementationClass = "AndroidTestConventionPlugin"
+        }
         register("androidFeature") {
             id = "bahi.android.feature"
             implementationClass = "AndroidFeatureConventionPlugin"

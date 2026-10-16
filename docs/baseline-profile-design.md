@@ -78,15 +78,27 @@ worst case: nothing precompiled), `CompilationMode.Partial(baselineProfileMode
 `CompilationMode.Full()` as a ceiling. The README's claim is the
 `None` → `Partial` delta; `Full` is there to show how much is left.
 
-Both `Partial` arguments are pinned rather than left to defaults. In the
-`androidx-main` source the defaults are already `Require` and `0` (checked
-against that source, not a pinned release — the version is chosen in slice 1),
-so pinning changes nothing today; it keeps the measurement from changing
+Both `Partial` arguments are pinned rather than left to defaults. Read from the
+`androidx.benchmark:benchmark-macro:1.5.0` sources jar (the release chosen in
+slice 1), not `androidx-main`: the constructor is
+`Partial(baselineProfileMode: BaselineProfileMode = Require, warmupIterations:
+Int = 0)` (`CompilationMode.kt:294-311`), so the defaults are already `Require`
+and `0`. Pinning changes nothing today; it keeps the measurement from changing
 silently if a default moves.
 
-- **`Require`**, because `UseIfAvailable` succeeds when no profile exists. A
-  check that falls back to "no profile" and still produces a number is a check
-  that cannot fail (§6).
+- **`Require`**, because `UseIfAvailable` succeeds when no profile exists. Read
+  from the same sources: `Partial.compileImpl` calls
+  `ProfileInstallBroadcast.installProfile`, which returns "No baseline profile
+  was found in the target apk." for `RESULT_BASELINE_PROFILE_NOT_FOUND`
+  (`ProfileInstallBroadcast.kt:86`). `Require` throws that string
+  (`CompilationMode.kt:346-347`); `UseIfAvailable` only logs it and falls
+  through (`:349`). With `warmupIterations = 0` nothing is then compiled, so the
+  run proceeds on whatever the install left, and reports a number. (The earlier
+  version of this claim came from a chat message; it is now confirmed in code.
+  A missing `profileinstaller` receiver takes the same log-or-throw path;
+  `RESULT_ALREADY_INSTALLED` and the I/O and parse failures throw in both
+  modes.) A check that falls back to "no profile" and still produces a number
+  is a check that cannot fail (§6).
 - **`warmupIterations = 0`**, because a warmed run measures JIT warmup plus the
   profile and attributes the sum to the profile. Cold start is the claim; a
   warmed `Partial` is a different, flattering experiment.
@@ -273,9 +285,11 @@ exists" from "a profile made startup faster".
 
 1. **Module, plugin, dependencies, boundary check.** `:benchmark` exists and
    builds; §5 in full, including the deliberate failures. README module count
-   and diagram updated. No benchmark code yet.
-2. **Benchmark target and first run.** `benchmark` build type in `:app`;
-   `StartupBenchmark` with `CompilationMode.None()` on the empty state,
+   and diagram updated. The `benchmark` build type in `:app` also lands here,
+   since the module needs a target to build against. Owns the M5 → M6 rename
+   of the open item in `CLAUDE.md` (the README roadmap already said M6). No
+   benchmark code yet.
+2. **First run.** `StartupBenchmark` with `CompilationMode.None()` on the empty state,
    confirmed to run on the device and to refuse the debug build. Also owns the
    `ReportDrawnWhen` change in `:feature:transactions` (§3, "Which metric"), so
    the first run already reports TTID and TTFD.
@@ -283,8 +297,8 @@ exists" from "a profile made startup faster".
    committed profile, the APK and non-empty checks, the `ProfileVerifier`
    assertion with its deliberate break, `dumpsys` as cross-check.
 4. **Measurement.** Empty and populated states, `None` / `Partial` / `Full`,
-   N and spread recorded in this document and the README; the README open item
-   relabelled M6 and ticked only if the numbers support the claim.
+   N and spread recorded in this document and the README; the README M6 item
+   ticked only if the numbers support the claim.
 5. **CI.** Compile `:benchmark` and the profile checks on every push; a
    manual-dispatch workflow for generation. No timings in CI. Also the
    `instrumented` job exclusion of `:benchmark` (§5 item 5), verified from the

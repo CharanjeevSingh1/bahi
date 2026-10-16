@@ -26,6 +26,11 @@ androidxHiltNavCompose = "1.2.0"
 androidxTestExt = "1.2.1"
 androidxTestRunner = "1.6.2"
 androidxEspresso = "3.6.1"
+# Macrobenchmark / baseline profile (docs/baseline-profile-design.md). Chosen in M6
+# slice 1; profileinstaller stays at the 1.4.0 :app already resolves transitively.
+androidxBenchmark = "1.5.0"
+androidxUiautomator = "2.4.0"
+androidxProfileinstaller = "1.4.0"
 
 composeBom = "2025.05.01"
 hilt = "2.57"
@@ -109,6 +114,9 @@ turbine = { group = "app.cash.turbine", name = "turbine", version.ref = "turbine
 robolectric = { group = "org.robolectric", name = "robolectric", version.ref = "robolectric" }
 androidx-test-ext-junit = { group = "androidx.test.ext", name = "junit", version.ref = "androidxTestExt" }
 androidx-test-runner = { group = "androidx.test", name = "runner", version.ref = "androidxTestRunner" }
+androidx-benchmark-macro-junit4 = { group = "androidx.benchmark", name = "benchmark-macro-junit4", version.ref = "androidxBenchmark" }
+androidx-test-uiautomator = { group = "androidx.test.uiautomator", name = "uiautomator", version.ref = "androidxUiautomator" }
+androidx-profileinstaller = { group = "androidx.profileinstaller", name = "profileinstaller", version.ref = "androidxProfileinstaller" }
 androidx-espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "androidxEspresso" }
 
 # Referenced by build-logic so convention plugins can apply these programmatically.
@@ -128,11 +136,14 @@ compose-compiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "
 ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
 hilt = { id = "com.google.dagger.hilt.android", version.ref = "hilt" }
 room = { id = "androidx.room", version.ref = "room" }
+# Declared for slice 3 (profile generation); not applied to any module yet.
+androidx-baselineprofile = { id = "androidx.baselineprofile", version.ref = "androidxBenchmark" }
 
 # Convention plugins defined in build-logic/. Applied as `alias(libs.plugins.bahi.*)`.
 bahi-android-application = { id = "bahi.android.application" }
 bahi-android-library = { id = "bahi.android.library" }
 bahi-android-library-compose = { id = "bahi.android.library.compose" }
+bahi-android-test = { id = "bahi.android.test" }
 bahi-android-feature = { id = "bahi.android.feature" }
 bahi-android-room = { id = "bahi.android.room" }
 bahi-hilt = { id = "bahi.hilt" }
