@@ -134,9 +134,11 @@ screen calls `ReportDrawnWhen` keyed to its UI state no longer being `Loading`;
 
 This is a production source change, and it corrects a first assumption that it
 sits in `:app`: the screen is `TransactionsRoute` in `:feature:transactions`
-(`TransactionsScreen.kt:67`), and that module does not have
-`androidx.activity:activity-compose` (`ReportDrawnWhen`'s home) on its
-dependency list; only `:feature:settings` does. The change adds the existing
+(`TransactionsScreen.kt:67`), and that module does not declare
+`androidx.activity:activity-compose` (`ReportDrawnWhen`'s home); only
+`:feature:settings` does. (It is reachable transitively through
+`navigation-compose`, which is why `TransactionFormScreen` already imports
+`BackHandler` from it; slice 2 declared it explicitly anyway. See §9.) The change adds the existing
 catalog entry `libs.androidx.activity.compose` to `:feature:transactions` — no
 new third-party dependency, no module-structure change — and **slice 2 owns
 it**, since the first benchmark run already needs TTFD to mean something. The
@@ -245,8 +247,9 @@ Required in the same slice as the module:
    `com.android.test` module, that task name may select `:benchmark`, which
    would either fail CI on the emulator check or invite someone to silence it
    with `androidx.benchmark.suppressErrors`. The exclusion is therefore
-   deliberate and verified: slice 5 scopes the job and the CI log is observed
-   not running the benchmark. **`androidx.benchmark.suppressErrors` is never
+   deliberate and verified: slice 2 scopes the job (`-x
+   :benchmark:connectedDebugAndroidTest`, verified locally with `--dry-run`),
+   and slice 5 observes the CI log not running the benchmark. **`androidx.benchmark.suppressErrors` is never
    set in this repo**, in CI or locally.
 
 `unitTests` needs no change: it only registers for application, library and
@@ -292,7 +295,10 @@ exists" from "a profile made startup faster".
 2. **First run.** `StartupBenchmark` with `CompilationMode.None()` on the empty state,
    confirmed to run on the device and to refuse the debug build. Also owns the
    `ReportDrawnWhen` change in `:feature:transactions` (§3, "Which metric"), so
-   the first run already reports TTID and TTFD.
+   the first run already reports TTID and TTFD. Owns the `instrumented` CI job
+   exclusion too (§5 item 5): adding benchmark code is what makes the root-level
+   `connectedDebugAndroidTest` start selecting a test that cannot run on an
+   emulator, so the scoping cannot wait for slice 5. Results: §9.
 3. **Profile generation.** The generator (on the populated state, §3), the
    committed profile, the APK and non-empty checks, the `ProfileVerifier`
    assertion with its deliberate break, `dumpsys` as cross-check.
@@ -300,9 +306,9 @@ exists" from "a profile made startup faster".
    N and spread recorded in this document and the README; the README M6 item
    ticked only if the numbers support the claim.
 5. **CI.** Compile `:benchmark` and the profile checks on every push; a
-   manual-dispatch workflow for generation. No timings in CI. Also the
-   `instrumented` job exclusion of `:benchmark` (§5 item 5), verified from the
-   CI log.
+   manual-dispatch workflow for generation. No timings in CI. The
+   `instrumented` job exclusion landed in slice 2; this slice only confirms it
+   from the CI log.
 
 ## 8. Not decided here
 
@@ -318,3 +324,66 @@ exists" from "a profile made startup faster".
   against `androidx-main`).
 - Whether the result is "no measurable difference". That is a possible
   outcome of a real measurement; if it happens it goes in the README as it is.
+
+## 9. First measurement (slice 2)
+
+**Not the headline and not for the README.** `CompilationMode.None()`, empty
+database, cold start, release-like `benchmark` build type. This exists to show
+the harness runs and reports both metrics.
+
+- Device: Realme RMX3360 (GT Master Edition), Android 13, API 33,
+  `realme/RMX3360/RE54ABL1:13/TP1A.220905.001/R.18a3a4d-41d9-71a9:user/release-keys`;
+  Macrobenchmark reported `cpuLocked: true`, 8 cores.
+- State at the start of the run: USB-powered (not AC), battery 100% (status
+  "full"), battery temperature 30.0 C, screen awake on the launcher, no app
+  in the foreground; `top` showed ~770% idle of 800%, with only system
+  processes (`com.oplus.midas`, kernel workers) visible. Not checked:
+  airplane mode, background apps beyond the `top` snapshot, thermal state after
+  the run.
+- N = 10 iterations, one run of the test (a single sample of 10, not a
+  distribution across sessions).
+
+| Metric | min | median | max |
+|---|---|---|---|
+| timeToInitialDisplayMs | 509.9 | 536.7 | 759.1 |
+| timeToFullDisplayMs | 573.2 | 611.3 | 834.3 |
+
+Per-iteration TTID (ms): 759.1, 535.0, 542.7, 537.7, 549.1, 551.4, 535.8,
+509.9, 513.1, 516.4. Per-iteration TTFD (ms): 834.3, 611.4, 611.2, 612.9,
+618.0, 622.6, 609.3, 573.2, 601.7, 581.0.
+
+Iteration 0 is high on both metrics (759 ms against a ~535 ms TTID median,
+834 ms against ~611 ms TTFD). The working explanation is that first launch
+after install does one-time work the later iterations do not; it is a
+hypothesis, not a finding. Iteration 0 is included in the reported
+min / median / max, per §1's rule, not discarded. Caveat on "consistently": the
+break (b) run below, a separate session, had its maximum (715 ms TTID) on the
+last iteration, not the first, so two runs do not establish a pattern.
+
+TTFD sits 63-89 ms after TTID per iteration (median gap 72.3 ms), so the `Loading` frame and the
+first real frame are distinguishable on an empty database. This includes sync
+scheduling (§3, "What else is inside the measured window").
+
+### What the deliberate breaks showed
+
+- **Debug build as target.** Macrobenchmark refused with `ERRORS (not
+  suppressed): DEBUGGABLE`. This took two attempts. The first failed with
+  "Unable to find target package dev.charanjeev.bahi" because the debug build's
+  applicationId carries a `.debug` suffix, so the run never reached the
+  debuggable check. The DEBUGGABLE error was observed only after correcting the
+  package and installing both APKs by hand with `adb`. A check failing is not
+  the same as a check failing for the stated reason.
+- **Unresolved, uninvestigated:** Gradle's `connectedDebugAndroidTest` did not
+  install the target app (`:app` debug), although `connectedBenchmarkAndroidTest`
+  installed the benchmark variant's.
+- **`ReportDrawnWhen` that never fires.** The test **passed**, and the output
+  contained `timeToInitialDisplayMs` only: `timeToFullDisplayMs` was absent. It
+  neither failed nor fell back to TTID's value. So a broken TTFD is silent
+  unless something asserts the metric is present; `StartupBenchmark` does not
+  yet, so as written TTFD's presence is checked by reading the output, not by
+  the test. Slice 4 must not claim TTFD without closing that. Why it is not
+  closed here: against benchmark-macro(-junit4) 1.5.0, every public
+  `MacrobenchmarkRule.measureRepeated` overload returns `Unit`; `Metric` is a
+  sealed class, so a wrapper metric cannot be written outside the library; and
+  the one function that returns the results (`macrobenchmarkWithStartupMode`) is
+  `@RestrictTo(LIBRARY_GROUP)`. The metrics reach the test's own code nowhere.

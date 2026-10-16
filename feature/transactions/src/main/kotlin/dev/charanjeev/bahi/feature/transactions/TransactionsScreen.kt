@@ -1,5 +1,6 @@
 package dev.charanjeev.bahi.feature.transactions
 
+import androidx.activity.compose.ReportDrawnWhen
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -72,6 +73,10 @@ fun TransactionsRoute(
     onOpenSettings: () -> Unit = {},
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    // Time to full display for Macrobenchmark (docs/baseline-profile-design.md
+    // §3): TTID lands on the Loading frame, before the Room read this screen
+    // exists to show. Empty and Error count as drawn -- they are final answers.
+    ReportDrawnWhen { uiState !is TransactionsUiState.Loading }
     TransactionsScreen(
         uiState = uiState,
         onDeleteTransaction = viewModel::onDeleteTransaction,
