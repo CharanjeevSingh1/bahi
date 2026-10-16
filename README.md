@@ -21,7 +21,7 @@ See [Roadmap](#roadmap) for what's built, [Testing](#testing) for how it's check
 
 Most of my production Android work — mobile banking on the Backbase platform, a subscription-commerce app with 100K+ DAU — is closed source. This is where the architectural decisions behind that work are visible on a real, running app: module boundaries enforced by the build rather than by convention, migrations that are proven by watching them fail, and a data layer that treats the network as an optimisation rather than a prerequisite.
 
-That discipline is also enforced on this repo's own development, not just claimed about it: [`CLAUDE.md`](CLAUDE.md) is the actual contract every change here is held to — the architecture rules above are copied from it verbatim — and [`prompts/`](prompts/) holds the milestone-by-milestone prompts this repo was built from, if you'd rather read the instructions than take the result on faith.
+That discipline is also enforced on this repo's own development, not just claimed about it: [`CLAUDE.md`](CLAUDE.md) is the actual contract every change here is held to — the architecture rules above are copied from it verbatim — and [`prompts/`](prompts/) holds the bootstrap and milestone 1 prompts this repo was started from, if you'd rather read the instructions than take the result on faith.
 
 ---
 
