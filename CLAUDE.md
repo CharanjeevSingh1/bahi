@@ -6,7 +6,7 @@ Project context for Claude Code. Read this before making changes.
 
 Bahi — an offline-first personal finance tracker for Android. It is a **portfolio project**: the code is read by hiring managers, so clarity and correctness matter more than feature count. A reviewer should be able to open any file and understand why it is written the way it is.
 
-Current state: **M5 complete**; M6 (baseline profile and Macrobenchmark startup numbers) is open and unticked in the README roadmap. M0 scaffolding, M1 transactions, M2 CSV import, M3 budgets and rule-based auto-categorisation, M4a row-level sync (engine, resolver, two-device convergence suite, tombstone horizon), M4b the Drive transport (OAuth, end-to-end encryption, compaction, the periodic worker that gives `SyncEngine` its first real caller) and the Settings screen that surfaces a real conflict and restores a discarded value. M5 insights (`:feature:insights`). M6 slice 1 added the `:benchmark` module and its boundary rule; there is no benchmark or profile-generator code yet (`docs/baseline-profile-design.md` §7). See the Roadmap in README.md. Sync itself has only ever run against an in-memory fake Drive — no real Drive account has exercised this app (`docs/sync-design.md` §13 slice 9h, `docs/sync-setup.md`).
+Current state: **M5 complete**; M6 (baseline profile and Macrobenchmark startup numbers) is open and unticked in the README roadmap. M0 scaffolding, M1 transactions, M2 CSV import, M3 budgets and rule-based auto-categorisation, M4a row-level sync (engine, resolver, two-device convergence suite, tombstone horizon), M4b the Drive transport (OAuth, end-to-end encryption, compaction, the periodic worker that gives `SyncEngine` its first real caller) and the Settings screen that surfaces a real conflict and restores a discarded value. M5 insights (`:feature:insights`). M6 slice 1 added the `:benchmark` module and its boundary rule; slice 2 the first startup benchmark; slice 3 the profile generator, the committed `app/src/main/generated/baselineProfiles/baseline-prof.txt` (generated on an emulator, API 36), `checkBaselineProfile` and `checkBenchmarkData`. No None/Partial/Full measurement has been taken, and the measurement phone's ROM refuses `cmd package compile`, which blocks it as things stand (`docs/baseline-profile-design.md` §7, §8). See the Roadmap in README.md. Sync itself has only ever run against an in-memory fake Drive — no real Drive account has exercised this app (`docs/sync-design.md` §13 slice 9h, `docs/sync-setup.md`).
 
 ## Stack
 
@@ -51,7 +51,9 @@ Kotlin, Jetpack Compose, Room, Hilt, WorkManager, Coroutines/Flow. Single-activi
 ./gradlew lintDebug
 ```
 
-CI compiles with `-PwarningsAsErrors=true`. Before pushing, run `./gradlew clean assembleDebug unitTests -PwarningsAsErrors=true` — a warning that is harmless locally fails the build on CI.
+CI compiles with `-PwarningsAsErrors=true`. Before pushing, run `./gradlew clean assembleDebug assembleRelease unitTests -PwarningsAsErrors=true` — a warning that is harmless locally fails the build on CI.
+
+**`assembleRelease` is in the gate for the duration of M6.** CI builds release and the debug-only gate does not; M6 touches R8, profile merging and a new build type, all release-side. A change to `app/build.gradle.kts` that broke `assembleRelease` went through a green gate unnoticed (`docs/baseline-profile-design.md` §4).
 
 Dependencies are declared **only** in `gradle/libs.versions.toml`. Never inline a version in a module build file. Shared build config goes in a convention plugin in `build-logic/`, never copy-pasted across modules.
 
@@ -76,5 +78,5 @@ Run Gradle quietly and read only what failed: ./gradlew <tasks> --quiet 2>&1 | t
 # Build speed. 
 - Don't run ./gradlew clean unless you suspect stale state .
 - it rebuilds all 17 modules. During iteration, run module-scoped tests (:feature:x:testDebugUnitTest). Run the full gate.
-- assembleDebug unitTests checkModuleBoundaries lintDebug -PwarningsAsErrors=true 
+- assembleDebug assembleRelease unitTests checkModuleBoundaries lintDebug -PwarningsAsErrors=true 
 - once, at the end of a task, not after each individual change. checkModuleBoundaries discards the configuration cache, so including it forces a reconfigure on the next build.

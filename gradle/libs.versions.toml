@@ -136,7 +136,7 @@ compose-compiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "
 ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
 hilt = { id = "com.google.dagger.hilt.android", version.ref = "hilt" }
 room = { id = "androidx.room", version.ref = "room" }
-# Declared for slice 3 (profile generation); not applied to any module yet.
+# Applied in :app (consumer) and :benchmark (producer) -- docs/baseline-profile-design.md §4.
 androidx-baselineprofile = { id = "androidx.baselineprofile", version.ref = "androidxBenchmark" }
 
 # Convention plugins defined in build-logic/. Applied as `alias(libs.plugins.bahi.*)`.

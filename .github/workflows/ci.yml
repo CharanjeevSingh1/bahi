@@ -109,8 +109,15 @@ jobs:
           target: google_apis
           arch: x86_64
           disable-animations: true
-          # -x :benchmark:...: the root-level task name also selects :benchmark,
-          # whose Macrobenchmark refuses to run on an emulator. Excluded rather
-          # than silenced; androidx.benchmark.suppressErrors is never set
+          # No `-x :benchmark:...` here, deliberately. It used to be needed: the
+          # root-level task selected :benchmark's Macrobenchmark, which refuses
+          # an emulator. Once the baselineprofile plugin was applied, :benchmark
+          # lost its `debug` variant (its tasks are now
+          # connectedBenchmarkBenchmarkAndroidTest and friends), so this name
+          # selects no :benchmark task, and `-x` on a task that does not exist
+          # fails the build outright. Checked with `--dry-run` (§5 item 5):
+          # 14 modules selected, no :benchmark task. Re-check that after any
+          # change to :benchmark's build types.
+          # androidx.benchmark.suppressErrors is never set
           # (docs/baseline-profile-design.md §5).
-          script: ./gradlew connectedDebugAndroidTest -x :benchmark:connectedDebugAndroidTest --stacktrace
+          script: ./gradlew connectedDebugAndroidTest --stacktrace

@@ -1,7 +1,12 @@
+import java.util.zip.ZipFile
+
 plugins {
     alias(libs.plugins.bahi.android.application)
     alias(libs.plugins.bahi.hilt)
+    alias(libs.plugins.androidx.baselineprofile)
 }
+
+val releaseLikeSourceSets = setOf("benchmark", "nonMinifiedRelease", "benchmarkRelease")
 
 android {
     namespace = "dev.charanjeev.bahi"
@@ -42,8 +47,39 @@ android {
     // DebugSeeder no-op lives in src/release; without this the benchmark
     // variant has no DebugSeeder at all. Sharing the directory (rather than
     // copying the file) keeps the two from drifting.
-    sourceSets {
-        getByName("benchmark").java.srcDir("src/release/kotlin")
+    //
+    // The baselineprofile plugin adds `nonMinifiedRelease` and `benchmarkRelease`
+    // build types of its own, created after this block runs, hence configureEach
+    // rather than getByName.
+    sourceSets.configureEach {
+        if (name in releaseLikeSourceSets) java.srcDir("src/release/kotlin")
+    }
+
+    // The plugin wires its generated profile into the variants it creates, not
+    // into this one, so without this the benchmark APK carries only the
+    // libraries' profiles (docs/baseline-profile-design.md §4).
+    sourceSets.getByName("benchmark").baselineProfiles.srcDir("src/main/generated/baselineProfiles")
+}
+
+baselineProfile {
+    // The plugin's default location, src/main/generated/baselineProfiles/. Only
+    // the variants the plugin creates read it on their own; the custom
+    // `benchmark` build type is wired to it by hand in the sourceSets block
+    // below (§4).
+    //
+    // Not `baselineProfileOutputDir = "."`, which would put the file at
+    // src/main/baseline-prof.txt where every variant finds it. Tried and
+    // reverted: the plugin then feeds the whole of src/main/ to the release
+    // variant's profile merge, which swallows res/ XML and fails
+    // expandReleaseArtProfileWildcards ("Illegal token '<'").
+    mergeIntoMain = true
+    // The generator has to import a CSV to populate the database (it cannot be
+    // seeded before collect(); see BaselineProfileGenerator), which would put the
+    // import path in the profile. Import is outside the §3 journey, and every
+    // rule costs install-time work.
+    filter {
+        exclude("dev.charanjeev.bahi.feature.csvimport.**")
+        exclude("dev.charanjeev.bahi.core.importer.**")
     }
 }
 
@@ -80,8 +116,62 @@ dependencies {
     implementation(libs.androidx.work.runtime.ktx)
     implementation(libs.androidx.hilt.work)
 
+    // Consumer side of the generator in :benchmark. The `baselineProfile`
+    // configuration is not one moduleEdges() reads, so this is not a graph edge.
+    baselineProfile(projects.benchmark)
+
     testImplementation(projects.core.testing)
 
     androidTestImplementation(projects.core.testing)
     androidTestImplementation(libs.androidx.espresso.core)
+}
+
+// ---------------------------------------------------------------------------
+// ./gradlew :app:checkBaselineProfile  (docs/baseline-profile-design.md §6)
+//
+// A profile that is missing, empty or not packaged all still produce an APK
+// that builds and runs; nothing downstream notices. Two floors, because they
+// fail differently:
+//   - the rules AGP merged for the `benchmark` variant must include app-class
+//     rules. This reads the variant's own merged profile, not the committed
+//     file: the first version of this check read src/ and passed while the
+//     variant ignored it (the file sat in a directory only the plugin's own
+//     variants read), with the APK's baseline.prof coming from AndroidX
+//     libraries alone,
+//   - the APK must contain a non-trivial assets/dexopt/baseline.prof. Size
+//     cannot tell "libraries only" (5307 bytes) from "libraries plus this app"
+//     (6555), so it is a presence check, not a rule count; the rule count is
+//     the merged-profile check above.
+// ---------------------------------------------------------------------------
+val mergedBenchmarkProfile = layout.buildDirectory.file(
+    "intermediates/r8_art_profile/benchmark/expandBenchmarkArtProfileWildcards/baseline-prof.txt",
+)
+val benchmarkApk = layout.buildDirectory.file("outputs/apk/benchmark/app-benchmark.apk")
+
+tasks.register("checkBaselineProfile") {
+    group = "verification"
+    description = "Fails if the benchmark APK lacks a baseline profile or the variant merged too few app rules."
+    dependsOn("assembleBenchmark")
+    val merged = mergedBenchmarkProfile
+    val apkFile = benchmarkApk
+    doLast {
+        val minAppRules = 500
+        val minApkProfileBytes = 2_000L
+
+        val mergedFile = merged.get().asFile
+        val apk = apkFile.get().asFile
+        val appRules = if (mergedFile.exists()) {
+            mergedFile.useLines { lines -> lines.count { "Ldev/charanjeev/bahi/" in it } }
+        } else {
+            0
+        }
+        val entry = ZipFile(apk).use { zip -> zip.getEntry("assets/dexopt/baseline.prof")?.size }
+        val problems = buildList {
+            if (appRules < minAppRules) add("benchmark variant merged $appRules app-class rules, floor is $minAppRules")
+            if (entry == null) add("assets/dexopt/baseline.prof is not in ${apk.name}")
+            else if (entry < minApkProfileBytes) add("assets/dexopt/baseline.prof is $entry bytes, floor is $minApkProfileBytes")
+        }
+        check(problems.isEmpty()) { "Baseline profile check failed:\n  " + problems.joinToString("\n  ") }
+        println("Baseline profile OK: $appRules app-class rules merged, baseline.prof $entry bytes in the APK")
+    }
 }
