@@ -75,8 +75,7 @@ Run Gradle quietly and read only what failed: ./gradlew <tasks> --quiet 2>&1 | t
 
 `:core:importer` (M2) and `:core:sync` (M4a and M4b both) are fully implemented now — this note is stale as of M4b and left here only so its history is visible; do not treat any of them as a stub. What is genuinely not built: the baseline profile and Macrobenchmark startup numbers named for M6, and a real Drive account has never exercised sync end to end (everything is proven against an in-memory fake Drive — `docs/sync-design.md` §10.5, §13 slice 9h). Running `docs/sync-setup.md`'s manual plan against a real Google Cloud project would close that gap; nothing else in M4b is waiting on it.
 
-# Build speed. 
-- Don't run ./gradlew clean unless you suspect stale state .
-- it rebuilds all 17 modules. During iteration, run module-scoped tests (:feature:x:testDebugUnitTest). Run the full gate.
-- assembleDebug assembleRelease unitTests checkModuleBoundaries lintDebug -PwarningsAsErrors=true 
-- once, at the end of a task, not after each individual change. checkModuleBoundaries discards the configuration cache, so including it forces a reconfigure on the next build.
+## Build speed
+
+- Don't run `./gradlew clean` unless you suspect stale state — it rebuilds all 17 modules.
+- During iteration, run module-scoped tests (`:feature:x:testDebugUnitTest`). Run the full gate (`assembleDebug assembleRelease unitTests checkModuleBoundaries lintDebug -PwarningsAsErrors=true`) once, at the end of a task, not after each individual change. `checkModuleBoundaries` discards the configuration cache, so including it forces a reconfigure on the next build.
