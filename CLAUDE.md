@@ -73,7 +73,10 @@ Run Gradle quietly and read only what failed: ./gradlew <tasks> --quiet 2>&1 | t
 
 ## Things that are intentionally not done yet
 
-`:core:importer` (M2) and `:core:sync` (M4a and M4b both) are fully implemented now — this note is stale as of M4b and left here only so its history is visible; do not treat any of them as a stub. What is genuinely not built: the baseline profile and Macrobenchmark startup numbers named for M6, and a real Drive account has never exercised sync end to end (everything is proven against an in-memory fake Drive — `docs/sync-design.md` §10.5, §13 slice 9h). Running `docs/sync-setup.md`'s manual plan against a real Google Cloud project would close that gap; nothing else in M4b is waiting on it.
+Every module has a real implementation; nothing is left as an interface-only stub. What is genuinely not built:
+
+- **M6 startup numbers.** The `:benchmark` module, `StartupBenchmark`, `BaselineProfileGenerator`, the committed profile and its two checks exist, but no `None`/`Partial`/`Full` comparison has been measured, and the measurement phone's ROM refuses `cmd package compile`, which blocks it as things stand (`docs/baseline-profile-design.md` §7, §8). Do not put startup numbers in the README until they are measured.
+- **Sync against a real Drive account.** Everything is proven against an in-memory fake Drive (`docs/sync-design.md` §10.5, §13 slice 9h). Running `docs/sync-setup.md`'s manual plan against a real Google Cloud project would close that gap; nothing else in M4b is waiting on it.
 
 ## Build speed
 
