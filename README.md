@@ -13,7 +13,7 @@ Named after the *bahi khata*, the traditional Indian ledger book.
   <img src="docs/screenshots/settings-conflicts.png" width="280" alt="Settings screen listing a sync conflict, with kept and discarded values by name and a restore action">
 </p>
 
-See [Roadmap](#roadmap) for what's built, [Testing](#testing) for how it's checked, and the [design documents](#design-documents) for why it's built this way.
+See [Milestones](#milestones) for what's built, [Testing](#testing) for how it's checked, and the [design documents](#design-documents) for why it's built this way.
 
 ---
 
@@ -175,13 +175,13 @@ cd bahi
 ## Milestones
 
 - [x] **M0** — Module structure, convention plugins, CI, Room schema + migration test harness
-- [x] **M1** — Transaction CRUD, categories, list and detail screens
+- [x] **M1** — Transaction CRUD, categories, list and add/edit form screens
 - [x] **M2** — CSV import: column-mapping inference, preview, de-duplication
 - [x] **M3** — Budgets and rule-based auto-categorisation
 - [x] **M4a** — Row-level sync, the convergence engine: per-field merge against a stored base, proven by running two engines over two databases and a fake transport in one process. No network. [`docs/sync-design.md`](docs/sync-design.md)
 - [x] **M4b** — The transport that carries M4a's operations between devices: Google Drive as an encrypted append-only op log, OAuth, an elected-compactor step, and the periodic worker that gives `SyncEngine` its first real caller. Everything is proven against `InMemoryTransport`/an in-memory fake Drive, the same way M4a proves convergence with no network — **no real Drive account has run this app yet**, stated plainly rather than left to be inferred. [`docs/sync-design.md`](docs/sync-design.md)
 - [x] **M5** — Insights: category breakdown, spending trend, over-budget list (`:feature:insights`)
-- [ ] **M6** — Baseline profile and Macrobenchmark startup numbers
+- [ ] **M6** — Baseline profile and Macrobenchmark startup numbers. Partly built: the `:benchmark` module, `StartupBenchmark` (TTID and TTFD), `BaselineProfileGenerator`, the committed profile at `app/src/main/generated/baselineProfiles/baseline-prof.txt`, and the `checkBaselineProfile` and `checkBenchmarkData` tasks. **Open:** no `None`/`Partial`/`Full` comparison has been measured, so there are no startup numbers yet; the measurement phone's ROM refuses `cmd package compile`, which blocks it as things stand. [`docs/baseline-profile-design.md`](docs/baseline-profile-design.md) §7, §8
 
 ---
 
