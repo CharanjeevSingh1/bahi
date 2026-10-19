@@ -6,11 +6,11 @@ Project context for Claude Code. Read this before making changes.
 
 Bahi — an offline-first personal finance tracker for Android. It is a **portfolio project**: the code is read by hiring managers, so clarity and correctness matter more than feature count. A reviewer should be able to open any file and understand why it is written the way it is.
 
-Current state: **M4b complete**. M0 scaffolding, M1 transactions, M2 CSV import, M3 budgets and rule-based auto-categorisation, M4a row-level sync (engine, resolver, two-device convergence suite, tombstone horizon), M4b the Drive transport (OAuth, end-to-end encryption, compaction, the periodic worker that gives `SyncEngine` its first real caller) and the Settings screen that surfaces a real conflict and restores a discarded value. M5 insights (`:feature:insights`) also shipped; baseline profile and Macrobenchmark are the only pieces of M5 still open. See the Roadmap in README.md. Sync itself has only ever run against an in-memory fake Drive — no real Drive account has exercised this app (`docs/sync-design.md` §13 slice 9h, `docs/sync-setup.md`).
+Current state: **M0–M5 complete**; M6 (baseline profile and Macrobenchmark) is in progress on `feat/benchmark-module` and unmeasured. M0 scaffolding, M1 transactions, M2 CSV import, M3 budgets and rule-based auto-categorisation, M4a row-level sync (engine, resolver, two-device convergence suite, tombstone horizon), M4b the Drive transport (OAuth, end-to-end encryption, compaction, the periodic worker that gives `SyncEngine` its first real caller) and the Settings screen that surfaces a real conflict and restores a discarded value. M5 insights (`:feature:insights`). See the Roadmap in README.md. Sync itself has only ever run against an in-memory fake Drive — no real Drive account has exercised this app (`docs/sync-design.md` §13 slice 9h, `docs/sync-setup.md`).
 
 ## Stack
 
-Kotlin, Jetpack Compose, Room, Hilt, WorkManager, Coroutines/Flow. Single-activity architecture. 15 Gradle modules with convention plugins in `build-logic/`.
+Kotlin, Jetpack Compose, Room, Hilt, WorkManager, Coroutines/Flow. Single-activity architecture. 16 Gradle modules with convention plugins in `build-logic/`.
 
 ## Architecture rules — these are hard constraints
 
