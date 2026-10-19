@@ -33,6 +33,11 @@ android {
         // asks InstrumentationRegistry for it, so this line is a no-op for
         // every other instrumented test in this module.
         testInstrumentationRunnerArguments["seedCount"] = (project.findProperty("seedCount") as String?) ?: "50"
+        // Optional; absent means no deliberate failure. See the same test's
+        // `configuredFailAtSeed`.
+        (project.findProperty("failAtSeed") as String?)?.let {
+            testInstrumentationRunnerArguments["failAtSeed"] = it
+        }
     }
 }
 

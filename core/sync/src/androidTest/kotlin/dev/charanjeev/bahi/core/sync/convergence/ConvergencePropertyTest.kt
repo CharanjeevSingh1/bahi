@@ -1,5 +1,6 @@
 package dev.charanjeev.bahi.core.sync.convergence
 
+import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.google.common.truth.Truth.assertWithMessage
@@ -65,9 +66,12 @@ class ConvergencePropertyTest {
     @Test
     fun seeds_convergeToTheSameDatabase() = runTest(timeout = 10.minutes) {
         val seedCount = configuredSeedCount()
+        val failAtSeed = configuredFailAtSeed()
         val failures = mutableListOf<String>()
+        var executed = 0
         for (seed in 1..seedCount) {
             try {
+                check(seed != failAtSeed) { "deliberate failure at seed $seed" }
                 runSeed(seed)
             } catch (e: CancellationException) {
                 // Not a per-seed failure: runTest's own watchdog cancelling this body on
@@ -80,7 +84,12 @@ class ConvergencePropertyTest {
             } catch (e: Throwable) {
                 failures += "seed $seed: ${e.message}"
             }
+            executed++
         }
+        // The nightly's only evidence that it ran the corpus it names: a green run with
+        // a silently truncated loop would look identical to a real one.
+        Log.i(TAG, "ConvergencePropertyTest: executed $executed/$seedCount seeds")
+        assertWithMessage("executed seeds").that(executed).isEqualTo(seedCount)
         assertWithMessage(
             "Convergence failed for ${failures.size}/$seedCount seeds. Reproduce with " +
                 "ConvergencePropertyTest.runSeed(<seed>) directly.\n" +
@@ -90,9 +99,15 @@ class ConvergencePropertyTest {
 
     companion object {
         const val DEFAULT_SEED_COUNT = 50
+        private const val TAG = "ConvergenceProperty"
 
         private fun configuredSeedCount(): Int =
             InstrumentationRegistry.getArguments().getString("seedCount")?.toIntOrNull() ?: DEFAULT_SEED_COUNT
+
+        // Lets the nightly be proven able to fail: a workflow_dispatch run with
+        // `failAtSeed` set must go red, or its green runs mean less than they claim.
+        private fun configuredFailAtSeed(): Int? =
+            InstrumentationRegistry.getArguments().getString("failAtSeed")?.toIntOrNull()
     }
 }
 

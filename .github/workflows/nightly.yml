@@ -12,6 +12,11 @@ on:
   schedule:
     - cron: "0 3 * * *" # 03:00 UTC daily
   workflow_dispatch:
+    inputs:
+      failAtSeed:
+        description: "Fail deliberately at this seed, to prove the job can go red (leave empty for a normal run)"
+        required: false
+        type: string
 
 jobs:
   nightly-convergence:
@@ -46,7 +51,7 @@ jobs:
           arch: x86_64
           disable-animations: true
           script: >
-            ./gradlew :core:sync:connectedDebugAndroidTest -PseedCount=1000
+            ./gradlew :core:sync:connectedDebugAndroidTest -PseedCount=1000 ${{ inputs.failAtSeed && format('-PfailAtSeed={0}', inputs.failAtSeed) || '' }}
             -Pandroid.testInstrumentationRunnerArguments.class=dev.charanjeev.bahi.core.sync.convergence.ConvergencePropertyTest
             --stacktrace
 
