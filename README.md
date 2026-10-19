@@ -47,6 +47,8 @@ The three documents linked above are the strongest artifacts in this repo, and t
 
 Two shorter documents support the sync design rather than arguing a case of their own: [`docs/sync-manual-test-plan.md`](docs/sync-manual-test-plan.md) (the two-emulator manual script) and [`docs/sync-setup.md`](docs/sync-setup.md) (what a real Google Cloud project would need to close the real-Drive-account gap).
 
+[`docs/baseline-profile-design.md`](docs/baseline-profile-design.md) is the M6 design, written ahead of the work: startup numbers come from a physical device run by hand rather than from CI, and every figure published must state device, API level, compilation mode, run count and min/median/max.
+
 ---
 
 ## Architecture
@@ -144,6 +146,8 @@ The short version: nothing here is trusted because it was written carefully. Eac
 | Room | Migrations run against the previous schema, not just the latest one | `core/database/src/androidTest` |
 | Import inference | Column-mapping inference against real-world CSV fixtures (ambiguous dates, no header, mixed amount formats) | `core/importer/src/test` |
 | Sync convergence | Two real `SyncEngine`s, two real Room databases, one in-process transport — every scripted conflict scenario plus the property test over random operation orderings | `core/sync/src/androidTest` |
+| Sync convergence (property test) | `ConvergencePropertyTest`: random operation orderings across two engines; runs under `connectedDebugAndroidTest`; `seedCount` defaults to 50 (`core/sync/build.gradle.kts`) | `core/sync/src/androidTest/kotlin/dev/charanjeev/bahi/core/sync/convergence/ConvergencePropertyTest.kt` |
+| Sync convergence (nightly) | Configured to run the same test with `-PseedCount=1000` on an API 34 emulator, on a daily schedule and on manual dispatch | `.github/workflows/nightly.yml` |
 | Drive transport (manual) | `DriveTransportContractTest` against a real Google Drive account — not run in CI, no credentials in this environment | `./gradlew :core:sync:driveTest`, [`docs/sync-setup.md`](docs/sync-setup.md) |
 | ViewModel | State emission with Turbine + `TestDispatcher` | `feature/*/src/test` |
 | Compose | Screen states driven from the stateless composable | `feature/*/src/androidTest` |
@@ -175,7 +179,7 @@ cd bahi
 - [x] **M4a** — Row-level sync, the convergence engine: per-field merge against a stored base, proven by running two engines over two databases and a fake transport in one process. No network. [`docs/sync-design.md`](docs/sync-design.md)
 - [x] **M4b** — The transport that carries M4a's operations between devices: Google Drive as an encrypted append-only op log, OAuth, an elected-compactor step, and the periodic worker that gives `SyncEngine` its first real caller. Everything is proven against `InMemoryTransport`/an in-memory fake Drive, the same way M4a proves convergence with no network — **no real Drive account has run this app yet**, stated plainly rather than left to be inferred. [`docs/sync-design.md`](docs/sync-design.md)
 - [x] **M5** — Insights: category breakdown, spending trend, over-budget list (`:feature:insights`)
-- [ ] **M6** — Baseline profile and Macrobenchmark startup numbers
+- [ ] **M6** — Baseline profile + Macrobenchmark startup numbers (in progress). No numbers are claimed here yet. [`docs/baseline-profile-design.md`](docs/baseline-profile-design.md)
 
 ---
 
